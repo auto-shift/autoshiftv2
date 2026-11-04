@@ -13,6 +13,8 @@
 #                           that push to it
 #   keycloak-autoshift-ci   the autoshift-ci Keycloak client the pipelines sign with, while tas is on,
 #                           with the Fulcio, Rekor and TUF URLs and the signer identity in the endpoints
+#   tpa-autoshift-ci        the Trusted Profile Analyzer cli client the release pipeline uploads SBOMs
+#                           with, while trusted-profile-analyzer is on, with tpaUrl in the endpoints
 # An enabled component whose endpoint is missing fails the policy with the list, rather than writing
 # an empty value the tasks would only trip over later.
 object-templates-raw: |
@@ -25,6 +27,7 @@ object-templates-raw: |
   {{hub- $tasOn := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
   {{hub- $quayOn := eq (index .ManagedClusterLabels "autoshift.io/quay" | default "false") "true" hub}}
   {{hub- $gitlabOn := eq (index .ManagedClusterLabels "autoshift.io/gitlab" | default "false") "true" hub}}
+  {{hub- $tpaOn := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false") "true" hub}}
   {{- $missing := list }}
   {{- $pacHost := (dig "spec" "host" "" ((lookup "route.openshift.io/v1" "Route" "openshift-pipelines" "pipelines-as-code-controller") | default dict)) }}
   {{- if not $pacHost }}{{- $missing = append $missing "Route openshift-pipelines/pipelines-as-code-controller (the Pipelines Operator)" }}{{- end }}
@@ -89,11 +92,22 @@ object-templates-raw: |
   {{- $rekorUrl := (dig "status" "url" "" ((lookup "rhtas.redhat.com/v1" "Rekor" "tssc-tas" "trusted-artifact-signer") | default dict)) }}
   {{- $tufUrl := (dig "status" "url" "" ((lookup "rhtas.redhat.com/v1" "Tuf" "tssc-tas" "trusted-artifact-signer") | default dict)) }}
   {{- if not (and $fulcioUrl $rekorUrl $tufUrl) }}{{- $missing = append $missing "the Fulcio, Rekor and Tuf URLs in tssc-tas (policy-tas-securesign)" }}{{- end }}
-  {{- $kcHost := (dig "spec" "hostname" "hostname" "" ((lookup "k8s.keycloak.org/v2beta1" "Keycloak" "keycloak-system" "keycloak") | default dict)) }}
-  {{- if not $kcHost }}{{- $missing = append $missing "Keycloak keycloak-system/keycloak with spec.hostname.hostname (policy-keycloak)" }}{{- end }}
   {{- $ciClient := (index (((lookup "v1" "Secret" "keycloak-system" "autoshift-ci-realm-clients") | default dict).data | default dict) "autoshiftCi" | default "") }}
   {{- if not $ciClient }}{{- $missing = append $missing "Secret keycloak-system/autoshift-ci-realm-clients (policy-keycloak-realm-secrets)" }}{{- end }}
   {{- $appsDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
+  {{hub- end hub}}
+  {{hub- if $tpaOn hub}}
+  {{- $tpaHost := "" }}
+  {{- range $r := (((lookup "route.openshift.io/v1" "Route" "tssc-tpa" "") | default dict).items | default list) }}
+  {{-   if eq (dig "spec" "to" "name" "" $r) "server" }}{{- $tpaHost = (dig "spec" "host" "" $r) }}{{- end }}
+  {{- end }}
+  {{- if not $tpaHost }}{{- $missing = append $missing "the Route to the server Service in tssc-tpa (policy-trusted-profile-analyzer)" }}{{- end }}
+  {{- $tpaCli := (index (((lookup "v1" "Secret" "keycloak-system" "tpa-realm-clients") | default dict).data | default dict) "cli" | default "") }}
+  {{- if not $tpaCli }}{{- $missing = append $missing "Secret keycloak-system/tpa-realm-clients with key cli (policy-keycloak-realm-secrets)" }}{{- end }}
+  {{hub- end hub}}
+  {{hub- if or $tasOn $tpaOn hub}}
+  {{- $kcHost := (dig "spec" "hostname" "hostname" "" ((lookup "k8s.keycloak.org/v2beta1" "Keycloak" "keycloak-system" "keycloak") | default dict)) }}
+  {{- if not $kcHost }}{{- $missing = append $missing "Keycloak keycloak-system/keycloak with spec.hostname.hostname (policy-keycloak)" }}{{- end }}
   {{hub- end hub}}
   {{- if $missing }}
   {{-   fail (printf "The AutoShift CI endpoints are not available yet. Missing: %s" (join "; " $missing)) }}
@@ -127,6 +141,9 @@ object-templates-raw: |
         tufUrl: '{{ $tufUrl }}'
         oidcIssuer: 'https://{{ $kcHost }}/realms/{{hub $realm hub}}'
         signerIdentity: 'autoshift-ci@{{ $appsDomain }}'
+        {{hub- end hub}}
+        {{hub- if $tpaOn hub}}
+        tpaUrl: 'https://{{ $tpaHost }}'
         {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
@@ -167,5 +184,19 @@ object-templates-raw: |
       data:
         clientId: '{{ "autoshift-ci" | b64enc }}'
         clientSecret: '{{ $ciClient }}'
+        tokenUrl: '{{ printf "https://%s/realms/{{hub $realm hub}}/protocol/openid-connect/token" $kcHost | b64enc }}'
+  {{hub- end hub}}
+  {{hub- if $tpaOn hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tpa-autoshift-ci
+        namespace: autoshift-ci
+      type: Opaque
+      data:
+        clientId: '{{ "cli" | b64enc }}'
+        clientSecret: '{{ $tpaCli }}'
         tokenUrl: '{{ printf "https://%s/realms/{{hub $realm hub}}/protocol/openid-connect/token" $kcHost | b64enc }}'
   {{hub- end hub}}

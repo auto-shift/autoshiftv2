@@ -32,6 +32,11 @@ When `versionedClusterSets: true`, the version/branch is automatically appended 
 
 The value is sanitized for DNS compatibility (dots, slashes replaced with dashes, lowercased).
 
+`versionedClusterSetTag` replaces the version or branch in the suffix. With
+`versionedClusterSetTag: b-1eb7c9`, `hubClusterSets.hub` becomes `hub-b-1eb7c9` whatever the
+version, so clusters placed in it stay there when the deployment moves to a new version. The
+[AutoShift CI/CD](autoshift-cicd.md) branch deployments use it.
+
 ### Naming constraint: keep the application name short
 
 The policy namespace is derived from the **ArgoCD Application name** (`policies-<app-name>`) and the

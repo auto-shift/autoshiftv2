@@ -137,3 +137,43 @@ data:
   registryHost: registry.example.com
   registryNamespace: autoshift
   registryPushSecret: autoshift-registry
+---
+# The Pipelines as Code Repository policy-autoshift-cicd-source creates; prune-deployments reads it.
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: autoshift
+  namespace: autoshift-ci
+spec:
+  url: https://github.com/my-org/autoshiftv2
+  git_provider:
+    type: github
+    secret:
+      name: autoshift-pac-github
+      key: provider.token
+---
+# The Trusted Profile Analyzer server Route; the Operator generates its name, so
+# policy-autoshift-cicd-endpoints finds it by the Service it points to.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: server-abcde
+  namespace: tssc-tpa
+spec:
+  host: server-tssc-tpa.apps.example.com
+  to:
+    kind: Service
+    name: server
+---
+# The TPA integration Secret policy-trusted-profile-analyzer writes; Developer Hub and the app
+# namespaces read it while trusted-profile-analyzer is on.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tssc-tpa-integration
+  namespace: tssc-tpa
+type: Opaque
+data:
+  bombastic_api_url: aHR0cHM6Ly9zZXJ2ZXItdHNzYy10cGEuYXBwcy5leGFtcGxlLmNvbQ==
+  vexination_api_url: aHR0cHM6Ly9zZXJ2ZXItdHNzYy10cGEuYXBwcy5leGFtcGxlLmNvbQ==
+  collectorist_api_url: aHR0cHM6Ly9zZXJ2ZXItdHNzYy10cGEuYXBwcy5leGFtcGxlLmNvbQ==

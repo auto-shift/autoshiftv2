@@ -46,6 +46,9 @@ it by hand or need to understand what the automation does.
 | The site configuration seeded from the AutoShift values | `bootstrap-site-config` pipeline | [Site configuration repository](#site-configuration-repository) |
 | Signing client secret and the `autoshift-ci` Keycloak client | `policy-keycloak-realm-secrets` and `policy-keycloak-realm-import` | [Signing identity](#signing-identity) |
 | Test, publish, sign and verify every branch push | `.tekton/autoshift-push.yaml`, run by Pipelines as Code | [Push pipeline](#push-pipeline) |
+| Test, publish, sign, attest an SBOM and upload it to Trusted Profile Analyzer for every `v*` tag | `.tekton/autoshift-release.yaml`, run by Pipelines as Code | [Release pipeline](#release-pipeline) |
+| The Trusted Profile Analyzer URL and upload client in `autoshift-ci` | `policy-autoshift-cicd-endpoints` | [Release pipeline](#release-pipeline) |
+| Remove the deployments of deleted branches | `prune-deployments` CronJob, from `policy-autoshift-cicd-deployments` | [Deployments](#deployments) |
 | Deploy each signed build as its own AutoShift, on versioned ClusterSets | `policy-autoshift-cicd-deployments` and the push pipeline's deploy task | [Deployments](#deployments) |
 | The signing client in a realm imported before the client existed | `bootstrap-keycloak` pipeline | [Add the client to an existing realm](#add-the-client-to-an-existing-realm) |
 
@@ -512,10 +515,13 @@ curl -sf "${KEYCLOAK}/realms/${REALM}/protocol/openid-connect/token" \
 ## Push pipeline
 
 `.tekton/autoshift-push.yaml` runs on every push to a branch of the source repository. Everything
-specific to a hub comes from `autoshift-ci-endpoints`, so the file is the same on every hub:
+specific to a hub comes from `autoshift-ci-endpoints`, so the file is the same on every hub. The
+build, sign and deploy steps are Tasks in `.tekton/tasks/`, shared with the
+[release pipeline](#release-pipeline); Pipelines as Code resolves them by name:
 
 1. **endpoints**: reads the registry and push Secret, and sets the version to
-   `0.0.0-<branch>.<commit>`, with the branch lowercased and cut to 40 characters.
+   `0.0.0-<branch>.<commit>`, with the branch lowercased and cut to 24 characters, so the versioned
+   ClusterSet names built from the version stay within 63 characters.
 2. **fetch**: clones the pushed commit.
 3. **build**: on Red Hat's `ubi9/go-toolset` image, downloads helm and yq at the versions
    `versions.yaml` pins, runs `make test`, then runs `make release` without its push. It pushes every
@@ -553,13 +559,59 @@ cosign verify --certificate-identity "autoshift-ci@${DOMAIN}" \
 Push the bootstrap charts to `${REG}/bootstrap` and `autoshift-${VERSION}.tgz` to `${REG}` the same
 way.
 
+## Release pipeline
+
+`.tekton/autoshift-release.yaml` runs on every tag that starts with `v`, such as `v1.2.3` or
+`v1.2.3-rc.1`. It uses the same Tasks as the push pipeline, at the tag's version, and publishes beside
+the branch builds rather than under `dev`:
+
+1. **endpoints**: sets the version to the tag without its `v`, and fails a tag that is not SemVer.
+2. **fetch** and **build**: as in the push pipeline, publishing to `<registry>/<namespace>`.
+3. **sbom**: writes a CycloneDX SBOM of the release. The `autoshift` chart is its subject, with the
+   source repository and commit, and every other published chart is a component, identified by its
+   OCI digest.
+4. **sign**: signs and verifies every chart, then attaches the SBOM to the `autoshift` chart as a
+   signed CycloneDX attestation and verifies that too.
+5. **upload-sbom**: sends the SBOM to Trusted Profile Analyzer, which tracks its components against
+   new advisories. With `trusted-profile-analyzer` off, the hub has no Trusted Profile Analyzer and the
+   step says so and succeeds.
+6. **deploy**: writes `deployments/r-<id>.yaml`, where `<id>` is six hex digits of the version's
+   hash. A release file carries `tag` rather than `branch`, so `prune-deployments` never removes it,
+   and no `clusterSetTag`, so its ClusterSets are named with its version, such as `hub-1-2-3`.
+
+`policy-autoshift-cicd-endpoints` adds `tpaUrl`, the Trusted Profile Analyzer server Route, to
+`autoshift-ci-endpoints`, and copies Trusted Profile Analyzer's `cli` Keycloak client into
+`tpa-autoshift-ci`, while `trusted-profile-analyzer` is on. That client uses the client credentials
+grant and has the `create:document` scope.
+
+In evaluation, tag upstream and the poll mirrors the new tag into the hub's GitLab, which starts the
+run. To check a release by hand, with `DOMAIN`, `KEYCLOAK` and `REALM` set as in
+[Push pipeline](#push-pipeline):
+
+```bash
+REF=registry.example.com/autoshift/autoshift@<digest>
+cosign verify-attestation --type cyclonedx --certificate-identity "autoshift-ci@${DOMAIN}" \
+  --certificate-oidc-issuer "${KEYCLOAK}/realms/${REALM}" "${REF}" | jq -r .payload | base64 -d | jq .predicate
+```
+
+To upload an SBOM by hand, request a token for the `cli` client and post the file:
+
+```bash
+TPA_TOKEN=$(curl -sf "${KEYCLOAK}/realms/${REALM}/protocol/openid-connect/token" \
+  -d grant_type=client_credentials -d client_id=cli -d "client_secret=${CLI_SECRET}" | jq -r .access_token)
+curl -sf -X POST "https://server-tssc-tpa.${DOMAIN}/api/v2/sbom" -H "Authorization: Bearer ${TPA_TOKEN}" \
+  -H 'Content-Type: application/json' --data-binary @sbom.json
+```
+
 ## Deployments
 
 Each file in `deployments/` of the site configuration repository is one AutoShift deployment. The
-push pipeline writes one per branch after its build verifies:
+push pipeline writes one per branch after its build verifies, and the release pipeline one per
+release, with `tag` in place of `branch` and `clusterSetTag`:
 
 ```yaml
 name: b-1f2e3d                            # Application and release name, at most 11 characters
+clusterSetTag: b-1f2e3d                   # replaces the version in the ClusterSet names
 branch: feature/my-change
 commit: 9c698cb...
 chartRepo: registry.example.com/autoshift/dev
@@ -571,7 +623,8 @@ valuesRevision: main                      # site configuration branch or tag the
 Argo CD, which turns each file into an Application with two sources: the site configuration
 repository at `valuesRevision`, and the signed `autoshift` chart at `chartVersion`. The Application
 reads the files in `config.autoshift-cicd.deployments.valueFiles`, in order, and sets
-`autoshiftOciRepo`, `autoshiftOciVersion` and `versionedClusterSets: true`:
+`autoshiftOciRepo`, `autoshiftOciVersion`, `versionedClusterSets: true` and
+`versionedClusterSetTag` from `clusterSetTag`:
 
 ```yaml
 config:
@@ -580,18 +633,35 @@ config:
       valueFiles:
         - global.yaml
         - clustersets/hub.yaml
+      pruneSchedule: '0 * * * *'          # removes deployments of deleted branches; empty turns it off
 ```
 
-With versioned ClusterSets, a deployment owns copies of the ClusterSets in its values, named with its
-version, such as `hub-0-0-0-feature-my-change-9c698cb`. They start with no clusters, so the
-deployment's policies render on the hub and reach no cluster until you move one in. To test a
-build on a cluster, set that cluster's ClusterSet:
+With versioned ClusterSets, a deployment owns copies of the ClusterSets in its values. A branch
+deployment names them with its `clusterSetTag`, such as `hub-b-1f2e3d`, so they keep their name, and
+their clusters, from one build of the branch to the next. A file with no `clusterSetTag` names them
+with its version, such as `hub-0-0-1`. They start with no clusters, so the deployment's policies
+render on the hub and reach no cluster until you move one in. To test a branch on a cluster, set
+that cluster's ClusterSet:
 
 ```bash
-oc label managedcluster <cluster> cluster.open-cluster-management.io/clusterset=hub-0-0-0-feature-my-change-9c698cb --overwrite
+oc label managedcluster <cluster> cluster.open-cluster-management.io/clusterset=hub-b-1f2e3d --overwrite
 ```
 
 Removing a file removes its Application, and the Application's finalizer removes its policies.
+
+Deleting a branch gives Pipelines as Code nothing to run, so the `prune-deployments` CronJob in
+`autoshift-ci` removes the files instead. On `deployments.pruneSchedule` it lists the branches of the
+repository the builds came from and deletes each `deployments/b-*.yaml` whose `branch` is no longer
+there. That repository is `upstreamRepo` while `source.pollSchedule` is set, because the hub's
+GitLab copy keeps a branch that upstream deleted, and the Pipelines as Code Repository otherwise.
+A lookup that fails or returns no branches deletes nothing, and release files are never removed.
+An empty `pruneSchedule` removes the CronJob. By hand, delete the file and push:
+
+```bash
+git rm deployments/b-1f2e3d.yaml
+git commit -m "Remove the deployment of feature/my-change"
+git push
+```
 
 The policy also copies two credentials into the infra Argo CD namespace: `autoshift-site-config`
 for the site configuration repository, from the Secret named in `siteConfig`, and
@@ -632,6 +702,7 @@ spec:
           autoshiftOciRepo: oci://registry.example.com/autoshift/dev/policies
           autoshiftOciVersion: 0.0.0-feature-my-change.9c698cb
           versionedClusterSets: true
+          versionedClusterSetTag: b-1f2e3d
           policyGenerator: false
   syncPolicy:
     automated:

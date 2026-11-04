@@ -476,7 +476,7 @@ Day 2 failures that otherwise go unnoticed:
 |---|---|---|---|
 | `QuayGarbageCollectionStalled` | A namespace or repository garbage collection queue has held items for the threshold | `garbageCollectionStalledFor` | `6h` |
 | `QuayMirrorNotSynced` | Repositories configured for repository or organization mirroring have stayed unsynced for the threshold | `mirrorUnsyncedFor` | `2h` |
-| `QuaySecurityScanStalled` | Images were pushed within the threshold and none were scanned. An idle registry does not fire it | `scanStalledFor` | `1h` |
+| `QuaySecurityScanStalled` | No security worker request to Clair succeeded within the threshold. The worker checks Clair about every 30 seconds, so an idle registry does not fire it, and neither do pushes of Helm charts or signatures, which Quay does not scan | `scanStalledFor` | `15m` |
 
 Each threshold is a Prometheus duration under `config.quay.alerts`, and `severity` sets the label on
 all three:
@@ -487,7 +487,7 @@ config:
     alerts:
       severity: critical
       garbageCollectionStalledFor: 12h
-      scanStalledFor: 4h
+      scanStalledFor: 1h
 ```
 
 The defaults are starting points rather than Red Hat values. The rules render only while the

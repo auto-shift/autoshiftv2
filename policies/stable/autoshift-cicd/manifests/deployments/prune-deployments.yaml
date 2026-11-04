@@ -1,0 +1,141 @@
+# Removes the deployment of a branch that no longer exists. Deleting a branch sends Pipelines as Code
+# nothing to run, so this CronJob compares the branch in each site-config deployments/b-*.yaml with
+# the branches of the repository it was built from, and deletes the files whose branch is gone. The
+# ApplicationSet then removes those deployments. Release files, r-*.yaml, are never touched.
+#
+# The branches come from upstreamRepo while config.autoshift-cicd.source.pollSchedule is set, because
+# the hub's GitLab copy keeps a branch that upstream deleted, and from the Pipelines as Code
+# Repository otherwise. A lookup that fails, or returns no branches, deletes nothing.
+#
+# config.autoshift-cicd.deployments.pruneSchedule sets the cron schedule; empty removes the CronJob.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $cicd := (index $cfg "autoshift-cicd" | default dict) hub}}
+  {{hub- $srcCfg := (index $cicd "source" | default dict) hub}}
+  {{hub- $schedule := (dig "deployments" "pruneSchedule" "" $cicd) hub}}
+  {{hub- $polling := ne (index $srcCfg "pollSchedule" | default "") "" hub}}
+  {{hub- if $schedule hub}}
+  {{- $missing := list }}
+  {{- $ep := ((lookup "v1" "ConfigMap" "autoshift-ci" "autoshift-ci-endpoints") | default dict).data | default dict }}
+  {{- range $k := (list "siteConfigUrl" "siteConfigBranch" "siteConfigSecret" "siteConfigSecretKey" "siteConfigUser") }}
+  {{-   if not (index $ep $k) }}{{- $missing = append $missing (printf "%s in autoshift-ci/autoshift-ci-endpoints (policy-autoshift-cicd-endpoints)" $k) }}{{- end }}
+  {{- end }}
+  {{- $srcUrl := "{{hub (index $cicd "upstreamRepo" | default "https://github.com/auto-shift/autoshiftv2.git") hub}}" }}
+  {{- $srcSecret := "" }}
+  {{- $srcUser := "" }}
+  {{hub- if not $polling hub}}
+  {{- $repo := (lookup "pipelinesascode.tekton.dev/v1alpha1" "Repository" "autoshift-ci" "autoshift") | default dict }}
+  {{- $srcUrl = (dig "spec" "url" "" $repo) }}
+  {{- $srcSecret = (dig "spec" "git_provider" "secret" "name" "" $repo) }}
+  {{- $srcUser = ternary "oauth2" "x-access-token" (eq (dig "spec" "git_provider" "type" "" $repo) "gitlab") }}
+  {{- if not (and $srcUrl $srcSecret) }}{{- $missing = append $missing "the Pipelines as Code Repository autoshift-ci/autoshift with url and git_provider.secret (policy-autoshift-cicd-source)" }}{{- end }}
+  {{hub- end hub}}
+  {{- $gitImage := "" }}
+  {{- range $s := (dig "spec" "steps" (list) ((lookup "tekton.dev/v1" "Task" "openshift-pipelines" "git-clone") | default dict)) }}
+  {{-   if not $gitImage }}{{- $gitImage = (index $s "image" | default "") }}{{- end }}
+  {{- end }}
+  {{- if not $gitImage }}{{- $missing = append $missing "Task openshift-pipelines/git-clone (installed by the Pipelines Operator)" }}{{- end }}
+  {{- if $missing }}
+  {{-   fail (printf "The deployment prune cannot be set up yet. Missing: %s" (join "; " $missing)) }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: prune-deployments
+        namespace: autoshift-ci
+      spec:
+        schedule: '{{hub $schedule hub}}'
+        concurrencyPolicy: Forbid
+        successfulJobsHistoryLimit: 1
+        failedJobsHistoryLimit: 3
+        jobTemplate:
+          spec:
+            backoffLimit: 0
+            activeDeadlineSeconds: 300
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: prune
+                    image: '{{ $gitImage }}'
+                    env:
+                      - name: HOME
+                        value: /tmp
+                      - name: SOURCE_URL
+                        value: '{{ $srcUrl }}'
+                      - name: SOURCE_USER
+                        value: '{{ $srcUser }}'
+                      {{- if $srcSecret }}
+                      - name: SOURCE_TOKEN
+                        valueFrom:
+                          secretKeyRef:
+                            name: '{{ $srcSecret }}'
+                            key: provider.token
+                      {{- end }}
+                      - name: SITE_URL
+                        value: '{{ index $ep "siteConfigUrl" }}'
+                      - name: SITE_BRANCH
+                        value: '{{ index $ep "siteConfigBranch" }}'
+                      - name: SITE_USER
+                        value: '{{ index $ep "siteConfigUser" }}'
+                      - name: SITE_TOKEN
+                        valueFrom:
+                          secretKeyRef:
+                            name: '{{ index $ep "siteConfigSecret" }}'
+                            key: '{{ index $ep "siteConfigSecretKey" }}'
+                    command:
+                      - /bin/sh
+                      - -c
+                      - |
+                        set -eu
+                        # Credentials go through a helper, never into a URL that git could print.
+                        cat > /tmp/cred <<'EOF'
+                        #!/bin/sh
+                        [ "$1" = get ] || exit 0
+                        if [ "$CRED" = site ]; then echo "username=$SITE_USER"; echo "password=$SITE_TOKEN"
+                        elif [ -n "${SOURCE_TOKEN:-}" ]; then echo "username=$SOURCE_USER"; echo "password=$SOURCE_TOKEN"; fi
+                        EOF
+                        chmod +x /tmp/cred
+                        git config --global credential.helper /tmp/cred
+                        git config --global user.name "AutoShift CI"
+                        git config --global user.email autoshift-ci@localhost
+                        CRED=source git ls-remote --heads "$SOURCE_URL" | awk '{ sub("refs/heads/", "", $2); print $2 }' > /tmp/branches
+                        if [ ! -s /tmp/branches ]; then
+                          echo "ERROR: ${SOURCE_URL} returned no branches; deleting nothing" >&2
+                          exit 1
+                        fi
+                        export CRED=site
+                        git clone --quiet --depth 1 --branch "$SITE_BRANCH" "$SITE_URL" /tmp/site
+                        cd /tmp/site
+                        gone=""
+                        for f in deployments/b-*.yaml; do
+                          [ -f "$f" ] || continue
+                          b=$(sed -n 's/^branch: *//p' "$f" | head -1)
+                          [ -n "$b" ] || continue
+                          if ! grep -qxF "$b" /tmp/branches; then
+                            git rm --quiet "$f"
+                            gone="$gone $b"
+                          fi
+                        done
+                        if [ -z "$gone" ]; then
+                          echo "Every branch deployment still has its branch"
+                          exit 0
+                        fi
+                        git commit --quiet -m "Remove the deployments of deleted branches:$gone"
+                        for a in 1 2 3 4 5; do
+                          git push --quiet origin "HEAD:$SITE_BRANCH" && break
+                          [ "$a" = 5 ] && { echo "ERROR: could not push the removal" >&2; exit 1; }
+                          git pull --quiet --rebase origin "$SITE_BRANCH"
+                        done
+                        echo "Removed the deployments of:$gone"
+  {{hub- else hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: prune-deployments
+        namespace: autoshift-ci
+  {{hub- end hub}}

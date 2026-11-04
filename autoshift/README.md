@@ -146,6 +146,7 @@ Defined in `values/global.yaml` and always loaded first:
 | `autoshiftGitRepo` | `https://github.com/auto-shift/autoshiftv2.git` | Git repository URL for policy sources |
 | `autoshiftGitBranchTag` | `main` | Git branch or tag to track |
 | `versionedClusterSets` | `false` | Append version/branch suffix to clusterset names for gradual rollout |
+| `versionedClusterSetTag` | | Replaces the version/branch in that suffix, so clusterset names stay the same across versions |
 | `excludePolicies` | `[]` | List of policy folder names to exclude from all clusters |
 
 ## Label Precedence

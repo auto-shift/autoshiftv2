@@ -11,9 +11,9 @@ procedure in [AutoShift CI/CD](../../../docs/autoshift-cicd.md).
 | Policy | What it does |
 |---|---|
 | `policy-autoshift-cicd-bootstrap` | The `autoshift-ci` namespace, the bootstrap Tasks and Pipelines, and while `tas` is on, read access to the Keycloak admin Secret and realm import for `bootstrap-keycloak` |
-| `policy-autoshift-cicd-deployments` | The `autoshift-deployments` ApplicationSet, which deploys each file in `site-config/deployments/`, and the Argo CD credentials it needs |
+| `policy-autoshift-cicd-deployments` | The `autoshift-deployments` ApplicationSet, which deploys each file in `site-config/deployments/`, the Argo CD credentials it needs, and the `prune-deployments` CronJob, which removes the files of deleted branches |
 | `policy-autoshift-cicd-source` | The Pipelines as Code Repository for the AutoShift source on GitHub or GitLab |
-| `policy-autoshift-cicd-endpoints` | Gathers what the Tasks read into `autoshift-ci`: endpoint URLs, the trust bundle, the GitLab token, and while `tas` is on, the Trusted Artifact Signer URLs and the `autoshift-ci` signing client |
+| `policy-autoshift-cicd-endpoints` | Gathers what the Tasks read into `autoshift-ci`: endpoint URLs, the trust bundle, the GitLab token, while `tas` is on, the Trusted Artifact Signer URLs and the `autoshift-ci` signing client, and while `trusted-profile-analyzer` is on, its URL and the `cli` upload client |
 
 ## Labels and configuration
 
@@ -65,10 +65,15 @@ The Quay and GitLab endpoints are gathered only while the `quay` and `gitlab` la
 | Pipeline | Creates |
 |---|---|
 | `bootstrap-quay` | The Quay organization, a `<org>+ci` robot in a team with the creator role, and the robot's push Secret `quay-<org>-ci` |
-| `bootstrap-gitlab` | The GitLab group and the projects config places on the hub's GitLab: `autoshift` with the Pipelines as Code webhook and the upstream branches pushed into it, and `site-config` |
+| `bootstrap-gitlab` | The projects that `source.repo` and `siteConfig.repo` name by path on the hub's GitLab, with their groups: the source with the Pipelines as Code webhook and the upstream branches pushed into it, and site-config |
 | `bootstrap-site-config` | Seeds the site configuration repository, on GitHub or GitLab, once from `autoshift/values` |
-| `sync-upstream` | Pushes upstream branches and tags into the GitLab `autoshift` project again |
+| `sync-upstream` | Pushes upstream branches and tags into the source project on the hub's GitLab again |
 | `bootstrap-keycloak` | Copies the `autoshift-ci` signing client from the realm import into a realm imported before the client existed, then checks its token carries the claims Fulcio requires |
+
+Pipelines as Code runs the two pipelines in the repository's `.tekton/` directory: `autoshift-push`
+on every branch push, and `autoshift-release` on every `v*` tag, which also attests an SBOM and
+uploads it to Trusted Profile Analyzer. See
+[AutoShift CI/CD](../../../docs/autoshift-cicd.md#release-pipeline).
 
 Every task checks before it creates, so each pipeline is safe to run again. `sync-upstream` does not
 force unless you set `force=true`, so a branch changed in GitLab is reported rather than lost.

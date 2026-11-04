@@ -1,0 +1,72 @@
+# Writes a CycloneDX SBOM of a release to .ci/sbom.json: the AutoShift release as the subject, with its
+# source commit, and every chart in .ci/charts.txt as a component, identified by its OCI digest. The
+# autoshift-sign Task attaches it to the autoshift chart as a signed attestation, and
+# autoshift-sbom-upload sends it to Trusted Profile Analyzer.
+#
+# Used by autoshift-release.yaml; Pipelines as Code resolves it by name.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: autoshift-sbom
+spec:
+  params:
+    - name: registry
+      type: string
+      description: host/namespace the charts were published under.
+    - name: version
+      type: string
+    - name: repoUrl
+      type: string
+    - name: revision
+      type: string
+  workspaces:
+    - name: source
+  steps:
+    - name: generate
+      image: registry.access.redhat.com/ubi9/go-toolset:latest
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: REGISTRY
+          value: $(params.registry)
+        - name: VERSION
+          value: $(params.version)
+        - name: REPO_URL
+          value: $(params.repoUrl)
+        - name: REVISION
+          value: $(params.revision)
+      script: |
+        #!/usr/bin/env python3
+        import datetime, json, os, urllib.parse, uuid
+        reg, version = os.environ["REGISTRY"], os.environ["VERSION"]
+        def purl(ref):
+            repo, digest = ref.split("@", 1)
+            path, name = repo.rsplit("/", 1)
+            q = urllib.parse.urlencode(dict(repository_url=repo, tag=version))
+            return "pkg:oci/%s@%s?%s" % (name, urllib.parse.quote(digest, safe=""), q), name, digest
+        subject, components = None, []
+        for ref in open(".ci/charts.txt").read().split():
+            p, name, digest = purl(ref)
+            c = {"type": "application", "bom-ref": p, "name": name, "version": version, "purl": p,
+                 "hashes": [{"alg": "SHA-256", "content": digest.split(":", 1)[1]}],
+                 "externalReferences": [{"type": "distribution", "url": "oci://" + ref}]}
+            if ref.startswith(reg + "/autoshift@"):
+                subject = ref
+                root = dict(c, externalReferences=c["externalReferences"] + [{"type": "vcs", "url": os.environ["REPO_URL"], "comment": "commit " + os.environ["REVISION"]}])
+            else:
+                components.append(c)
+        if not subject:
+            raise SystemExit("ERROR: .ci/charts.txt has no %s/autoshift chart to describe" % reg)
+        bom = {
+            "bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1,
+            "serialNumber": "urn:uuid:" + str(uuid.uuid4()),
+            "metadata": {
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "tools": {"components": [{"type": "application", "name": "autoshift-release-pipeline"}]},
+                "component": root,
+            },
+            "components": components,
+            "dependencies": [{"ref": root["bom-ref"], "dependsOn": [c["bom-ref"] for c in components]}],
+        }
+        json.dump(bom, open(".ci/sbom.json", "w"), indent=1)
+        open(".ci/sbom-subject", "w").write(subject)
+        print("SBOM of autoshift %s with %d charts, for %s" % (version, len(components), subject))

@@ -41,6 +41,19 @@ expect:
         equals: autoshift
       - path: data.registryPushSecret
         equals: quay-autoshift-ci
+      - path: data.tpaUrl
+        equals: https://server-tssc-tpa.apps.example.com
+
+  # The release pipeline uploads SBOMs with Trusted Profile Analyzer's cli client.
+  - policy: policy-autoshift-cicd-endpoints
+    kind: Secret
+    namespace: autoshift-ci
+    name: tpa-autoshift-ci
+    fields:
+      - path: data.clientId
+        equals: Y2xp
+      - path: data.clientSecret
+        equals: ZmFrZS1jbGk=
 
   # Both repositories are on this GitLab: both projects, the webhook, and the upstream mirror.
   - policy: policy-autoshift-cicd-bootstrap
@@ -83,3 +96,17 @@ expect:
         equals: b2NpOi8vcmVnaXN0cnkuZXhhbXBsZS5jb20vYXV0b3NoaWZ0
       - path: data.type
         equals: b2Np
+
+  # While polling, deleted branches are looked up upstream, not in the hub's GitLab copy, which keeps
+  # them.
+  - policy: policy-autoshift-cicd-deployments
+    kind: CronJob
+    namespace: autoshift-ci
+    name: prune-deployments
+    fields:
+      - path: spec.schedule
+        equals: '*/30 * * * *'
+      - path: spec.jobTemplate.spec.template.spec.containers[name=prune].env[name=SOURCE_URL].value
+        equals: https://github.com/auto-shift/autoshiftv2.git
+      - path: spec.jobTemplate.spec.template.spec.containers[name=prune].env[name=SITE_URL].value
+        equals: https://github.com/my-org/autoshift-site-config.git

@@ -1,0 +1,92 @@
+# Signs every digest in .ci/charts.txt with one short-lived certificate for the autoshift-ci identity,
+# then verifies each signature against that identity and issuer. When the autoshift-sbom Task ran, it
+# also attaches .ci/sbom.json to the chart in .ci/sbom-subject as a signed CycloneDX attestation and
+# verifies it. Anything that does not verify fails the run.
+#
+# Shared by autoshift-push.yaml and autoshift-release.yaml; Pipelines as Code resolves it by name.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: autoshift-sign
+spec:
+  params:
+    - name: pushSecret
+      type: string
+  workspaces:
+    - name: source
+  volumes:
+    - name: push
+      secret:
+        secretName: $(params.pushSecret)
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+    - name: autoshift-ci-ca
+      configMap:
+        name: autoshift-ci-ca
+  stepTemplate:
+    workingDir: $(workspaces.source.path)
+    envFrom:
+      - configMapRef:
+          name: autoshift-ci-endpoints
+    env:
+      - name: HOME
+        value: /tekton/home
+      - name: DOCKER_CONFIG
+        value: /etc/autoshift-ci/push
+      - name: SSL_CERT_DIR
+        value: /etc/pki/ca-trust/extracted/pem:/etc/autoshift-ci/ca
+    volumeMounts:
+      - name: push
+        mountPath: /etc/autoshift-ci/push
+      - name: autoshift-ci-ca
+        mountPath: /etc/autoshift-ci/ca
+  steps:
+    - name: token
+      image: registry.access.redhat.com/ubi9/go-toolset:latest
+      env:
+        - name: TOKEN_URL
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-autoshift-ci
+              key: tokenUrl
+        - name: CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-autoshift-ci
+              key: clientId
+        - name: CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-autoshift-ci
+              key: clientSecret
+      script: |
+        #!/usr/bin/env python3
+        import glob, json, os, ssl, urllib.parse, urllib.request
+        ctx = ssl.create_default_context()
+        for pem in glob.glob("/etc/autoshift-ci/ca/*"):
+            ctx.load_verify_locations(cafile=pem)
+        form = urllib.parse.urlencode(dict(grant_type="client_credentials", client_id=os.environ["CLIENT_ID"], client_secret=os.environ["CLIENT_SECRET"])).encode()
+        with urllib.request.urlopen(urllib.request.Request(os.environ["TOKEN_URL"], data=form), context=ctx, timeout=60) as r:
+            token = json.load(r)["access_token"]
+        open("/tekton/home/token", "w").write(token)
+        print("Got a signing token for " + os.environ["CLIENT_ID"])
+    - name: sign-and-verify
+      image: registry.redhat.io/rhtas/cosign-rhel9:1.5.0
+      script: |
+        #!/bin/sh
+        set -eu
+        cosign initialize --mirror "$tufUrl" --root "$tufUrl/root.json"
+        cosign sign --yes --identity-token "$(cat /tekton/home/token)" $(cat .ci/charts.txt)
+        n=0
+        while read -r ref; do
+          cosign verify --certificate-identity "$signerIdentity" --certificate-oidc-issuer "$oidcIssuer" "$ref" >/dev/null
+          n=$((n + 1))
+        done < .ci/charts.txt
+        echo "Signed and verified ${n} charts as ${signerIdentity}"
+        if [ -f .ci/sbom.json ]; then
+          subject=$(cat .ci/sbom-subject)
+          cosign attest --yes --identity-token "$(cat /tekton/home/token)" --type cyclonedx --predicate .ci/sbom.json "$subject"
+          cosign verify-attestation --type cyclonedx --certificate-identity "$signerIdentity" --certificate-oidc-issuer "$oidcIssuer" "$subject" >/dev/null
+          echo "Attested and verified the SBOM on ${subject}"
+        fi

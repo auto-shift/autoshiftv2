@@ -1,0 +1,103 @@
+# Tests AutoShift, packages every chart with make release (without its push), then pushes each chart
+# and records the digest it was stored under in .ci/charts.txt, which is what gets signed. Runs on Red
+# Hat's Go toolset image: GOTOOLCHAIN=auto fetches the Go that tools/go.mod names, and the tools step
+# adds helm and yq at the versions versions.yaml pins.
+#
+# Shared by autoshift-push.yaml and autoshift-release.yaml; Pipelines as Code resolves it by name.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: autoshift-build
+spec:
+  params:
+    - name: registry
+      type: string
+      description: host/namespace the charts publish under.
+    - name: pushSecret
+      type: string
+    - name: version
+      type: string
+  workspaces:
+    - name: source
+  results:
+    - name: charts
+      description: How many charts were published.
+  volumes:
+    - name: push
+      secret:
+        secretName: $(params.pushSecret)
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+    - name: autoshift-ci-ca
+      configMap:
+        name: autoshift-ci-ca
+  stepTemplate:
+    image: registry.access.redhat.com/ubi9/go-toolset:latest
+    workingDir: $(workspaces.source.path)
+    env:
+      - name: HOME
+        value: /tekton/home
+      - name: PATH
+        value: /tekton/home/bin:/opt/app-root/src/go/bin:/usr/local/bin:/usr/bin:/bin
+      - name: GOTOOLCHAIN
+        value: auto
+      - name: GOPATH
+        value: /tekton/home/go
+      - name: GOCACHE
+        value: /tekton/home/.cache/go-build
+  steps:
+    - name: tools
+      script: |
+        #!/bin/sh
+        set -eu
+        # renovate: datasource=github-releases depName=helm/helm
+        HELM_VERSION=v4.2.4
+        # renovate: datasource=github-releases depName=mikefarah/yq
+        YQ_VERSION=v4.54.1
+        mkdir -p /tekton/home/bin
+        curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar xz -C /tmp linux-amd64/helm
+        install -m 0755 /tmp/linux-amd64/helm /tekton/home/bin/helm
+        curl -fsSL -o /tekton/home/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+        chmod 0755 /tekton/home/bin/yq
+        helm version --short && yq --version && go version
+    - name: test
+      script: |
+        #!/bin/sh
+        set -eu
+        make install-policy-generator
+        make test
+    - name: publish
+      volumeMounts:
+        - name: push
+          mountPath: /etc/autoshift-ci/push
+        - name: autoshift-ci-ca
+          mountPath: /etc/autoshift-ci/ca
+      env:
+        - name: HELM_REGISTRY_CONFIG
+          value: /etc/autoshift-ci/push/config.json
+        - name: SSL_CERT_DIR
+          value: /etc/pki/ca-trust/extracted/pem:/etc/autoshift-ci/ca
+      script: |
+        #!/bin/sh
+        set -eu
+        host=$(printf '%s' "$(params.registry)" | cut -d/ -f1)
+        ns=$(printf '%s' "$(params.registry)" | cut -d/ -f2-)
+        make release VERSION="$(params.version)" REGISTRY="$host" REGISTRY_NAMESPACE="$ns" INCLUDE_MIRROR=false DRY_RUN=true
+        mkdir -p .ci && : > .ci/charts.txt
+        push() {
+          for a in 1 2 3 4 5; do
+            out=$(helm push "$1" "oci://$2" 2>&1) && break
+            echo "    retry $a: $out"; sleep 3
+          done
+          digest=$(printf '%s\n' "$out" | sed -n 's/^Digest: //p')
+          [ -n "$digest" ] || { echo "ERROR: push of $1 failed: $out" >&2; exit 1; }
+          name=$(helm show chart "$1" | sed -n 's/^name: //p')
+          echo "$2/${name}@${digest}" >> .ci/charts.txt
+        }
+        for c in .helm-charts/bootstrap/*.tgz; do push "$c" "$(params.registry)/bootstrap"; done
+        push ".helm-charts/autoshift-$(params.version).tgz" "$(params.registry)"
+        for c in .helm-charts/policies/*.tgz; do push "$c" "$(params.registry)/policies"; done
+        n=$(wc -l < .ci/charts.txt | tr -d ' ')
+        printf '%s' "$n" > "$(results.charts.path)"
+        echo "Published ${n} charts as $(params.version)"

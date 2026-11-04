@@ -79,7 +79,11 @@ object-templates-raw: |
   {{- end }}
   {{- end }}
   {{- $specArgs := ($specs | join " ") }}
-  {{- $jobName := (printf "acs-crs-generate-%s" (($names | join " ") | sha256sum | trunc 8)) }}
+  {{- /* A Job's template is immutable, so the name hashes everything that changes it: the cluster
+     specs, both resolved images, and $jobRev, which a change to the scripts below must bump.
+     A new name is a new Job, and it mints only where a CRS is missing or expired. */ -}}
+  {{- $jobRev := "2" }}
+  {{- $jobName := (printf "acs-crs-generate-%s" ((list $jobRev $specArgs $cliImage $roxctlImage) | join " " | sha256sum | trunc 8)) }}
   {{- if $names }}
   - complianceType: musthave
     objectDefinition:
@@ -130,8 +134,6 @@ object-templates-raw: |
       apiVersion: batch/v1
       kind: Job
       metadata:
-        # Named after the set of secured clusters. musthave never updates an existing Job,
-        # so a stable name would never pick up a newly joined cluster.
         name: '{{ $jobName }}'
         namespace: stackrox
         labels:
@@ -188,6 +190,15 @@ object-templates-raw: |
                 # roxctl is on PATH in the standalone roxctl image and under /stackrox in the main
                 # image, which is what Central runs.
                 ROXCTL="$(command -v roxctl || echo /stackrox/roxctl)"
+                # Central can be Running before it answers, and a failed attempt leaves a failed pod.
+                if [ -s /shared/needed ]; then
+                  i=0
+                  until "$ROXCTL" -e central.stackrox.svc:443 --insecure-skip-tls-verify central whoami >/dev/null 2>&1; do
+                    i=$((i+1))
+                    [ "$i" -lt 60 ] || { echo "Central did not answer in 10 minutes" >&2; exit 1; }
+                    sleep 10
+                  done
+                fi
                 while read -r c validfor maxc; do
                   [ -n "$c" ] || continue
                   "$ROXCTL" -e central.stackrox.svc:443 --insecure-skip-tls-verify \

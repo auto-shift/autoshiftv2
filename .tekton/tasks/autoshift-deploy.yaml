@@ -1,0 +1,101 @@
+# Records a signed build in site-config, which deploys it: deployments/<deployName>.yaml names the
+# chart version, and the autoshift-deployments ApplicationSet turns the file into an Application. A
+# branch file carries branch, which prune-deployments checks, and a clusterSetTag, so the branch keeps
+# its ClusterSet names from one build to the next. A release file carries tag and no clusterSetTag, so
+# its ClusterSets are named with its version. A file whose content is unchanged is not committed again.
+#
+# Shared by autoshift-push.yaml and autoshift-release.yaml; Pipelines as Code resolves it by name.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: autoshift-deploy
+spec:
+  params:
+    - name: deployName
+      type: string
+    - name: registry
+      type: string
+    - name: version
+      type: string
+    - name: refKind
+      type: string
+      description: branch or tag.
+    - name: ref
+      type: string
+      description: The branch or tag name.
+    - name: revision
+      type: string
+  volumes:
+    - name: autoshift-ci-ca
+      configMap:
+        name: autoshift-ci-ca
+  steps:
+    - name: write
+      image: registry.access.redhat.com/ubi9/go-toolset:latest
+      envFrom:
+        - configMapRef:
+            name: autoshift-ci-endpoints
+      env:
+        - name: HOME
+          value: /tekton/home
+        - name: REF_KIND
+          value: $(params.refKind)
+      volumeMounts:
+        - name: autoshift-ci-ca
+          mountPath: /etc/autoshift-ci/ca
+      script: |
+        #!/bin/sh
+        set -eu
+        case "$REF_KIND" in
+          branch) extra="clusterSetTag: $(params.deployName)
+        branch: $(params.ref)" ;;
+          tag) extra="tag: $(params.ref)" ;;
+          *) echo "ERROR: refKind must be branch or tag, not ${REF_KIND}" >&2; exit 1 ;;
+        esac
+        token_file=$(mktemp)
+        # The site-config push token, read through the API so the Secret name can come from
+        # autoshift-ci-endpoints rather than from this file.
+        python3 - "$siteConfigSecret" "$siteConfigSecretKey" "$token_file" <<'PY'
+        import base64, json, ssl, sys, urllib.request
+        name, key, out = sys.argv[1:]
+        ns = open("/var/run/secrets/kubernetes.io/serviceaccount/namespace").read()
+        tok = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read()
+        ctx = ssl.create_default_context(cafile="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+        req = urllib.request.Request("https://kubernetes.default.svc/api/v1/namespaces/%s/secrets/%s" % (ns, name))
+        req.add_header("Authorization", "Bearer " + tok)
+        data = json.load(urllib.request.urlopen(req, context=ctx, timeout=30))["data"]
+        open(out, "w").write(base64.b64decode(data[key]).decode())
+        PY
+        cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/autoshift-ci/ca/* > /tekton/home/ca.pem
+        git config --global http.sslCAInfo /tekton/home/ca.pem
+        git config --global user.name "AutoShift CI"
+        git config --global user.email "${signerIdentity}"
+        auth=$(printf '%s:%s' "$siteConfigUser" "$(cat "$token_file")" | base64 | tr -d '\n')
+        rm -f "$token_file"
+        site() { git -c "http.extraHeader=Authorization: Basic ${auth}" "$@"; }
+        site clone --quiet --depth 1 --branch "$siteConfigBranch" "$siteConfigUrl" /tekton/home/site
+        cd /tekton/home/site
+        file="deployments/$(params.deployName).yaml"
+        mkdir -p deployments
+        cat > "$file" <<EOF
+        # Written by the AutoShift pipeline for ${REF_KIND} $(params.ref). The
+        # autoshift-deployments ApplicationSet deploys it; removing the file removes the deployment.
+        name: $(params.deployName)
+        ${extra}
+        commit: $(params.revision)
+        chartRepo: $(params.registry)
+        chartVersion: $(params.version)
+        valuesRevision: ${siteConfigBranch}
+        EOF
+        git add "$file"
+        if git diff --cached --quiet; then
+          echo "${file} already deploys $(params.version)"
+          exit 0
+        fi
+        git commit --quiet -m "Deploy ${REF_KIND} $(params.ref) as $(params.deployName): $(params.version)"
+        for a in 1 2 3 4 5; do
+          site push --quiet origin "HEAD:${siteConfigBranch}" && break
+          [ "$a" = 5 ] && { echo "ERROR: could not push ${file}" >&2; exit 1; }
+          site pull --quiet --rebase origin "$siteConfigBranch"
+        done
+        echo "Deploying $(params.version) as $(params.deployName) through ${siteConfigUrl} ${file}"

@@ -12,7 +12,7 @@ object-templates-raw: |
   {{hub- $severity := (index $alertCfg "severity" | default "warning") hub}}
   {{hub- $gcFor := (index $alertCfg "garbageCollectionStalledFor" | default "6h") hub}}
   {{hub- $mirrorFor := (index $alertCfg "mirrorUnsyncedFor" | default "2h") hub}}
-  {{hub- $scanFor := (index $alertCfg "scanStalledFor" | default "1h") hub}}
+  {{hub- $scanFor := (index $alertCfg "scanStalledFor" | default "15m") hub}}
   {{hub- $monitoring := true hub}}
   {{hub- $components := (index $quayCfg "components" | default dict) hub}}
   {{hub- if hasKey $components "monitoring" hub}}{{hub- $monitoring = index $components "monitoring" hub}}{{hub- end hub}}
@@ -52,19 +52,20 @@ object-templates-raw: |
                     {{ "{{" }} $value {{ "}}" }} repositories configured for mirroring have not synced. Check
                     the mirror status of those repositories, the robot account credentials, and that the
                     quay-mirror pods can reach the upstream registry.
-              # Fires only when images were pushed and none were scanned, so an idle registry stays quiet.
+              # The security worker asks Clair for its index state about every 30 seconds whether or not
+              # anything was pushed, so no successful answer means scanning has stopped. Counting pushes
+              # instead fired on Helm charts and signatures, which Quay never sends to Clair.
               # Request series are reported once per mirror pod, keyed by host, so dedupe before summing.
-              # A scan is a Clair Index request; quay_secscan_v2_scan_duration_seconds stays at 0 on 3.18.2.
               - alert: QuaySecurityScanStalled
                 expr: >-
-                  sum(max by (host) (increase(quay_registry_image_pushed_bytes_total{namespace="quay-enterprise"}[{{hub $scanFor hub}}]))) > 0
-                  and on() (sum(max by (host) (increase(quay_secscan_request_duration_seconds_count{namespace="quay-enterprise", action="Index"}[{{hub $scanFor hub}}]))) or vector(0)) == 0
+                  (sum(max by (host) (increase(quay_secscan_request_duration_seconds_count{namespace="quay-enterprise", action="IndexState", status="200"}[{{hub $scanFor hub}}]))) or vector(0)) == 0
                 for: 15m
                 labels:
                   severity: '{{hub $severity hub}}'
                 annotations:
-                  summary: Red Hat Quay has scanned no images in {{hub $scanFor hub}} despite new pushes.
+                  summary: Red Hat Quay's security worker has had no answer from Clair in {{hub $scanFor hub}}.
                   description: >-
-                    Images were pushed in the last {{hub $scanFor hub}} but the security worker scanned
-                    none, so vulnerability reports are missing. Check that the clair-app pods are Ready,
-                    have the memory they need, and can reach their database.
+                    No security worker request to Clair succeeded in the last {{hub $scanFor hub}}, so
+                    new images are not being scanned and vulnerability reports are missing. Check that
+                    the clair-app pods are Ready, have the memory they need, and can reach their
+                    database, and that the quay-app pods are running.

@@ -1,0 +1,196 @@
+# Pipelines as Code: every v* tag is an AutoShift release. It tests AutoShift, publishes its charts at
+# the tag's version, writes a CycloneDX SBOM of them, signs every chart and attests the SBOM on the
+# autoshift chart keyless through Red Hat Trusted Artifact Signer, uploads the SBOM to Trusted Profile
+# Analyzer while that is enabled, and deploys the release.
+#
+# Everything hub-specific comes from the autoshift-ci-endpoints ConfigMap, as in autoshift-push.yaml.
+# Releases publish under <registry namespace>, beside the branch builds in <registry namespace>/dev,
+# and each is deployed through site-config/deployments/r-<id>.yaml on ClusterSets named with its
+# version, such as hub-1-2-3.
+#
+# The build, sbom, sign and deploy Tasks are in .tekton/tasks/, shared with autoshift-push.yaml;
+# Pipelines as Code resolves them by name. See docs/autoshift-cicd.md.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: autoshift-release-
+  annotations:
+    pipelinesascode.tekton.dev/on-cel-expression: event == "push" && target_branch.startsWith("refs/tags/v")
+    pipelinesascode.tekton.dev/max-keep-runs: '5'
+spec:
+  params:
+    - name: repoUrl
+      value: '{{ repo_url }}'
+    - name: revision
+      value: '{{ revision }}'
+    - name: tag
+      value: '{{ target_branch }}'
+  taskRunTemplate:
+    serviceAccountName: pipeline
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 2Gi
+    - name: git-auth
+      secret:
+        secretName: '{{ git_auth_secret }}'
+  pipelineSpec:
+    params:
+      - name: repoUrl
+        type: string
+      - name: revision
+        type: string
+      - name: tag
+        type: string
+    workspaces:
+      - name: source
+      - name: git-auth
+    tasks:
+      # The hub's registry, push Secret and signing settings, and the release version from the tag.
+      - name: endpoints
+        params:
+          - name: tag
+            value: $(params.tag)
+        taskSpec:
+          params:
+            - name: tag
+              type: string
+          results:
+            - name: registry
+              description: host/namespace that releases publish under.
+            - name: pushSecret
+            - name: version
+            - name: deployName
+              description: r- and six hex digits of the version hash, short enough for a release name.
+            - name: tag
+              description: The tag name, without refs/tags/.
+          steps:
+            - name: read
+              image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+              envFrom:
+                - configMapRef:
+                    name: autoshift-ci-endpoints
+              env:
+                - name: TAG
+                  value: $(params.tag)
+              script: |
+                #!/bin/sh
+                set -eu
+                for k in registryHost registryNamespace registryPushSecret tufUrl signerIdentity oidcIssuer siteConfigUrl siteConfigSecret; do
+                  eval "v=\${$k:-}"
+                  [ -n "$v" ] || { echo "ERROR: autoshift-ci-endpoints has no $k; check policy-autoshift-cicd-endpoints" >&2; exit 1; }
+                done
+                tag="${TAG#refs/tags/}"
+                version="${tag#v}"
+                # The same rule as make validate-version, checked here so a bad tag fails before the build.
+                if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+                  echo "ERROR: tag ${tag} is not v<SemVer>, such as v1.2.3 or v1.2.3-rc.1" >&2
+                  exit 1
+                fi
+                printf '%s' "${registryHost}/${registryNamespace}" > "$(results.registry.path)"
+                printf '%s' "$registryPushSecret" > "$(results.pushSecret.path)"
+                printf '%s' "$version" > "$(results.version.path)"
+                printf 'r-%s' "$(printf '%s' "$version" | sha256sum | cut -c1-6)" > "$(results.deployName.path)"
+                printf '%s' "$tag" > "$(results.tag.path)"
+                echo "Release ${version} publishes to ${registryHost}/${registryNamespace}"
+
+      - name: fetch
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: git-clone
+            - name: namespace
+              value: openshift-pipelines
+        params:
+          - name: URL
+            value: $(params.repoUrl)
+          - name: REVISION
+            value: $(params.revision)
+        workspaces:
+          - name: output
+            workspace: source
+          - name: basic-auth
+            workspace: git-auth
+
+      - name: build
+        runAfter:
+          - endpoints
+          - fetch
+        taskRef:
+          name: autoshift-build
+        params:
+          - name: registry
+            value: $(tasks.endpoints.results.registry)
+          - name: pushSecret
+            value: $(tasks.endpoints.results.pushSecret)
+          - name: version
+            value: $(tasks.endpoints.results.version)
+        workspaces:
+          - name: source
+            workspace: source
+
+      - name: sbom
+        runAfter:
+          - build
+        taskRef:
+          name: autoshift-sbom
+        params:
+          - name: registry
+            value: $(tasks.endpoints.results.registry)
+          - name: version
+            value: $(tasks.endpoints.results.version)
+          - name: repoUrl
+            value: $(params.repoUrl)
+          - name: revision
+            value: $(params.revision)
+        workspaces:
+          - name: source
+            workspace: source
+
+      - name: sign
+        runAfter:
+          - sbom
+        taskRef:
+          name: autoshift-sign
+        params:
+          - name: pushSecret
+            value: $(tasks.endpoints.results.pushSecret)
+        workspaces:
+          - name: source
+            workspace: source
+
+      - name: upload-sbom
+        runAfter:
+          - sign
+        taskRef:
+          name: autoshift-sbom-upload
+        workspaces:
+          - name: source
+            workspace: source
+
+      - name: deploy
+        runAfter:
+          - sign
+        taskRef:
+          name: autoshift-deploy
+        params:
+          - name: deployName
+            value: $(tasks.endpoints.results.deployName)
+          - name: registry
+            value: $(tasks.endpoints.results.registry)
+          - name: version
+            value: $(tasks.endpoints.results.version)
+          - name: refKind
+            value: tag
+          - name: ref
+            value: $(tasks.endpoints.results.tag)
+          - name: revision
+            value: $(params.revision)

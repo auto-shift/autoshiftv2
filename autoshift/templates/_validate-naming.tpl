@@ -14,12 +14,15 @@ AutoShift enforces:
 {{/*
 Compute the clusterSet suffix for versioned deployments.
 Returns "-{sanitized-version-tag}" when versionedClusterSets is true, empty string otherwise.
+versionedClusterSetTag, when set, replaces the version, so the names stay the same across versions.
 This is the single source of truth — autoshift-app-set.yaml and the configmap templates use this.
 */}}
 {{- define "autoshift.clusterSetSuffix" -}}
 {{- if .Values.versionedClusterSets -}}
   {{- $versionTag := "" -}}
-  {{- if eq (include "autoshift.ociMode" .) "true" -}}
+  {{- if .Values.versionedClusterSetTag -}}
+    {{- $versionTag = .Values.versionedClusterSetTag -}}
+  {{- else if eq (include "autoshift.ociMode" .) "true" -}}
     {{- $versionTag = .Values.autoshiftOciVersion -}}
   {{- else -}}
     {{- $versionTag = .Values.autoshiftGitBranchTag | default "main" -}}

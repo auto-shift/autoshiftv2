@@ -2,8 +2,9 @@
 # ApplicationSet in the infra Argo CD turns each file into an Application that renders the signed
 # autoshift chart, at the version the file names, with the site's values. Each deployment uses
 # versioned ClusterSets, so it owns copies such as hub-<version> that start with no clusters: its
-# policies render but reach a cluster only when one is moved into its ClusterSet. Removing a file
-# removes its deployment.
+# policies render but reach a cluster only when one is moved into its ClusterSet. A file's
+# clusterSetTag replaces the version in those names, so a branch keeps hub-b-<id> from one build to
+# the next. Removing a file removes its deployment.
 #
 # config.autoshift-cicd.deployments.valueFiles lists the site-config files each deployment reads, in
 # order. The {{ "{{" }} ... {{ "}}" }} expressions are the ApplicationSet's own Go templates, which
@@ -64,6 +65,7 @@ object-templates-raw: |
                     autoshiftOciRepo: '{{ "{{" }} printf "oci://%s/policies" .chartRepo {{ "}}" }}'
                     autoshiftOciVersion: '{{ "{{" }} .chartVersion {{ "}}" }}'
                     versionedClusterSets: true
+                    versionedClusterSetTag: '{{ "{{" }} dig "clusterSetTag" "" . {{ "}}" }}'
                     policyGenerator: false
             syncPolicy:
               automated:

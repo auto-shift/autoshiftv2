@@ -1,0 +1,68 @@
+# Uploads .ci/sbom.json to Trusted Profile Analyzer with its cli client, from the tpaUrl in
+# autoshift-ci-endpoints and the tpa-autoshift-ci Secret. With trusted-profile-analyzer off there is
+# no tpaUrl, and the upload is skipped with a message.
+#
+# Used by autoshift-release.yaml; Pipelines as Code resolves it by name.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: autoshift-sbom-upload
+spec:
+  workspaces:
+    - name: source
+  volumes:
+    - name: autoshift-ci-ca
+      configMap:
+        name: autoshift-ci-ca
+  steps:
+    - name: upload
+      image: registry.access.redhat.com/ubi9/go-toolset:latest
+      workingDir: $(workspaces.source.path)
+      envFrom:
+        - configMapRef:
+            name: autoshift-ci-endpoints
+      env:
+        - name: TOKEN_URL
+          valueFrom:
+            secretKeyRef:
+              name: tpa-autoshift-ci
+              key: tokenUrl
+              optional: true
+        - name: CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: tpa-autoshift-ci
+              key: clientId
+              optional: true
+        - name: CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: tpa-autoshift-ci
+              key: clientSecret
+              optional: true
+      volumeMounts:
+        - name: autoshift-ci-ca
+          mountPath: /etc/autoshift-ci/ca
+      script: |
+        #!/usr/bin/env python3
+        import glob, json, os, ssl, sys, urllib.error, urllib.parse, urllib.request
+        tpa = os.environ.get("tpaUrl", "")
+        if not tpa:
+            print("Trusted Profile Analyzer is not enabled on this hub (no tpaUrl in autoshift-ci-endpoints); not uploading the SBOM")
+            sys.exit(0)
+        if not os.environ.get("CLIENT_SECRET"):
+            sys.exit("ERROR: Secret autoshift-ci/tpa-autoshift-ci is missing; check policy-autoshift-cicd-endpoints")
+        ctx = ssl.create_default_context()
+        for pem in glob.glob("/etc/autoshift-ci/ca/*"):
+            ctx.load_verify_locations(cafile=pem)
+        form = urllib.parse.urlencode(dict(grant_type="client_credentials", client_id=os.environ["CLIENT_ID"], client_secret=os.environ["CLIENT_SECRET"])).encode()
+        with urllib.request.urlopen(urllib.request.Request(os.environ["TOKEN_URL"], data=form), context=ctx, timeout=60) as r:
+            token = json.load(r)["access_token"]
+        req = urllib.request.Request(tpa.rstrip("/") + "/api/v2/sbom", data=open(".ci/sbom.json", "rb").read(), method="POST")
+        req.add_header("Authorization", "Bearer " + token)
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, context=ctx, timeout=120) as r:
+                print("Uploaded the SBOM to %s: %s" % (tpa, r.read().decode()[:300]))
+        except urllib.error.HTTPError as e:
+            sys.exit("ERROR: Trusted Profile Analyzer refused the SBOM (%s): %s" % (e.code, e.read().decode()[:500]))

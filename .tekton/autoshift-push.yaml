@@ -8,7 +8,8 @@
 # <registry namespace>/dev, versioned 0.0.0-<branch>.<commit>, and each signed build is deployed
 # through site-config/deployments/b-<id>.yaml, which the autoshift-deployments ApplicationSet reads.
 #
-# See docs/autoshift-cicd.md.
+# The build, sign and deploy Tasks are in .tekton/tasks/, shared with autoshift-release.yaml; Pipelines
+# as Code resolves them by name. See docs/autoshift-cicd.md.
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
@@ -70,6 +71,8 @@ spec:
             - name: version
             - name: deployName
               description: b- and six hex digits of the branch hash, short enough for a release name.
+            - name: branch
+              description: The branch name, without refs/heads/.
           steps:
             - name: read
               image: registry.access.redhat.com/ubi9/ubi-minimal:latest
@@ -97,6 +100,7 @@ spec:
                 printf '%s' "$registryPushSecret" > "$(results.pushSecret.path)"
                 printf '%s' "$version" > "$(results.version.path)"
                 printf 'b-%s' "$(printf '%s' "${BRANCH#refs/heads/}" | sha256sum | cut -c1-6)" > "$(results.deployName.path)"
+                printf '%s' "${BRANCH#refs/heads/}" > "$(results.branch.path)"
                 echo "Branch build ${version} publishes to ${registryHost}/${registryNamespace}/dev"
 
       - name: fetch
@@ -120,14 +124,12 @@ spec:
           - name: basic-auth
             workspace: git-auth
 
-      # Tests AutoShift, packages every chart with make release (without its push), then pushes each
-      # chart and records the digest it was stored under, which is what gets signed. Runs on Red Hat's
-      # Go toolset image: GOTOOLCHAIN=auto fetches the Go that tools/go.mod names, and the tools step
-      # adds helm and yq at the versions versions.yaml pins.
       - name: build
         runAfter:
           - endpoints
           - fetch
+        taskRef:
+          name: autoshift-build
         params:
           - name: registry
             value: $(tasks.endpoints.results.registry)
@@ -138,194 +140,24 @@ spec:
         workspaces:
           - name: source
             workspace: source
-        taskSpec:
-          params:
-            - name: registry
-              type: string
-            - name: pushSecret
-              type: string
-            - name: version
-              type: string
-          workspaces:
-            - name: source
-          results:
-            - name: charts
-              description: How many charts were published.
-          volumes:
-            - name: push
-              secret:
-                secretName: $(params.pushSecret)
-                items:
-                  - key: .dockerconfigjson
-                    path: config.json
-            - name: autoshift-ci-ca
-              configMap:
-                name: autoshift-ci-ca
-          stepTemplate:
-            image: registry.access.redhat.com/ubi9/go-toolset:latest
-            workingDir: $(workspaces.source.path)
-            env:
-              - name: HOME
-                value: /tekton/home
-              - name: PATH
-                value: /tekton/home/bin:/opt/app-root/src/go/bin:/usr/local/bin:/usr/bin:/bin
-              - name: GOTOOLCHAIN
-                value: auto
-              - name: GOPATH
-                value: /tekton/home/go
-              - name: GOCACHE
-                value: /tekton/home/.cache/go-build
-          steps:
-            - name: tools
-              script: |
-                #!/bin/sh
-                set -eu
-                # renovate: datasource=github-releases depName=helm/helm
-                HELM_VERSION=v4.2.4
-                # renovate: datasource=github-releases depName=mikefarah/yq
-                YQ_VERSION=v4.54.1
-                mkdir -p /tekton/home/bin
-                curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar xz -C /tmp linux-amd64/helm
-                install -m 0755 /tmp/linux-amd64/helm /tekton/home/bin/helm
-                curl -fsSL -o /tekton/home/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-                chmod 0755 /tekton/home/bin/yq
-                helm version --short && yq --version && go version
-            - name: test
-              script: |
-                #!/bin/sh
-                set -eu
-                make install-policy-generator
-                make test
-            - name: publish
-              volumeMounts:
-                - name: push
-                  mountPath: /etc/autoshift-ci/push
-                - name: autoshift-ci-ca
-                  mountPath: /etc/autoshift-ci/ca
-              env:
-                - name: HELM_REGISTRY_CONFIG
-                  value: /etc/autoshift-ci/push/config.json
-                - name: SSL_CERT_DIR
-                  value: /etc/pki/ca-trust/extracted/pem:/etc/autoshift-ci/ca
-              script: |
-                #!/bin/sh
-                set -eu
-                host=$(printf '%s' "$(params.registry)" | cut -d/ -f1)
-                ns=$(printf '%s' "$(params.registry)" | cut -d/ -f2-)
-                make release VERSION="$(params.version)" REGISTRY="$host" REGISTRY_NAMESPACE="$ns" INCLUDE_MIRROR=false DRY_RUN=true
-                mkdir -p .ci && : > .ci/charts.txt
-                push() {
-                  for a in 1 2 3 4 5; do
-                    out=$(helm push "$1" "oci://$2" 2>&1) && break
-                    echo "    retry $a: $out"; sleep 3
-                  done
-                  digest=$(printf '%s\n' "$out" | sed -n 's/^Digest: //p')
-                  [ -n "$digest" ] || { echo "ERROR: push of $1 failed: $out" >&2; exit 1; }
-                  name=$(helm show chart "$1" | sed -n 's/^name: //p')
-                  echo "$2/${name}@${digest}" >> .ci/charts.txt
-                }
-                for c in .helm-charts/bootstrap/*.tgz; do push "$c" "$(params.registry)/bootstrap"; done
-                push ".helm-charts/autoshift-$(params.version).tgz" "$(params.registry)"
-                for c in .helm-charts/policies/*.tgz; do push "$c" "$(params.registry)/policies"; done
-                n=$(wc -l < .ci/charts.txt | tr -d ' ')
-                printf '%s' "$n" > "$(results.charts.path)"
-                echo "Published ${n} charts as $(params.version)"
 
-      # Signs every published digest with one short-lived certificate for the autoshift-ci identity,
-      # then verifies each signature against that identity and issuer. A chart that does not verify
-      # fails the run.
       - name: sign
         runAfter:
           - build
+        taskRef:
+          name: autoshift-sign
         params:
           - name: pushSecret
             value: $(tasks.endpoints.results.pushSecret)
         workspaces:
           - name: source
             workspace: source
-        taskSpec:
-          params:
-            - name: pushSecret
-              type: string
-          workspaces:
-            - name: source
-          volumes:
-            - name: push
-              secret:
-                secretName: $(params.pushSecret)
-                items:
-                  - key: .dockerconfigjson
-                    path: config.json
-            - name: autoshift-ci-ca
-              configMap:
-                name: autoshift-ci-ca
-          stepTemplate:
-            workingDir: $(workspaces.source.path)
-            envFrom:
-              - configMapRef:
-                  name: autoshift-ci-endpoints
-            env:
-              - name: HOME
-                value: /tekton/home
-              - name: DOCKER_CONFIG
-                value: /etc/autoshift-ci/push
-              - name: SSL_CERT_DIR
-                value: /etc/pki/ca-trust/extracted/pem:/etc/autoshift-ci/ca
-            volumeMounts:
-              - name: push
-                mountPath: /etc/autoshift-ci/push
-              - name: autoshift-ci-ca
-                mountPath: /etc/autoshift-ci/ca
-          steps:
-            - name: token
-              image: registry.access.redhat.com/ubi9/go-toolset:latest
-              env:
-                - name: TOKEN_URL
-                  valueFrom:
-                    secretKeyRef:
-                      name: keycloak-autoshift-ci
-                      key: tokenUrl
-                - name: CLIENT_ID
-                  valueFrom:
-                    secretKeyRef:
-                      name: keycloak-autoshift-ci
-                      key: clientId
-                - name: CLIENT_SECRET
-                  valueFrom:
-                    secretKeyRef:
-                      name: keycloak-autoshift-ci
-                      key: clientSecret
-              script: |
-                #!/usr/bin/env python3
-                import glob, json, os, ssl, urllib.parse, urllib.request
-                ctx = ssl.create_default_context()
-                for pem in glob.glob("/etc/autoshift-ci/ca/*"):
-                    ctx.load_verify_locations(cafile=pem)
-                form = urllib.parse.urlencode(dict(grant_type="client_credentials", client_id=os.environ["CLIENT_ID"], client_secret=os.environ["CLIENT_SECRET"])).encode()
-                with urllib.request.urlopen(urllib.request.Request(os.environ["TOKEN_URL"], data=form), context=ctx, timeout=60) as r:
-                    token = json.load(r)["access_token"]
-                open("/tekton/home/token", "w").write(token)
-                print("Got a signing token for " + os.environ["CLIENT_ID"])
-            - name: sign-and-verify
-              image: registry.redhat.io/rhtas/cosign-rhel9:1.5.0
-              script: |
-                #!/bin/sh
-                set -eu
-                cosign initialize --mirror "$tufUrl" --root "$tufUrl/root.json"
-                cosign sign --yes --identity-token "$(cat /tekton/home/token)" $(cat .ci/charts.txt)
-                n=0
-                while read -r ref; do
-                  cosign verify --certificate-identity "$signerIdentity" --certificate-oidc-issuer "$oidcIssuer" "$ref" >/dev/null
-                  n=$((n + 1))
-                done < .ci/charts.txt
-                echo "Signed and verified ${n} charts as ${signerIdentity}"
 
-      # Records the signed build in site-config, which deploys it: deployments/<deployName>.yaml names
-      # the chart version, and the autoshift-deployments ApplicationSet turns the file into an
-      # Application. A file whose content is unchanged is not committed again.
       - name: deploy
         runAfter:
           - sign
+        taskRef:
+          name: autoshift-deploy
         params:
           - name: deployName
             value: $(tasks.endpoints.results.deployName)
@@ -333,85 +165,9 @@ spec:
             value: $(tasks.endpoints.results.registry)
           - name: version
             value: $(tasks.endpoints.results.version)
-          - name: branch
-            value: $(params.branch)
+          - name: refKind
+            value: branch
+          - name: ref
+            value: $(tasks.endpoints.results.branch)
           - name: revision
             value: $(params.revision)
-        taskSpec:
-          params:
-            - name: deployName
-              type: string
-            - name: registry
-              type: string
-            - name: version
-              type: string
-            - name: branch
-              type: string
-            - name: revision
-              type: string
-          volumes:
-            - name: autoshift-ci-ca
-              configMap:
-                name: autoshift-ci-ca
-          steps:
-            - name: write
-              image: registry.access.redhat.com/ubi9/go-toolset:latest
-              envFrom:
-                - configMapRef:
-                    name: autoshift-ci-endpoints
-              env:
-                - name: HOME
-                  value: /tekton/home
-              volumeMounts:
-                - name: autoshift-ci-ca
-                  mountPath: /etc/autoshift-ci/ca
-              script: |
-                #!/bin/sh
-                set -eu
-                token_file=$(mktemp)
-                # The site-config push token, read through the API so the Secret name can come from
-                # autoshift-ci-endpoints rather than from this file.
-                python3 - "$siteConfigSecret" "$siteConfigSecretKey" "$token_file" <<'PY'
-                import base64, json, ssl, sys, urllib.request
-                name, key, out = sys.argv[1:]
-                ns = open("/var/run/secrets/kubernetes.io/serviceaccount/namespace").read()
-                tok = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read()
-                ctx = ssl.create_default_context(cafile="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
-                req = urllib.request.Request("https://kubernetes.default.svc/api/v1/namespaces/%s/secrets/%s" % (ns, name))
-                req.add_header("Authorization", "Bearer " + tok)
-                data = json.load(urllib.request.urlopen(req, context=ctx, timeout=30))["data"]
-                open(out, "w").write(base64.b64decode(data[key]).decode())
-                PY
-                cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/autoshift-ci/ca/* > /tekton/home/ca.pem
-                git config --global http.sslCAInfo /tekton/home/ca.pem
-                git config --global user.name "AutoShift CI"
-                git config --global user.email "${signerIdentity}"
-                auth=$(printf '%s:%s' "$siteConfigUser" "$(cat "$token_file")" | base64 | tr -d '\n')
-                rm -f "$token_file"
-                site() { git -c "http.extraHeader=Authorization: Basic ${auth}" "$@"; }
-                site clone --quiet --depth 1 --branch "$siteConfigBranch" "$siteConfigUrl" /tekton/home/site
-                cd /tekton/home/site
-                file="deployments/$(params.deployName).yaml"
-                mkdir -p deployments
-                cat > "$file" <<EOF
-                # Written by the AutoShift push pipeline for branch $(params.branch). The
-                # autoshift-deployments ApplicationSet deploys it; removing the file removes the deployment.
-                name: $(params.deployName)
-                branch: $(params.branch)
-                commit: $(params.revision)
-                chartRepo: $(params.registry)
-                chartVersion: $(params.version)
-                valuesRevision: ${siteConfigBranch}
-                EOF
-                git add "$file"
-                if git diff --cached --quiet; then
-                  echo "${file} already deploys $(params.version)"
-                  exit 0
-                fi
-                git commit --quiet -m "Deploy $(params.branch) as $(params.deployName): $(params.version)"
-                for a in 1 2 3 4 5; do
-                  site push --quiet origin "HEAD:${siteConfigBranch}" && break
-                  [ "$a" = 5 ] && { echo "ERROR: could not push ${file}" >&2; exit 1; }
-                  site pull --quiet --rebase origin "$siteConfigBranch"
-                done
-                echo "Deploying $(params.version) as $(params.deployName) through ${siteConfigUrl} ${file}"
