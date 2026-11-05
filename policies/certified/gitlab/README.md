@@ -150,6 +150,9 @@ hubClusterSets:
       gitlab:
         dbBackupSchedule: '0 2 * * *'              # Cron schedule for CNPG base backups
         dbBackupRetention: '30d'                   # Backup retention period
+        dbImage: ''                                # PostgreSQL image; empty = CloudNativePG Operator default
+        dbPoolerImage: ''                          # PgBouncer image for both Poolers; empty = Operator default
+        dbPrimaryUpdate: 'unsupervised'            # supervised = wait for a manual primary switchover
 ```
 
 ## Managed Mode Details

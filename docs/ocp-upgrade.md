@@ -53,7 +53,7 @@ the `cluster-labels` policy stamps `autoshift.io/` at runtime.
 | Label | Purpose | Example |
 |-------|---------|---------|
 | `openshift-upgrade` | Opt the cluster in to Day 2 upgrades | `'true'` |
-| `openshift-version` | Target OpenShift version. Shared with operator-catalog tooling. Upgrade runs only when this is greater than the running version. | `'4.22.8'` |
+| `openshift-version` | Target OpenShift version. Shared with operator-catalog tooling. Upgrade runs only when this is greater than the running version. | `'4.22.18'` |
 | `openshift-upgrade-channel` | `ClusterVersion` channel | `'stable-4.22'` |
 | `openshift-upgrade-allow-conditional` | Allow a `Recommended: False` target from `status.conditionalUpdates` | `'false'` |
 
@@ -64,7 +64,7 @@ hubClusterSets:
   managed-upgrade:
     labels:
       openshift-upgrade: 'true'
-      openshift-version: '4.22.8'
+      openshift-version: '4.22.18'
       openshift-upgrade-channel: 'stable-4.22'
       openshift-upgrade-allow-conditional: 'false'
 ```
@@ -103,7 +103,7 @@ release together with a new OpenShift version).
    ```yaml
    labels:
      openshift-upgrade: 'true'
-     openshift-version: '4.22.8'          # new target, must be > current
+     openshift-version: '4.22.20'         # new target, must be > current
      openshift-upgrade-channel: 'stable-4.22'
    ```
 
