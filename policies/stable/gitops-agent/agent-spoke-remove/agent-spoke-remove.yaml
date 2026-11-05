@@ -12,12 +12,14 @@ object-templates-raw: |
   # work when the config is already gone: removing a team from config is a normal way to retire it,
   # and failing without config would leave the objects behind forever. The namespace falls back to
   # the default, which is what it was if config never named another.
-  {{hub- $teamSpecs := (dig "gitops" "teams" dict (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml | default dict)) hub}}
+  {{hub- $cfg := (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
   {{hub- range $label, $val := .ManagedClusterLabels hub}}
   {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
   {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") hub}}
   {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
-  {{hub- $spec := (index $teamSpecs $team | default dict) hub}}
+  # infra's config is config.gitops.infra, a team's config.gitops.teams.<team>.
+  {{hub- $spec := ternary (dig "gitops" "infra" dict $cfg) (index $teamSpecs $team | default dict) $isInfra hub}}
   # Where this team's Argo CD instance lives on THIS cluster, defaulting to openshift-gitops-<team>.
   # infra on a HUB is the exception: policy-gitops-systems-argocd places infra-gitops there, in the
   # gitops namespace, so infra resolves to that and attaches rather than building a rival instance.
@@ -26,6 +28,18 @@ object-templates-raw: |
   {{hub- $nsDefault := ternary $gitopsNs (printf "openshift-gitops-%s" $team) (and $isInfra $isHubCluster) hub}}
   {{hub- $teamNs := (dig "namespace" $nsDefault $spec) hub}}
   # The agent instance. Removing this stops the process dialling the principal, so it goes first.
+  # infra on a hub has no instance of its own: it runs inside infra-gitops, which
+  # policy-gitops-systems-argocd switches the agent off in when gitops-infra reads uninstall. What
+  # proves the agent stopped there is its Deployment being gone.
+  {{hub- if and $isInfra $isHubCluster hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: infra-gitops-agent-agent
+        namespace: {{hub $teamNs hub}}
+  {{hub- else hub}}
   - complianceType: mustnothave
     objectDefinition:
       apiVersion: argoproj.io/v1beta1
@@ -33,6 +47,7 @@ object-templates-raw: |
       metadata:
         name: {{hub printf "%s-agent" $team hub}}
         namespace: {{hub $teamNs hub}}
+  {{hub- end hub}}
   # The credentials it authenticated with. Worth removing even though the hub half revokes the
   # certificate too, because a private key left on a spoke is a private key left on a spoke.
   - complianceType: mustnothave

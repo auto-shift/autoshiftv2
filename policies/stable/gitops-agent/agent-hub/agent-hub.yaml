@@ -35,6 +35,9 @@ object-templates-raw: |
   {{hub- $isHubCluster := eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub" hub}}
   {{hub- $infraDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") hub}}
   {{hub- $modes = set $modes "infra" (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraDefault) hub}}
+  # infra's agent is switched on by the gitops-agent label on the hub that runs its principal; a
+  # team's by agent.enabled in its config.
+  {{hub- $infraAgentOn := eq (index .ManagedClusterLabels "autoshift.io/gitops-agent" | default "false") "true" hub}}
   {{hub- range $team, $mode := $modes hub}}
   {{hub- $isInfra := eq $team "infra" hub}}
   {{hub- if ne $mode "" hub}}
@@ -53,7 +56,7 @@ object-templates-raw: |
   {{hub- $rbac = printf "%s%s\n" $rbac . hub}}
   {{hub- end hub}}
   {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
-  {{hub- $agentOn := (dig "enabled" false $agentCfg) hub}}
+  {{hub- $agentOn := ternary $infraAgentOn (dig "enabled" false $agentCfg) $isInfra hub}}
   {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) hub}}
   {{hub- $caCfg := (dig "ca" dict $agentCfg) hub}}
   {{hub- $keyCfg := (dig "privateKey" dict $caCfg) hub}}
@@ -95,8 +98,6 @@ object-templates-raw: |
         isCA: true
         commonName: {{hub printf "gitops-agent-ca-%s" $team hub}}
         secretName: gitops-agent-ca
-        # renewBefore MUST stay above duration/5: past 80 percent of its lifetime the add-on
-        # replaces this authority with a self-signed one of its own, silently.
         duration: {{hub (dig "duration" "8760h0m0s" $caCfg) hub}}
         renewBefore: {{hub (dig "renewBefore" "2160h0m0s" $caCfg) hub}}
         privateKey:
@@ -232,11 +233,11 @@ object-templates-raw: |
   # The principal itself. auth is OUR pattern, not the pattern the Red Hat Advanced Cluster
   # Management add-on uses, because these client certificates are minted by cert-manager and we
   # choose the naming: CN=<cluster>-<team>.
-  # The principal's cluster-scoped permissions, granted narrowly rather than by naming this
-  # namespace in ARGOCD_CLUSTER_CONFIG_NAMESPACES. That variable would make this a cluster-scoped
-  # Argo CD instance, which is right for infra GitOps and wrong for a team's. These are the rules
-  # the operator would have generated, and no more: the principal mirrors applications from its
-  # agents and creates a namespace per connected cluster, so it needs both at cluster scope.
+  # The cluster-scoped rules the principal itself uses: it mirrors applications from its agents and
+  # creates a namespace per connected cluster. This does NOT keep the principal out of
+  # ARGOCD_CLUSTER_CONFIG_NAMESPACES. policy-gitops-operator-install lists every hub-mode principal
+  # namespace there, because OpenShift GitOps reconciles sourceNamespaces only for a cluster-scoped
+  # instance, so the instance is cluster-scoped either way.
   - complianceType: musthave
     objectDefinition:
       apiVersion: rbac.authorization.k8s.io/v1
@@ -314,95 +315,74 @@ object-templates-raw: |
   # namespaces are a permit list, and naming one the team does not use permits nothing. Naming too
   # FEW does not error either, which is the trap: the principal silently skips propagating the
   # project and the team's applications simply never appear.
-  {{hub- $modeNs := list $teamNs hub}}
+  # infra on a hub leaves out its own namespace: that is the gitops namespace, where infra-gitops
+  # already runs, and the principal has no Applications of its own there.
+  {{hub- $modeNs := ternary (list) (list $teamNs) (and $isInfra $isHubCluster) hub}}
   {{hub- range $an := $agentNames hub}}
   {{hub- $modeNs = append $modeNs $an hub}}
   {{hub- end hub}}
   {{hub- $srcNs := (dig "sourceNamespaces" $modeNs $agentCfg) hub}}
-  # sourceNamespaces has to be AUTHORITATIVE, and the musthave below cannot make it so: musthave merges
-  # lists, so an entry never leaves and a stale one keeps its namespace claimed. A namespace carries
-  # one argocd.argoproj.io/managed-by-cluster-argocd claim, so that blocks the next legitimate one.
+  # The principal instance, as ONE mustonlyhave template. Two templates for the same object collapse
+  # and the first wins, so a pruning mustonlyhave beside a creating musthave leaves one of them dead.
   #
-  # Read-modify-write, not a partial mustonlyhave: mustonlyhave compares the WHOLE object, so a
-  # partial one strips the metadata and spec defaults the operator owns and then fights it. Starting
-  # from the live object preserves them. status is dropped because it is not ours to assert.
+  # mustonlyhave because sourceNamespaces has to be AUTHORITATIVE: musthave merges lists, so a stale
+  # entry would never leave and would keep its namespace claimed. A namespace carries one
+  # argocd.argoproj.io/managed-by-cluster-argocd claim, so that blocks the next legitimate one.
   #
-  # ORDER IS LOAD-BEARING. Two object-templates naming the same object collapse and the FIRST one
-  # wins; the second has no effect and the policy still reports Compliant. This one must therefore
-  # precede the musthave below, which is what creates the principal on the first pass, when the
-  # lookup here is empty and this block renders nothing.
+  # Read-modify-write: start from the live object so the spec defaults the operator writes survive,
+  # then SET every field this policy owns. set rather than mergeOverwrite, because mergeOverwrite
+  # skips false values and would never turn controller.enabled off. On the first pass the lookup is
+  # empty and the same code yields the desired object alone. Server-managed metadata is left out.
+  #
+  # destinationBasedMapping defaults to FALSE, and it is not a routing preference. With false the
+  # principal maps by NAMESPACE and rewrites a returning status update's namespace to the agent name
+  # (`if !m.destinationBasedMapping { incoming.SetNamespace(namespace) }` in
+  # internal/manager/application/application.go). With true, spec still flows hub to spoke, but
+  # status arrives naming the SPOKE's namespace, is looked up on the hub where nothing has that name,
+  # and the hub shows empty sync and health forever.
+  #
+  # auth matches any common name by default. Isolation between teams rests on each team having its
+  # OWN certificate authority intermediate, not on this pattern.
+  #
+  # allowedNamespaces is a wildcard by default because the principal mirrors into a namespace per
+  # connected cluster, whose names are not known ahead of time.
   {{hub- $livePrincipal := (lookup "argoproj.io/v1beta1" "ArgoCD" $agentNs $pName) | default dict hub}}
-  {{hub- if not (empty $livePrincipal) hub}}
-  {{hub- $pSpec := set (dig "spec" dict $livePrincipal) "sourceNamespaces" $srcNs hub}}
-  {{hub- $pObj := set (unset $livePrincipal "status") "spec" $pSpec hub}}
+  {{hub- $liveMeta := (dig "metadata" dict $livePrincipal) hub}}
+  {{hub- $pSpec := (dig "spec" dict $livePrincipal) hub}}
+  {{hub- $pCtl := set (dig "controller" dict $pSpec) "enabled" false hub}}
+  {{hub- $pAgent := (dig "argoCDAgent" dict $pSpec) hub}}
+  {{hub- $pr := (dig "principal" dict $pAgent) hub}}
+  {{hub- $pr = set $pr "enabled" true hub}}
+  {{hub- $pr = set $pr "destinationBasedMapping" (dig "destinationBasedMapping" false $agentCfg) hub}}
+  {{hub- $pr = set $pr "auth" (dig "auth" "mtls:CN=([^,]+)" $agentCfg) hub}}
+  {{hub- $pr = set $pr "logLevel" (dig "logLevel" "info" $agentCfg) hub}}
+  {{hub- $prNs := set (dig "namespace" dict $pr) "allowedNamespaces" (dig "principalNamespaces" (list "*") $agentCfg) hub}}
+  {{hub- $pr = set $pr "namespace" (set $prNs "enableNamespaceCreate" (dig "enableNamespaceCreate" true $agentCfg)) hub}}
+  {{hub- $prSrv := (dig "server" dict $pr) hub}}
+  {{hub- $pr = set $pr "server" (set $prSrv "route" (set (dig "route" dict $prSrv) "enabled" true)) hub}}
+  {{hub- $prTls := set (dig "tls" dict $pr) "insecureGenerate" false hub}}
+  {{hub- $prTls = set (set $prTls "secretName" "gitops-agent-principal-tls") "rootCASecretName" "gitops-agent-ca" hub}}
+  {{hub- $pr = set $pr "tls" $prTls hub}}
+  {{hub- $pr = set $pr "jwt" (set (set (dig "jwt" dict $pr) "insecureGenerate" false) "secretName" "gitops-agent-jwt") hub}}
+  {{hub- $pr = set $pr "resourceProxy" (set (set (dig "resourceProxy" dict $pr) "secretName" "gitops-agent-resource-proxy-tls") "caSecretName" "gitops-agent-ca") hub}}
+  {{hub- $pSpec = set $pSpec "controller" $pCtl hub}}
+  {{hub- $pSpec = set $pSpec "argoCDAgent" (set $pAgent "principal" $pr) hub}}
+  {{hub- if $srcNs hub}}
+  {{hub- $pSpec = set $pSpec "sourceNamespaces" $srcNs hub}}
+  {{hub- else hub}}
+  {{hub- $pSpec = unset $pSpec "sourceNamespaces" hub}}
+  {{hub- end hub}}
+  {{hub- $pMeta := dict "name" $pName "namespace" $agentNs hub}}
+  {{hub- range $k := (list "labels" "annotations" "finalizers") hub}}
+  {{hub- if hasKey $liveMeta $k hub}}
+  {{hub- $pMeta = set $pMeta $k (index $liveMeta $k) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $pObj := dict "apiVersion" "argoproj.io/v1beta1" "kind" "ArgoCD" "metadata" $pMeta "spec" $pSpec hub}}
   - complianceType: mustonlyhave
     objectDefinition:
       {{hub $pObj | toYaml | autoindent hub}}
-  {{hub- end hub}}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: argoproj.io/v1beta1
-      kind: ArgoCD
-      metadata:
-        name: {{hub $pName hub}}
-        namespace: {{hub $agentNs hub}}
-      spec:
-        controller:
-          enabled: false
-        # Exactly the namespaces this team owns, never '*'. The operator claims each namespace
-        # listed here with argocd.argoproj.io/managed-by-cluster-argocd and writes Application RBAC
-        # into it. A namespace carries one claim, so a wildcard would take every namespace on the
-        # cluster and deny the other principals their own agent namespaces.
-        sourceNamespaces:
-          {{hub- range $srcNs hub}}
-          - '{{hub . hub}}'
-          {{hub- end hub}}
-        argoCDAgent:
-          principal:
-            enabled: true
-            # FALSE, and the default matters. This selects how the principal maps an Application
-            # to an agent, and it is not symmetric:
-            #   false  by NAMESPACE. The hub namespace is the agent name, and on the way BACK the
-            #          principal rewrites the incoming namespace to the agent name
-            #          (`if !m.destinationBasedMapping { incoming.SetNamespace(namespace) }` in
-            #          internal/manager/application/application.go).
-            #   true   by DESTINATION. The principal leaves the namespace alone, so a status update
-            #          arrives naming the SPOKE's namespace and is looked up under that name on the
-            #          hub, where nothing of that name exists.
-            # With true, spec still flows hub to spoke and the applications appear, so it looks like
-            # it works, but status never comes back and the hub shows empty sync and health
-            # forever. Namespace mapping is also what the rest of this policy already assumes, since
-            # sourceNamespaces above is a list of agent names.
-            destinationBasedMapping: {{hub (dig "destinationBasedMapping" false $agentCfg) hub}}
-            # Matches any common name by default. Isolation between teams rests on each team having
-            # its OWN certificate authority intermediate, not on this pattern, so tighten it when a
-            # deployment wants identity constrained by the pattern as well.
-            auth: '{{hub (dig "auth" "mtls:CN=([^,]+)" $agentCfg) hub}}'
-            logLevel: {{hub (dig "logLevel" "info" $agentCfg) hub}}
-            namespace:
-              # Wildcard by default because the principal mirrors into a namespace per connected
-              # cluster and those names are not known ahead of time. Narrow it where the set is
-              # known. enableNamespaceCreate drives the principal's namespace CREATE permission, so
-              # turning it off lets that verb be dropped from its ClusterRole as well.
-              allowedNamespaces:
-                {{hub- range (dig "principalNamespaces" (list "*") $agentCfg) hub}}
-                - '{{hub . hub}}'
-                {{hub- end hub}}
-              enableNamespaceCreate: {{hub (dig "enableNamespaceCreate" true $agentCfg) hub}}
-            server:
-              route:
-                enabled: true
-            tls:
-              insecureGenerate: false
-              secretName: gitops-agent-principal-tls
-              rootCASecretName: gitops-agent-ca
-            jwt:
-              insecureGenerate: false
-              secretName: gitops-agent-jwt
-            resourceProxy:
-              secretName: gitops-agent-resource-proxy-tls
-              caSecretName: gitops-agent-ca
-
+  #
   # The team's AppProject. The principal only propagates AppProjects whose destinations and source
   # namespaces match the agent configuration, and it skips propagation SILENTLY when they do not,
   # so a team whose applications never appear should be checked here first.
@@ -410,8 +390,11 @@ object-templates-raw: |
   # Scoped, not wildcarded. A team deploys into namespaces carrying its own name as a prefix, which
   # is the normal posture for an application team and matches how the rest of team GitOps is
   # treated. Override destinationNamespaces to widen it; nothing here grants cluster-scoped
-  # resources, because clusterResourceWhitelist is deliberately absent.
-  {{hub- $destNs := (dig "destinationNamespaces" (list (printf "%s-*" $team)) $agentCfg) hub}}
+  # resources unless clusterResources asks for them.
+  #
+  # infra is the exception. Its Applications configure the cluster itself, across every namespace
+  # and with cluster-scoped resources, so it defaults to both wildcards, matching infra-gitops.
+  {{hub- $destNs := (dig "destinationNamespaces" (ternary (list "*") (list (printf "%s-*" $team)) $isInfra) $agentCfg) hub}}
   # mustonlyhave, NOT musthave. Argo CD ships a `default` project wildcarded to
   # destinations '*' and clusterResourceWhitelist '*'. musthave MERGES lists and never removes a
   # field, so a scoped destination would be APPENDED to the wildcard and the restriction would be
@@ -428,10 +411,12 @@ object-templates-raw: |
         # Every templated value here is QUOTED. A bare '*' is a YAML alias indicator and breaks
         # the whole object-templates-raw parse, taking the entire policy down with it, not just
         # this object. sourceRepos defaults to '*', so this is not hypothetical.
+        {{hub- if $srcNs hub}}
         sourceNamespaces:
           {{hub- range $srcNs hub}}
           - '{{hub . hub}}'
           {{hub- end hub}}
+        {{hub- end hub}}
         sourceRepos:
           {{hub- range (dig "sourceRepos" (list "*") $agentCfg) hub}}
           - '{{hub . hub}}'
@@ -441,10 +426,10 @@ object-templates-raw: |
           - namespace: '{{hub . hub}}'
             server: '*'
           {{hub- end hub}}
-        # Empty by default, which denies every cluster-scoped resource. A team that genuinely needs
+        # Empty by default for a team, which denies every cluster-scoped resource. A team that needs
         # to create its own Namespaces or custom resources widens this deliberately rather than
         # inheriting the ability.
-        {{hub- $clusterRes := (dig "clusterResources" (list) $agentCfg) hub}}
+        {{hub- $clusterRes := (dig "clusterResources" (ternary (list (dict "group" "*" "kind" "*")) (list) $isInfra) $agentCfg) hub}}
         {{hub- if $clusterRes hub}}
         clusterResourceWhitelist:
           {{hub- range $clusterRes hub}}

@@ -34,6 +34,9 @@ object-templates-raw: |
   {{hub- $isHubCluster := eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub" hub}}
   {{hub- $infraDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") hub}}
   {{hub- $modes = set $modes "infra" (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraDefault) hub}}
+  # infra's agent is switched on by the gitops-agent label on the hub that runs its principal; a
+  # team's by agent.enabled in its config.
+  {{hub- $infraAgentOn := eq (index .ManagedClusterLabels "autoshift.io/gitops-agent" | default "false") "true" hub}}
   {{hub- range $team, $mode := $modes hub}}
   {{hub- $isInfra := eq $team "infra" hub}}
   {{hub- if ne $mode "" hub}}
@@ -52,7 +55,7 @@ object-templates-raw: |
   {{hub- $rbac = printf "%s%s\n" $rbac . hub}}
   {{hub- end hub}}
   {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
-  {{hub- $agentOn := (dig "enabled" false $agentCfg) hub}}
+  {{hub- $agentOn := ternary $infraAgentOn (dig "enabled" false $agentCfg) $isInfra hub}}
   {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) hub}}
   {{hub- $caCfg := (dig "ca" dict $agentCfg) hub}}
   {{hub- $keyCfg := (dig "privateKey" dict $caCfg) hub}}

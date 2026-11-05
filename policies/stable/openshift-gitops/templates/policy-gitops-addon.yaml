@@ -8,14 +8,18 @@
 # untouched.
 #
 # Two labels, two meanings:
-#   autoshift.io/gitops-agent          on a HUB:   run the principal here (places THIS policy)
-#   autoshift.io/gitops-agent-enroll   on a SPOKE: deploy an agent there (selected below)
+#   autoshift.io/gitops-agent-addon    on a HUB:   run the add-on principal here (places THIS policy)
+#   autoshift.io/gitops-agent-enroll   on a SPOKE: deploy an add-on agent there (selected below)
+#
+# Separate from gitops-agent, which runs AutoShift's own infra principal (the gitops-agent
+# policies). The two are independent opt-ins, so enabling one never installs the other.
 #
 # Opting in at a managed hub alone works because cluster-type hub selects the self-managed hub AND
 # every managed hub, while a managed hub's labels are consumed by the layer above it. Setting
-# gitops-agent in a managed hub's clusterset values therefore enables that hub and nothing above it.
+# gitops-agent-addon in a managed hub's clusterset values therefore enables that hub and nothing
+# above it.
 #
-# Technology Preview in Red Hat Advanced Cluster Management 2.17 with OpenShift GitOps 1.21.
+# Technology Preview in Red Hat Advanced Cluster Management 2.17.
 {{- if .Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -334,7 +338,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/gitops-agent'
+            - key: 'autoshift.io/gitops-agent-addon'
               operator: In
               values:
                 - 'true'

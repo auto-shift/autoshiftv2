@@ -22,7 +22,9 @@ object-templates-raw: |
   # Skipped once this hub's label for the team reads uninstall. Teardown is driven by the label
   # while this loop reads config, so a torn-down team would otherwise stay asserted here forever.
   # Keying on the label alone means the operator sets one value rather than two.
-  {{hub- if and (dig "enabled" false $agentCfg) (ne (index $hubLabels (printf "autoshift.io/gitops-dev-team-%s" $team) | default "") "uninstall") hub}}
+  # infra's agent is on when this hub carries gitops-agent; a team's when its config enables it.
+  {{hub- $agentOn := ternary (eq (index $hubLabels "autoshift.io/gitops-agent" | default "") "true") (dig "enabled" false $agentCfg) (eq $team "infra") hub}}
+  {{hub- if and $agentOn (ne (index $hubLabels (printf "autoshift.io/gitops-dev-team-%s" $team) | default "") "uninstall") hub}}
   {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) hub}}
   # The namespace, which exists whenever this policy has ever run. Asserting it means a Compliant
   # verdict can never mean "checked nothing".

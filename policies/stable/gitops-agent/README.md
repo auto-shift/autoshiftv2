@@ -133,7 +133,8 @@ in place: teardown has to work when the config is already gone.
 
 ## Testing
 
-`agent.enabled` is `false` in `_example.yaml`, so the validation suite never resolves the agent
-blocks. Exercise them against a live hub, or enable them in a values override. For a team, the
+`_example.yaml` enables the `dev` team agent and sets `gitops-agent` on the hub, so the validation
+suite resolves both the team and the infra principal. It cannot model a managed hub, where infra
+attaches to `infra-gitops`, so exercise that case against a live hub of hubs. For a team, the
 labels `gitops-agent-enrolled` and `gitops-dev-team-<team>` must be set **together**: the former
 places the spoke policy, the latter decides which teams.

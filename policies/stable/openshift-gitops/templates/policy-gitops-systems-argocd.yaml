@@ -226,6 +226,12 @@ spec:
                         insecure: false
                         rootCASecretName: gitops-agent-ca
                         secretName: gitops-agent-client-tls
+                  {{ "{{hub-" }} else if eq $infraMode "uninstall" {{ "hub}}" }}
+                  # Teardown. musthave never removes a field, so leaving the stanza out would keep the agent
+                  # running; it has to be switched off explicitly.
+                  argoCDAgent:
+                    agent:
+                      enabled: false
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   server:
                     {{ "{{hub-" }} if (ternary (index $serverAutoscale "enabled") {{ $.Values.gitops.server.autoscale.enabled }} (hasKey $serverAutoscale "enabled")) {{ "hub}}" }}

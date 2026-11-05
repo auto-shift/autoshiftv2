@@ -21,7 +21,12 @@ object-templates-raw: |
   # lookup, NOT fromConfigMap: this walks EVERY managed cluster, and a cluster with no
   # rendered-config is normal. fromConfigMap would fail the whole teardown over one unrelated
   # cluster.
-  {{hub- $hubTeams := (dig "gitops" "teams" dict (index ((lookup "v1" "ConfigMap" $polNs (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml | default dict)) hub}}
+  # The principal namespace is decided by THIS hub's config, the same config agent-hub created it
+  # from, never the departing cluster's: infra from config.gitops.infra, a team from
+  # config.gitops.teams.<team>.
+  {{hub- $hubCfg := (index ((lookup "v1" "ConfigMap" $polNs (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $hubTeams := (dig "gitops" "teams" dict $hubCfg) hub}}
+  {{hub- $hubInfra := (dig "gitops" "infra" dict $hubCfg) hub}}
   {{hub- $mcs := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
   {{hub- range $_, $mc := ($mcs.items | default list) hub}}
   {{hub- $mcName := (dig "metadata" "name" "" $mc) hub}}
@@ -29,7 +34,7 @@ object-templates-raw: |
   {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
   {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") hub}}
   {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
-  {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) (index (dig "gitops" "teams" dict (index ((lookup "v1" "ConfigMap" $polNs (printf "%s.rendered-config" $mcName)).data | default dict) "config" | default "" | fromYaml | default dict)) $team | default dict)) hub}}
+  {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) (ternary $hubInfra (index $hubTeams $team | default dict) $isInfra)) hub}}
   {{hub- $agentName := printf "%s-%s" $mcName $team hub}}
   # The agent-to-cluster mapping. Removing it is what actually stops the principal routing to that
   # agent, so it leads.
@@ -94,7 +99,7 @@ object-templates-raw: |
       apiVersion: v1
       kind: Namespace
       metadata:
-        name: {{hub (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) (index $hubTeams $team | default dict)) hub}}
+        name: {{hub (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) (ternary $hubInfra (index $hubTeams $team | default dict) $isInfra)) hub}}
   # Cluster-scoped, so it does not go with the namespace.
   - complianceType: mustnothave
     objectDefinition:

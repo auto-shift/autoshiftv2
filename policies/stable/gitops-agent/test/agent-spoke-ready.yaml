@@ -22,6 +22,9 @@ object-templates-raw: |
   # infra takes the openshift-gitops-<team> default like anyone else.
   {{hub- $nsDefault := ternary $gitopsNs (printf "openshift-gitops-%s" $team) (and $isInfra $isHubCluster) hub}}
   {{hub- $teamNs := (dig "namespace" $nsDefault $spec) hub}}
+  # The instance the agent runs in. infra on a hub attaches to infra-gitops rather than building
+  # <team>-agent, and the operator names the agent Deployment <instance>-agent-agent.
+  {{hub- $instName := ternary "infra-gitops" (printf "%s-agent" $team) (and $isInfra $isHubCluster) hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -42,7 +45,7 @@ object-templates-raw: |
       apiVersion: argoproj.io/v1beta1
       kind: ArgoCD
       metadata:
-        name: {{hub printf "%s-agent" $team hub}}
+        name: {{hub $instName hub}}
         namespace: {{hub $teamNs hub}}
       status:
         phase: Available
@@ -59,7 +62,7 @@ object-templates-raw: |
       apiVersion: apps/v1
       kind: Deployment
       metadata:
-        name: {{hub printf "%s-agent-agent-agent" $team hub}}
+        name: {{hub printf "%s-agent-agent" $instName hub}}
         namespace: {{hub $teamNs hub}}
       status:
         conditions:

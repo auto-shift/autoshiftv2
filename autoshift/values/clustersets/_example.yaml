@@ -1256,14 +1256,26 @@ hubClusterSets:
         # infra-gitops instance). Drives gitops-disable-default-argocd (disable = not defaultInstance).
         # defaultInstance: false
         #
-        # Argo CD agent (the Red Hat Advanced Cluster Management GitOps add-on). DATA only; the
-        # enable flags are the gitops-agent and gitops-agent-ca labels below. Technology Preview in
-        # Red Hat Advanced Cluster Management 2.17 with OpenShift GitOps 1.21, so it is off unless
-        # both the label and this block are set.
-        # Infra GitOps. Two mutually exclusive ways to run an infra agent live under here: agent,
-        # which AutoShift builds itself and is the default, and addon, the Red Hat Advanced
-        # Cluster Management GitOps add-on. A cluster runs one or the other, never both.
+        # Infra GitOps. Two ways to run an infra Argo CD agent live under here: agent, which
+        # AutoShift builds itself and is the default, and addon, the Red Hat Advanced Cluster
+        # Management GitOps add-on. Both blocks are DATA only. The gitops-agent label switches on
+        # the first, gitops-agent-addon the second, and they are independent of each other.
         infra:
+          # Namespace of AutoShift's infra principal on the hub.
+          agentNamespace: 'openshift-gitops-infra-agent'
+          # AUTOSHIFT'S OWN infra agent. The hub runs the principal when it carries gitops-agent;
+          # a cluster runs an agent when its gitops-infra label is an agent mode. Every key here is
+          # optional and takes the same settings as config.gitops.teams.<team>.agent, except
+          # enabled, which the label replaces. The values shown are the defaults, except
+          # destinationNamespaces and clusterResources: infra defaults to both wildcards because
+          # its Applications configure the cluster itself.
+          agent:
+            # The mode for a cluster whose gitops-infra label reads plain 'agent'.
+            mode: 'autonomous'
+            logLevel: 'info'
+            # The issuer the infra agent certificate authority is an intermediate under.
+            caIssuer: 'autoshift-ca'
+            destinationBasedMapping: false
           # THE ADD-ON. Opt-in: it brings its own GitOps installer and allows a single agent for
           # each cluster. Turn it on for a cluster with no cert-manager, where the self-signed
           # authority it generates is the point.
@@ -1498,11 +1510,12 @@ hubClusterSets:
               # and hub proxy client. renewBefore must stay comfortably inside duration.
               # leafDuration: '720h0m0s'
               # leafRenewBefore: '240h0m0s'
-              # The agent certificate authority for this team. Same keys as config.gitops.agent.ca,
-              # so a team can set its own lifetime or key algorithm independently of the fleet.
+              # The agent certificate authority for this team. Same keys as
+              # config.gitops.infra.agent.ca, so a team can set its own lifetime or key algorithm
+              # independently of the fleet.
               # ca:
               #   duration: '8760h0m0s'
-              #   renewBefore: '2160h0m0s'      # MUST stay above duration / 5
+              #   renewBefore: '2160h0m0s'
               #   privateKey:
               #     algorithm: 'RSA'
               #     size: 4096
@@ -1523,9 +1536,7 @@ hubClusterSets:
               # As on the infra agent: false maps by namespace and is the default, true maps by
               # destination and loses status back-propagation in managed mode.
               # destinationBasedMapping: false
-              # Lifetime of the JWT signing key this team's principal uses. The key itself is
-              # stable across renewals (rotationPolicy Never reuses it), so this governs the
-              # certificate wrapped around it rather than the key.
+              # Lifetime of the JWT signing key this team's principal uses.
               # jwtDuration IS the cryptoperiod of the signing key when rotation is on: the key
               # changes at renewal. Rotating invalidates outstanding agent tokens and the agents
               # re-authenticate, which is cheap and has been observed working unattended.
@@ -1793,7 +1804,7 @@ hubClusterSets:
       #   'push'              no local instance; the hub deploys in through the cluster secret
       #                       argo-acm-importer registers. The default for a spoke
       #   'standalone'        a local instance, owning its own Applications, reporting to nothing
-      #   'agent'             a local agent instance, mode from config.gitops.agent.mode
+      #   'agent'             a local agent instance, mode from config.gitops.infra.agent.mode
       #   'agent-autonomous'  the spoke owns its Applications and mirrors them to the hub
       #   'agent-managed'     the hub owns them and the agent pulls them down
       #
@@ -1802,8 +1813,14 @@ hubClusterSets:
       # view. A plain spoke may opt in by setting an agent mode here, and gets an instance of its
       # own in openshift-gitops-infra, but it owns no Applications of its own, so that instance is
       # empty until something puts Applications in it.
-      gitops-infra: 'push'
-      gitops-agent: 'false'                  # run the agent principal on this hub
+      gitops-infra: 'hub'
+      # Run AutoShift's infra agent principal on this hub. Settings are in config.gitops.infra.agent.
+      # Needs cert-manager on this hub: the principal's certificate authority is issued from
+      # autoshift-ca, or from config.gitops.infra.agent.caIssuer.
+      gitops-agent: 'true'
+      # Run the Red Hat Advanced Cluster Management add-on principal on this hub instead, or as well.
+      # Independent of gitops-agent. Settings are in config.gitops.infra.addon.
+      gitops-agent-addon: 'false'
       # Deploy the ADD-ON agent on THIS cluster rather than the one AutoShift builds. Opt-in: the
       # add-on brings its own GitOps installer and allows one agent for each cluster, so the
       # gitops-infra agent modes are the default path. Turn this on for a cluster with no
@@ -1813,7 +1830,7 @@ hubClusterSets:
       # whole agent public key infrastructure from. Three states:
       #   'false'     the add-on generates a self-signed authority per hub. Turnkey, and a fleet of
       #               unrelated roots chaining to nothing the organization already trusts.
-      #   'true'      cert-manager issues it, from config.gitops.agent.ca.issuer. That issuer
+      #   'true'      cert-manager issues it, from config.gitops.infra.addon.ca.issuer. That issuer
       #               defaults to autoshift-ca, which makes the agent authority an intermediate
       #               under the same root that signs the API server and Ingress certificates; point
       #               it at your own issuer to chain to an existing public key infrastructure.

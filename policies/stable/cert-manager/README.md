@@ -110,7 +110,7 @@ Change one of those and you must change the other.
 
 ### Choosing the signer
 
-`config.gitops.agent.ca.issuer` selects which issuer signs it. The default, `autoshift-ca`, makes the
+`config.gitops.infra.addon.ca.issuer` selects which issuer signs it. The default, `autoshift-ca`, makes the
 agent authority an intermediate under the same root that signs the API server, Ingress and component
 certificates. Point it at an existing issuer to chain the agent mesh to an organization public key
 infrastructure instead:

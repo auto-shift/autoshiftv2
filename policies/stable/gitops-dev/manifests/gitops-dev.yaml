@@ -37,6 +37,9 @@ object-templates-raw: |
   {{hub- $isHubCluster := eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub" hub}}
   {{hub- $infraDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") hub}}
   {{hub- $modes = set $modes "infra" (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraDefault) hub}}
+  # infra's agent is switched on by the gitops-agent label on the hub that runs its principal; a
+  # team's by agent.enabled in its config.
+  {{hub- $infraAgentOn := eq (index .ManagedClusterLabels "autoshift.io/gitops-agent" | default "false") "true" hub}}
   {{hub- range $team, $mode := $modes hub}}
   {{hub- $isInfra := eq $team "infra" hub}}
   {{hub- if ne $mode "" hub}}
@@ -55,7 +58,7 @@ object-templates-raw: |
   {{hub- $rbac = printf "%s%s\n" $rbac . hub}}
   {{hub- end hub}}
   {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
-  {{hub- $agentOn := (dig "enabled" false $agentCfg) hub}}
+  {{hub- $agentOn := ternary $infraAgentOn (dig "enabled" false $agentCfg) $isInfra hub}}
   {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) hub}}
   {{hub- $caCfg := (dig "ca" dict $agentCfg) hub}}
   {{hub- $keyCfg := (dig "privateKey" dict $caCfg) hub}}
@@ -67,10 +70,10 @@ object-templates-raw: |
   {{hub- $pHost := (dig "spec" "host" "" $pRoute) hub}}
   {{hub- $route := (lookup "route.openshift.io/v1" "Route" $teamNs "argocd-dev-server") | default dict hub}}
   {{hub- $host := (dig "spec" "host" "" $route) hub}}
-  # infra is excluded from BOTH branches. Its instance is infra-gitops, created by
-  # policy-gitops-systems-argocd on every cluster, hub or spoke, so there is no mode in which this
-  # chart owns it.
-  {{hub- if and (not $isInfra) (or (and (eq $mode "hub") $isHub) (and (eq $mode "standalone") (not $isHub))) hub}}
+  # infra takes the standalone branch but never the hub branch. On a hub its instance is
+  # infra-gitops, which policy-gitops-systems-argocd owns; that policy is placed on hubs only, so a
+  # spoke running infra standalone gets its instance here, in openshift-gitops-infra.
+  {{hub- if or (and (not $isInfra) (eq $mode "hub") $isHub) (and (eq $mode "standalone") (not $isHub)) hub}}
   - complianceType: musthave
     objectDefinition:
       kind: Namespace

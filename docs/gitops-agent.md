@@ -40,10 +40,12 @@ each cluster's agent is named `<cluster>-infra`.
 
 ### Enable
 
-On the hub clusterset:
+The hub needs cert-manager, because every certificate on this path is issued from `autoshift-ca` or
+the issuer named in `config.gitops.infra.agent.caIssuer`. On the hub clusterset:
 
 ```yaml
 labels:
+  cert-manager: 'true'
   gitops-agent: 'true'      # run the infrastructure principal on this hub
 ```
 
@@ -60,12 +62,11 @@ Everything derives from one secret in the principal namespace, `gitops-agent-ca`
 serving certificate, the resource proxy certificate, the trust bundle each spoke receives, and every
 agent client certificate. Every name is set on the `ArgoCD` CR, so AutoShift chooses them.
 
-The `gitops-agent-ca` label drives the cert-manager `Certificate`. Team principals each get an
-intermediate under the same root, set by `config.gitops.teams.<team>.agent.caIssuer`.
-
-To integrate an external certificate authority instead, set the `gitops-agent-ca` label to
-`external`. AutoShift then monitors the secret without issuing it, so an organization can deliver
-that key by its own means.
+The principal policy issues that secret with cert-manager whenever the hub carries `gitops-agent`,
+as an intermediate under `config.gitops.infra.agent.caIssuer`, which defaults to `autoshift-ca`.
+Team principals each get an intermediate of their own under the issuer set by
+`config.gitops.teams.<team>.agent.caIssuer`. The `gitops-agent-ca` label plays no part here: it
+belongs to the add-on.
 
 ## Infrastructure with the GitOps add-on
 
@@ -77,19 +78,20 @@ The principal runs in `openshift-gitops-agent`, and each cluster's agent takes t
 
 ### Enable
 
-On the hub clusterset, the same principal label as the other implementation:
+On the hub clusterset. `gitops-agent-addon` is independent of `gitops-agent`, so a hub can run
+either principal or both:
 
 ```yaml
 labels:
-  gitops-agent: 'true'      # run the infrastructure principal on this hub
+  gitops-agent-addon: 'true'    # run the add-on principal on this hub
+  gitops-agent-ca: 'true'       # issue the add-on signing authority with cert-manager
 ```
 
-On each cluster that should run the add-on agent instead:
+On each cluster that should run the add-on agent:
 
 ```yaml
 labels:
   gitops-agent-enroll: 'true'   # deploy the add-on agent here
-  gitops-agent-ca: 'true'       # issue the add-on signing authority with cert-manager
 ```
 
 ### Public key infrastructure
@@ -262,9 +264,10 @@ the case that has produced it.
 ### One cluster silently leaves a team
 
 The hub keeps every object it already created, because `musthave` never removes anything, so a
-running agent survives long after its policy stopped rendering. Check that the per-team label still
-matches what the enrollment loop expects. A label that carries a mode, such as `agent-managed`, does
-not equal `agent`.
+running agent survives long after its policy stopped rendering. Check that the cluster's label for
+the team, `gitops-dev-team-<team>` or `gitops-infra` for infra, still reads an agent mode, and that
+`gitops-agent-enrolled` is still set for a team. Removing a label does not tear anything down; set
+it to `uninstall` instead.
 
 ### Applications flow in neither direction
 
