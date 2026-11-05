@@ -7,14 +7,14 @@ several failure modes in this component report success.
 
 An unsatisfied guard renders no object templates, and a ConfigurationPolicy with no object templates
 reports Compliant. An enforcing policy reading green is therefore not evidence that it did anything.
-These checks assert the effects instead, and each violation is named after what failed.
+These checks assert the effects instead, and each violation message says what failed.
 
-| Policy | Violating object | Meaning |
+| Policy | Violation | Meaning |
 |---|---|---|
 | `policy-ztwim-ready` | SPIRE server readiness | Installed but never became ready |
-| `policy-ztwim-operand-drift` | `ztwim-stale-operand-<workload>` | Operator upgraded, that workload still runs the previous images |
-| `policy-ztwim-datastore-effective` | `ztwim-server-conf-still-<type>` | Configuration asked for PostgreSQL, the running server is on something else |
-| `policy-ztwim-datastore-effective` | `ztwim-cnpg-cluster-missing` | The CloudNativePG cluster was never created |
+| `policy-ztwim-operand-drift` | `Stale SPIRE operands: <workloads>` | Operator upgraded, that workload still runs the previous images |
+| `policy-ztwim-datastore-effective` | `spire-server ConfigMap is still on <type>` | Configuration asked for PostgreSQL, the running server is on something else |
+| `policy-ztwim-datastore-effective` | `CloudNativePG Cluster spire-db does not exist` | The CloudNativePG cluster was never created |
 | `policy-ztwim-nested-hub-effective` | hub objects | Hub side produced nothing |
 | `policy-ztwim-nested-spoke-effective` | spoke objects | Spoke side produced nothing |
 | `policy-ztwim-nested-spoke-chained` | bundle comparison | Spoke still serves its own root rather than the hub's |

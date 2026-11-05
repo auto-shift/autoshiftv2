@@ -738,12 +738,19 @@ Set `controlPlane.replicas: 1` and `workers.replicas: 0` under the platform bloc
 ```
 
 The single node runs the control plane and all workloads, so size the control plane
-accordingly — `m5.2xlarge` is the practical minimum on AWS.
+to match: `m5.2xlarge` is the practical minimum on AWS.
 
-SNO also provisions into a single availability zone, so it needs one NAT gateway and
-one Elastic IP rather than one per zone. That matters on sandbox AWS accounts, where
-the Elastic IP quota is commonly 5 and a multi-zone install fails partway through
-network creation with `AddressLimitExceeded`.
+On AWS, a single node does not mean a single availability zone. Unless you set `aws.zones`,
+the installation program creates a public subnet, a NAT gateway, and an Elastic IP
+in every zone in the region, whatever the replica count. That matters on sandbox AWS
+accounts, where the Elastic IP quota is commonly 5 and the install fails partway through
+network creation with `AddressLimitExceeded`. Pin SNO to one zone to use one Elastic IP:
+
+```yaml
+      aws:
+        zones:
+          - 'us-east-2a'
+```
 
 `workers.replicas: 0` produces a worker MachinePool with 0 replicas. That is expected
 and harmless: no MachineSets scale up.
@@ -811,7 +818,7 @@ AutoShift validates cluster-install configuration at Helm render time through `_
 - **Host counts**: Number of hosts must match `controlPlaneAgents` + `workerAgents`
 - **Role counts**: Number of hosts with `role: master` must match `controlPlaneAgents`
 - **SNO**: Exactly 1 host when `controlPlaneAgents: 1`
-- **Disconnected**: `host` required when `mirrors` defined, `ca` or `caRef` required when `mirrors` defined, `host` required when `catalogs` defined
+- **Disconnected**: `host` required when `mirrors` or `catalogs` are defined, `catalogs` required when `disconnected-mirror` is `'true'`, and `ca` or `caRef` optional, needed only for a mirror whose certificate is not publicly trusted
 - **Catalog entries**: `source`, `imagePath`, `tag` required for each catalog
 - **operating system images**: `openshiftVersion`, `version`, `url` required for each `osImage` entry
 - **`rootDeviceHints`**: Only valid hint keys accepted
@@ -891,6 +898,7 @@ For a complete working example, see `autoshift/values/clusters/_example-cluster-
 | `sshKeyRef` | No | - | Secret ref (`name`, `key`, `namespace`) for SSH public key |
 | `fips` | No | `false` | Enable Federal Information Processing Standards (FIPS) mode (requires RSA or ECDSA SSH keys, not ed25519) |
 | `networkType` | No | `OVNKubernetes` | SDN type |
+| `zones` | No | every zone in the region | Availability zones for the control plane, workers, and the worker `MachinePool`. Each zone gets its own NAT gateway and Elastic IP |
 | `controlPlane.instanceType` | No | `m5.xlarge` | Control plane EC2 instance type |
 | `controlPlane.rootVolume` | No | `{iops: 4000, size: 100, type: gp3}` | Control plane root volume config |
 | `workers.replicas` | No | `3` | Number of worker nodes |

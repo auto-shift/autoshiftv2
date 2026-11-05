@@ -56,16 +56,6 @@ object-templates-raw: |
   {{- $found = (dig "data" $secretKey "" ((lookup "v1" "Secret" $secretNs $secretName) | default dict)) }}
   {{- end }}
   {{- if not $found }}
-  - complianceType: musthave
-    # Metadata only and never constructible, so this reports the violation without creating
-    # anything. The name carries the diagnosis: which Secret is missing, and for which backend.
-    objectDefinition:
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: ztwim-datastore-creds-missing-{{ $secretName | default "unnamed" }}
-        namespace: {{ $ns }}
-        annotations:
-          autoshift.io/waiting-for: 'Secret {{ $secretNs }}/{{ $secretName | default "<configSecretRef.name unset>" }} key {{ $secretKey }}, required by {{ $which }}'
+  {{- fail (printf "Create Secret %s/%s with key %s, required by %s. SPIRE is held back until it exists, rather than started on SQLite." $secretNs ($secretName | default "<configSecretRef.name unset>") $secretKey $which) }}
   {{- end }}
   {{- end }}

@@ -131,6 +131,8 @@ clusters:
         # sshPublicKey: 'ssh-ecdsa AAAAE2...'        # OR inline public key instead of sshKeyRef
         fips: true                                    # default: false (requires ECDSA or RSA keys)
         networkType: OVNKubernetes                    # default: OVNKubernetes
+        zones:                                        # default: every zone in the region
+          - 'us-east-1a'                              # each zone costs one NAT gateway + one Elastic IP
 
         # --- Control Plane ---
         controlPlane:
@@ -153,8 +155,9 @@ clusters:
         # --- Single-node OpenShift (SNO) ---
         # For a SNO cluster set controlPlane.replicas: 1 and workers.replicas: 0.
         # The single node runs both the control plane and all workloads, so size
-        # the controlPlane instanceType accordingly (m5.2xlarge minimum). SNO also
-        # provisions into a single AZ, using only one NAT gateway / Elastic IP.
+        # the controlPlane instanceType accordingly (m5.2xlarge minimum). SNO still
+        # spreads the network over every zone in the region unless zones is set;
+        # pin one zone to use a single NAT gateway and Elastic IP.
 
       # =====================================================================
       # Disconnected — optional, same as baremetal

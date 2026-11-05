@@ -1,7 +1,7 @@
 # cert-manager AutoShift Policy
 
 ## Overview
-This policy installs the openshift-cert-manager-operator operator using AutoShift patterns, and
+This policy installs the openshift-cert-manager-operator operator by using AutoShift patterns, and
 provisions a built-in CA (`policy-cert-manager-ca`).
 
 ## Built-in CA (`autoshift-ca`)
@@ -18,7 +18,7 @@ via their `tlsIssuer` (GitLab, Keycloak, Vault, …). The **signer is a ref**, s
 - `.issuer.kind` (default `ClusterIssuer`) and `.issuer.group` (default `cert-manager.io`) complete the ref —
   set `.group` for external issuers (Venafi, step-ca, AWS PCA).
 - The signer must be able to issue a **CA cert** (`isCA`) — a `ca` issuer over your root / Venafi / step.
-  Public ACME **cannot** (it won't issue CA certs; use ACME for leaf/Route certs, not the CA).
+  Public ACME **cannot** (it will not issue CA certs; use ACME for leaf/Route certs, not the CA).
 - **Opt out** entirely with `autoshift.io/cert-manager-ca: 'false'` (handled by placement) — then components
   must set their own `tlsIssuer`.
 - **Two-tier note**: if every cluster's `autoshift-ca` chains to the same enterprise root, spokes trust the
@@ -41,11 +41,11 @@ Issuer defaults to `autoshift-ca`; on a cluster with a real ACME issuer set e.g.
 `config.certManager.apiCert.issuer.name: zerossl-production-aws`. Secret/Certificate names are
 `cert-manager-api-cert` / `cert-manager-ingress-cert`.
 
-**Why it's safe / how it falls back:**
+**Why it is safe / how it falls back:**
 - **Readiness gate** — the policy always creates the cert-manager `Certificate`, but only patches the
   APIServer/IngressController **once that `Certificate` is `Ready`**. A failed issuance leaves the cluster on
-  its default cert (never points it at a cert that hasn't issued).
-- **Additive merge** (`musthave`) — doesn't clobber other operator-managed spec fields.
+  its default cert (never points it at a cert that has not issued).
+- **Additive merge** (`musthave`) — does not clobber other operator-managed spec fields.
 - **Non-disruptive rotation** — cert-manager keeps the same secret name; the router hot-reloads and the API
   server dynamically reloads. Only the *first* API add rolls one kube-apiserver revision (no reboot).
 - **Later failure = alert, not auto-revert** — `policy-cert-manager-{api,ingress}-cert-ready` (inform)

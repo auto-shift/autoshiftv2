@@ -86,7 +86,7 @@ oc get packagemanifests servicemeshoperator3 -o jsonpath='{.status.channels[*].c
 
 ## Next Steps: Configuration
 
-After operator installation, configure the service mesh using the `servicemesh3-ambient` policy, which deploys Istio in ambient mode, Kiali, and distributed tracing.
+After operator installation, configure the service mesh by using the `servicemesh3-ambient` policy, which deploys Istio in ambient mode, Kiali, and distributed tracing.
 
 ## Common Patterns
 

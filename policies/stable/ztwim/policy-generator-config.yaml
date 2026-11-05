@@ -74,6 +74,8 @@ policies:
       - name: policy-ztwim-instance
     manifests:
       - path: test/datastore-creds.yaml
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
   # Depends on the barrier as well as the instance, so the operands wait for a datastore password
   # rather than being built against SQLite and rebuilt when it arrives.
   - name: policy-ztwim-config
@@ -149,17 +151,10 @@ policies:
     manifests:
       - path: test/federation-mesh-effective.yaml
     customMessage:
-      noncompliant: >
-        This cluster is in a federation mesh but is not federating as configured. The violating
-        object name says which half failed. ztwim-federation-not-in-server-config means the running
-        SPIRE server has no federation block, so either config.ztwim.federation.bundleEndpoint was
-        never set, or CREATE_ONLY_MODE stopped the Operator rewriting the generated configuration,
-        in which case the operands need recreating. ztwim-mesh-missing-<peer> means no
-        ClusterFederatedTrustDomain exists for that peer's trust domain, usually because its
-        ManagedClusterView has not reported a bundle, trust domain and federation endpoint yet. A
-        peer that shares this cluster's trust domain is not checked, because there is nothing to
-        federate. Note that both enforcing mesh policies report Compliant when they render nothing,
-        so their status is not evidence.
+      noncompliant: >-
+        {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}. A peer that shares this cluster's trust domain is not checked. Both
+        enforcing mesh policies report Compliant when they render nothing, so their status is not
+        evidence.
   # Opt-in (autoshift.io/ztwim-federation): trust bundles from FOREIGN trust domains.
   - name: policy-ztwim-federation
     placement:
@@ -291,14 +286,11 @@ policies:
     manifests:
       - path: test/operand-image-drift.yaml
     customMessage:
-      noncompliant: >
-        The ZTWIM operator has upgraded but one or more SPIRE operands are still running the
-        previous release's images. This is CREATE_ONLY_MODE: the operator creates absent objects
-        but never updates existing ones, so the operand CRs report Ready while the workloads are
-        stale. The drifted workloads are named in the annotation on the violating object. To
-        repair, set autoshift.io/ztwim-operand-reconcile to 'true' so AutoShift deletes them and
-        the operator recreates them at the declared images, or delete them by hand. On a nested hub
-        this restarts the SPIRE server and therefore the trust domain's CA; see the policy README.
+      noncompliant: >-
+        {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }} The operator upgraded but CREATE_ONLY_MODE held these workloads at the
+        previous release's images. Set autoshift.io/ztwim-operand-reconcile to 'true' so AutoShift
+        deletes them and the operator recreates them, or delete them by hand. On a nested hub this
+        restarts the SPIRE server and with it the trust domain's CA; see the policy README.
   # inform: catches a datastore that was asked to be postgres and silently is not. A valid SQLite
   # configuration reports Compliant, so the request has to be checked against the effect. Also
   # reports a backend named through external or tlsSecretName that databaseType does not select.
@@ -309,17 +301,10 @@ policies:
     manifests:
       - path: test/datastore-effective.yaml
     customMessage:
-      noncompliant: >
-        config.ztwim.datastore.databaseType asks for postgres but this cluster is not using it. The
-        violating object name says which half failed: ztwim-server-conf-still-<type> means the
-        RUNNING server config is still on that datastore -- either the CNPG password Secret
-        spire-db-app did not exist when the policy last evaluated, or CREATE_ONLY_MODE stopped the
-        operator regenerating server.conf, in which case delete the spire-server ConfigMap and
-        StatefulSet so it is rebuilt from the resource; ztwim-cnpg-cluster-missing means
-        the CNPG Cluster was never created, so check that autoshift.io/cloudnative-pg is 'true' and
-        that the CloudNativePG operator installed. Note that switching datastore is DESTRUCTIVE
-        whenever it takes effect: a different datastore is an empty one, so SPIRE mints a new CA and
-        the previous trust domain root is gone.
+      noncompliant: >-
+        {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}. Switching datastore is DESTRUCTIVE whenever it takes effect: a
+        different datastore is an empty one, so SPIRE mints a new CA and the previous trust domain
+        root is gone.
   # inform: surfaces a SPIRE control plane that installed but never became ready.
   - name: policy-ztwim-ready
     remediationAction: inform

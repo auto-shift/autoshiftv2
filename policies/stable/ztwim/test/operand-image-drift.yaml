@@ -15,14 +15,8 @@
 # normally this is always Compliant and costs one Deployment lookup; on any cluster where
 # create-only was turned on by some other route it still fires.
 #
-# The violation is signalled with a metadata-only Deployment, the established AutoShift idiom: it
-# has no selector and no pod template, so the API server rejects it. It can never be satisfied, and
-# it cannot be silently "fixed" into compliance if someone flips this policy to enforce.
-#
-# ONE sentinel PER DRIFTED WORKLOAD, named after it. ACM's violation message lists the object names
-# it could not find and nothing else, so a single sentinel carrying the detail in an annotation
-# reads only as "deployments [ztwim-operand-image-drift] not found", which is true and useless. Naming
-# them per workload makes the message itself say which operand is stale.
+# The violation is a template `fail` naming every drifted workload and its stale container. It
+# creates nothing, so it cannot be "fixed" into compliance if someone flips this policy to enforce.
 object-templates-raw: |
   {{- $ns := "zero-trust-workload-identity-manager" }}
   {{- $opDep := (lookup "apps/v1" "Deployment" $ns "zero-trust-workload-identity-manager-controller-manager") | default dict }}
@@ -35,6 +29,7 @@ object-templates-raw: |
   {{- end }}
   {{- end }}
   {{- $targets := list (dict "kind" "StatefulSet" "name" "spire-server") (dict "kind" "DaemonSet" "name" "spire-agent") (dict "kind" "DaemonSet" "name" "spire-spiffe-csi-driver") (dict "kind" "Deployment" "name" "spire-spiffe-oidc-discovery-provider") }}
+  {{- $drifted := list }}
   {{- range $t := $targets }}
   {{- $w := (lookup "apps/v1" (index $t "kind") $ns (index $t "name")) | default dict }}
   {{- $stale := "" }}
@@ -46,14 +41,9 @@ object-templates-raw: |
   {{- end }}
   {{- end }}
   {{- if $stale }}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: ztwim-stale-operand-{{ index $t "name" }}
-        namespace: {{ $ns }}
-        annotations:
-          autoshift.io/stale-container: '{{ $stale }}'
+  {{- $drifted = append $drifted (printf "%s %s (container %s)" (index $t "kind") (index $t "name") $stale) }}
   {{- end }}
+  {{- end }}
+  {{- if $drifted }}
+  {{- fail (printf "Stale SPIRE operands: %s." (join ", " $drifted)) }}
   {{- end }}

@@ -39,14 +39,9 @@ object-templates-raw: |
   {{- $want := `{{hub $cfgType hub}}` }}
   {{- $extHost := `{{hub $cfgExtHost hub}}` }}
   {{- $tlsSecret := `{{hub $cfgTlsSecret hub}}` }}
+  {{- $problems := list }}
   {{- if and (or $extHost $tlsSecret) (ne $want "postgres") }}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: ztwim-datastore-backend-set-but-type-is-{{ $want }}
-        namespace: {{ $ns }}
+  {{- $problems = append $problems (printf "Set config.ztwim.datastore.databaseType to postgres: external or tlsSecretName is configured, but databaseType is %s, so nothing uses that backend" $want) }}
   {{- end }}
   {{- if eq $want "postgres" }}
   {{- $conf := (lookup "v1" "ConfigMap" $ns "spire-server") | default dict }}
@@ -61,21 +56,12 @@ object-templates-raw: |
   {{- $db = (lookup "postgresql.cnpg.io/v1" "Cluster" $ns "spire-db") | default dict }}
   {{- end }}
   {{- if and $raw (ne $actual "postgres") }}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: ztwim-server-conf-still-{{ $actual | default "unset" }}
-        namespace: {{ $ns }}
+  {{- $problems = append $problems (printf "The running spire-server ConfigMap is still on %s. Either the CloudNativePG password Secret spire-db-app was missing when the policy last evaluated, or CREATE_ONLY_MODE stopped the operator regenerating server.conf, in which case delete the spire-server ConfigMap and StatefulSet so they are rebuilt" ($actual | default "an unset datastore")) }}
   {{- end }}
   {{- if and (not $extHost) (not $db) }}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: ztwim-cnpg-cluster-missing
-        namespace: {{ $ns }}
+  {{- $problems = append $problems "The CloudNativePG Cluster spire-db does not exist. Check that autoshift.io/cloudnative-pg is 'true' and that the CloudNativePG operator installed" }}
   {{- end }}
+  {{- end }}
+  {{- if $problems }}
+  {{- fail (join ". " $problems) }}
   {{- end }}

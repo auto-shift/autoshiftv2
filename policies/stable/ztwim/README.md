@@ -343,8 +343,8 @@ particular release's shape.
 
 **`policy-ztwim-operand-drift` is the check.** It compares each running container against the
 `RELATED_IMAGE_*` environment on the installed operator, which is the source of truth for what each
-operand should run. A violation names the stale workload directly, for example
-`ztwim-stale-operand-spire-agent`.
+operand should run. The violation message names each stale workload and container, for example
+`Stale SPIRE operands: DaemonSet spire-agent (container spire-agent)`.
 
 **Applying an operand change under create-only means deleting the workload.** That is the only
 lever: the create path still runs. Clearing `CREATE_ONLY_MODE` instead does not work on a
