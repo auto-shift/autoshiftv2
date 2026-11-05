@@ -2,10 +2,10 @@
 // top-level config key it owns.
 //
 // A policy that owns configuration reads a single top-level key from the
-// cluster's rendered-config ConfigMap, named after the policy directory in
-// lowerCamelCase. Keys that belong to the fleet rather than to one policy, and
-// keys that deliberately use a shorter name, are recorded as exceptions so each
-// deviation is visible in review.
+// cluster's rendered-config ConfigMap, named after the policy directory either
+// verbatim or in lowerCamelCase. Keys that belong to the fleet rather than to
+// one policy, and keys that deliberately use a shorter name, are recorded as
+// exceptions so each deviation is visible in review.
 package configkeys
 
 import (
@@ -34,6 +34,9 @@ type Report struct {
 	Unmapped []string
 	// StaleAliases name a policy directory that no longer exists.
 	StaleAliases []string
+	// Ambiguous lists directories declared under both their verbatim and
+	// lowerCamelCase names, so the owning policy can read only one of them.
+	Ambiguous []string
 }
 
 // CamelCase converts a policy directory name to the config key it owns:
@@ -154,18 +157,23 @@ func contains(s []string, v string) bool {
 // BuildReport checks each declared key against the policy directories and the
 // recorded exceptions.
 func BuildReport(declared map[string][]string, dirs []string, conv *Conventions) Report {
+	var rep Report
 	owned := map[string]bool{}
 	dirSet := map[string]bool{}
 	for _, d := range dirs {
-		owned[CamelCase(d)] = true
+		camel := CamelCase(d)
+		owned[d] = true
+		owned[camel] = true
 		dirSet[d] = true
+		if camel != d && len(declared[d]) > 0 && len(declared[camel]) > 0 {
+			rep.Ambiguous = append(rep.Ambiguous, fmt.Sprintf("%s and %s", d, camel))
+		}
 	}
 	shared := map[string]bool{}
 	for _, s := range conv.Shared {
 		shared[s] = true
 	}
 
-	var rep Report
 	for key := range declared {
 		switch {
 		case owned[key], shared[key]:
@@ -186,5 +194,6 @@ func BuildReport(declared map[string][]string, dirs []string, conv *Conventions)
 	sort.Strings(rep.OK)
 	sort.Strings(rep.Unmapped)
 	sort.Strings(rep.StaleAliases)
+	sort.Strings(rep.Ambiguous)
 	return rep
 }

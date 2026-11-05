@@ -18,6 +18,7 @@ dnf -y install \
   jq \
   git \
   findutils \
+  skopeo \
   https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
 dnf -y install yq
 
@@ -29,3 +30,8 @@ helm version
 curl -fsSL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz -C /tmp
 install -m 0755 /tmp/oc /tmp/kubectl /usr/local/bin/
 oc version --client
+
+# oc-mirror backs `make verify-imageset`, a dry run that proves the published imageset resolves.
+curl -fsSL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.rhel9.tar.gz | tar xz -C /tmp
+install -m 0755 /tmp/oc-mirror /usr/local/bin/
+oc-mirror version --output=yaml | head -3
