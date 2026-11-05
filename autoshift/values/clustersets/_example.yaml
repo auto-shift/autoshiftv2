@@ -207,6 +207,47 @@ hubClusterSets:
             debug: false
 
       # =======================================================================
+      # Node Feature Discovery
+      # =======================================================================
+      # Optional. Without this block the policy applies the Red Hat 4.22 default shown in
+      # workerConfig below, which is what the NVIDIA GPU Operator needs for OpenShift AI and for
+      # OpenShift Virtualization GPU passthrough: PCI devices labelled by vendor, so a node with an
+      # NVIDIA card gets feature.node.kubernetes.io/pci-10de.present=true.
+      #
+      # workerConfig is nfd-worker.conf and replaces the default outright, so copy the default
+      # and extend it. nodeFeatureRules add custom labels, for example for AMD or Intel Gaudi
+      # accelerators. A label name without a prefix lands in feature.node.kubernetes.io/; any
+      # other prefix must be listed in extraLabelNs or nfd-master drops it.
+      nodeFeatureDiscovery:
+        workerConfig:
+          core:
+            sleepInterval: '60s'
+          sources:
+            pci:
+              deviceClassWhitelist:
+                - '0200'
+                - '03'
+                - '12'
+              deviceLabelFields:
+                - 'vendor'
+        nodeFeatureRules:
+          - name: 'nvidia-gpu'
+            rules:
+              - name: 'nvidia gpu present'
+                labels:
+                  nvidia-gpu: 'true'
+                matchFeatures:
+                  - feature: 'pci.device'
+                    matchExpressions:
+                      vendor:
+                        op: 'In'
+                        value:
+                          - '10de'
+        topologyUpdater: false
+        enableTaints: false
+        extraLabelNs: []
+
+      # =======================================================================
       # Compliance Operator
       # =======================================================================
       # One ScanSettingBinding per entry in scans. Profiles are PINNED to a version: the
@@ -536,24 +577,30 @@ hubClusterSets:
         mirrorRegistry:
           host: 'registry.example.com:5000'    # host:port — there is no separate port key
           path: 'openshift'
-          # ca (inline bundle) or caRef (hub ConfigMap) is required once mirrors/tagMirrors or
-          # catalogs are defined; the mirrored registry is not in the cluster's default trust.
+          # ca (inline bundle) or caRef (hub ConfigMap): only when the mirror's certificate is not
+          # publicly trusted. Omit both for a mirror with a public certificate.
           caRef:
             name: 'cluster-ca-bundle'
             key: 'ca-bundle.crt'
             namespace: 'cluster-install-secrets'
+          # mirror is a path on host, which every consumer prefixes; omit it to use host[/path].
           mirrors:
             - source: 'registry.redhat.io'
-              mirror: 'registry.example.com:5000/rhel'
+              mirror: 'rhel'
             - source: 'quay.io'
-              mirror: 'registry.example.com:5000/quay'
+              mirror: 'quay'
           # tagMirrors -> ImageTagMirrorSet, for images pulled by TAG (not digest). The Vault chart
           # images (docker.io/hashicorp/vault:1.17.2, vault-k8s:1.4.2) are tag-referenced, so mirror
           # them here. `oc mirror` copies them via the imageset (vault key in known-additional-images.json).
+          # The CloudNativePG Operator pulls its default PostgreSQL and PgBouncer images by tag too;
+          # make generate-imageset adds them for the mirrored Operator release.
           tagMirrors:
             - source: 'docker.io/hashicorp'
-              mirror: 'registry.example.com:5000/hashicorp'
+              mirror: 'hashicorp'
+            - source: 'ghcr.io/cloudnative-pg'
+              mirror: 'cloudnative-pg'
         # imagePath and tag, not a single image string — the host comes from mirrorRegistry above.
+        # Required whenever disconnected-mirror is 'true': operators subscribe to <source>-<suffix>.
         catalogs:
           - source: redhat-operators
             imagePath: redhat/redhat-operator-index
@@ -575,6 +622,9 @@ hubClusterSets:
         # startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
         dbBackupSchedule: '0 2 * * *'
         dbBackupRetention: '30d'
+        dbImage: ''                            # PostgreSQL image for gitlab-db; '' = Operator default
+        dbPoolerImage: ''                      # PgBouncer image for both Poolers; '' = Operator default
+        dbPrimaryUpdate: 'unsupervised'        # unsupervised | supervised (manual primary switchover)
       # =======================================================================
       # JFrog Artifactory
       # =======================================================================
@@ -585,6 +635,9 @@ hubClusterSets:
         # startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
         dbBackupSchedule: '0 3 * * *'
         dbBackupRetention: '30d'
+        dbImage: ''                            # PostgreSQL image for artifactory-db; '' = Operator default
+        dbPoolerImage: ''                      # PgBouncer image for both Poolers; '' = Operator default
+        dbPrimaryUpdate: 'unsupervised'        # unsupervised | supervised (manual primary switchover)
       # =======================================================================
       # Operator version allow-list — works for EVERY operator, keyed by its version-label base
       # (config.<key>.versions + optional .startingCSV). A list, so it lives in config, not a label.
@@ -597,6 +650,8 @@ hubClusterSets:
         versions:                              # allowed CSV versions (compliance constraint)
           - 'quay-operator.v3.18.0'
         startingCSV: 'quay-operator.v3.18.0'   # explicit initial install pin (optional; '' = let OLM pick)
+        dbImage: ''                            # quay-db-mode managed: PostgreSQL image for both databases; '' = Operator default
+        dbPrimaryUpdate: 'unsupervised'        # unsupervised | supervised (manual primary switchover)
         # --- Registry production settings (everything below is optional) ----------------
         # Superusers. With OIDC these are the OIDC usernames and they get admin on FIRST LOGIN
         # with no bootstrap step — that is the supported zero-Job admin path. Changing this
@@ -1285,7 +1340,7 @@ hubClusterSets:
       # DERIVED — do not set: cluster-type ('hub' for hubClusterSets entries, 'spoke' for
       # managedClusterSets entries). Injected by the top-level chart, so a value set here is
       # overwritten. A self-managed hub is cluster-type 'hub' plus self-managed 'true'.
-      openshift-version: '4.22.8'       # desired OCP version: operator-catalog alignment (tooling) + upgrade target (openshift-upgrade policy)
+      openshift-version: '4.22.18'       # desired OCP version: operator-catalog alignment (tooling) + upgrade target (openshift-upgrade policy)
       policy-namespace: ''               # hub only — overrides the ACM policy namespace
 
       # =======================================================================
@@ -1968,7 +2023,9 @@ hubClusterSets:
       external-secrets-operator-version: 'openshift-external-secrets-operator.v1.2.0'
       external-secrets-operator-source: redhat-operators
       external-secrets-operator-source-namespace: openshift-marketplace
-      # Opentelemetry
+
+      # =======================================================================
+      # OpenTelemetry
       # =======================================================================
       opentelemetry: 'false'
       opentelemetry-subscription-name: opentelemetry-product
@@ -1977,10 +2034,11 @@ hubClusterSets:
       opentelemetry-source: redhat-operators
       opentelemetry-source-namespace: openshift-marketplace
 
+      # =======================================================================
       # NetApp Trident
       # =======================================================================
       trident: 'true'
-      trident-name: trident-operator
+      trident-subscription-name: trident-operator
       trident-install-plan-approval: Automatic
       trident-source: certified-operators
       trident-source-namespace: openshift-marketplace
