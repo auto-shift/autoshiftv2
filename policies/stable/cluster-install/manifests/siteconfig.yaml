@@ -51,9 +51,10 @@ object-templates-raw: |
       {{- $caRef := (index $mirrorReg "caRef" | default dict) }}
       {{- if not (empty $caRef) }}
         {{- $refNs := (index $caRef "namespace" | default $cm.metadata.namespace) }}
-        {{- $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict }}
-        {{- $refData := (index $refCM "data" | default dict) }}
-        {{- $caTrustBundle = (index $refData (index $caRef "key") | default $caTrustBundle) }}
+        {{- $caTrustBundle = (fromConfigMap $refNs (index $caRef "name") (index $caRef "key")) }}
+        {{- if not $caTrustBundle }}
+        {{- fail (printf "config.disconnected.mirrorRegistry.caRef: ConfigMap %s/%s has no key %s" $refNs (index $caRef "name") (index $caRef "key")) }}
+        {{- end }}
       {{- end }}
       {{- $bmcEndpoint := (index $ci "bmcEndpoint" | default "/redfish/v1/Systems/1") }}
       {{- $clusterNetwork := (index $networking "clusterNetwork") }}
@@ -87,8 +88,10 @@ object-templates-raw: |
             [[registry.mirror]]
               location = "{{ $mirrorLoc }}"
           {{- end }}
+        {{- if $caTrustBundle }}
         ca-bundle.crt: |
           {{ $caTrustBundle | autoindent }}
+        {{- end }}
 
   - complianceType: musthave
     objectDefinition:

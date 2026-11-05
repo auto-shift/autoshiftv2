@@ -11,3 +11,20 @@ metadata:
   namespace: openshift-gitops
 spec:
   runOnInfra: false
+---
+# policy-infra-gitops and policy-remove-infra-gitops list the Argo CD instances in the gitops
+# namespace. One infra and one unrelated toleration exercise the remove path's filtering.
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: infra-gitops
+  namespace: openshift-gitops
+spec:
+  nodePlacement:
+    tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/infra
+        operator: Exists
+      - effect: NoSchedule
+        key: example.com/dedicated
+        operator: Exists

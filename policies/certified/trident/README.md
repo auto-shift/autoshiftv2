@@ -11,7 +11,7 @@ To enable Trident for a ClusterSet, add the following to your ClusterSet section
 ```yaml
 ### Trident
 trident: 'true'
-trident-name: trident-operator
+trident-subscription-name: trident-operator
 trident-install-plan-approval: Automatic
 trident-source: certified-operators
 trident-source-namespace: openshift-marketplace
@@ -21,7 +21,7 @@ trident-channel: stable
 | Field | Description |
 |---|---|
 | `trident` | Set to `'true'` to enable, `'false'` to disable |
-| `trident-name` | Name of the Trident operator subscription |
+| `trident-subscription-name` | Name of the Trident operator subscription |
 | `trident-install-plan-approval` | Operator install plan approval mode (`Automatic` or `Manual`) |
 | `trident-source` | Operator catalog source |
 | `trident-source-namespace` | Namespace of the catalog source |

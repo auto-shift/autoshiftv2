@@ -7,7 +7,7 @@ gitops:
   argoNamespace: openshift-gitops
   group: openshift-gitops-operator
   source: redhat-operators
-  channel: gitops-1.21
+  channel: gitops-1.22
   sourceNamespace: openshift-marketplace
   name: openshift-gitops-operator
   argoName: infra-gitops
@@ -19,6 +19,14 @@ gitops:
     # mode (renders PolicyGenerator dirs live); disabled for OCI-only deployments (prerendered Helm).
     # The ApplicationSet forwards the effective value from the deployment's policyGenerator flag.
     enabled: true
+    # The Red Hat Advanced Cluster Management CLI image, which is what ships the PolicyGenerator
+    # binary. Not to be confused with the bootstrap chart's root `image`, which is the OpenShift CLI
+    # image used by the CRD-wait Job. Left empty, the bootstrap chart and this policy both read this
+    # from the acm-cli-downloads deployment, where Red Hat Advanced Cluster Management has shipped
+    # the binary since 2.15. Set it to pin a mirrored image, or to keep PolicyGenerator working
+    # where the MultiClusterHub console component is disabled, since acm-cli-downloads belongs to
+    # that component. An explicit value wins over the lookup.
+    acmCliImage: ''
     # Excluded from the repository tarball the repo-server streams to a CMP sidecar. This setting is
     # repo-server WIDE, so it hits every plugin-rendered Application on this Argo CD, not just
     # AutoShift's. Only .git is listed because no repository serves manifests out of it; do not add
@@ -78,16 +86,13 @@ gitops:
         - ComplianceCheckResult
         - ComplianceRemediation
   controller:
-    # Scaling: raise processors for environments with many Applications. AutoShift generates an
-    # Application per policy directory, so even a minimal hub carries dozens.
+    # Concurrency, left at the Argo CD defaults. AutoShift generates an Application per policy
+    # directory, so even a minimal hub carries dozens.
     #
-    # These sit at the Argo CD defaults. An earlier 50/25 was measured at 141s for a full refresh
-    # against 225s at 20/10 on a 51-Application hub, which looked like a free win, but concurrency
-    # multiplies peak memory: each in-flight comparison holds that Application's rendered and live
-    # state at once. A hub running 58 Applications and 299 Policies then hit OOMKilled repeatedly at
-    # the previous 4Gi ceiling, crash looping every few minutes and leaving objects half applied.
-    # Faster refreshes are worth nothing from a controller that cannot finish one. Raise these only
-    # together with limits.memory below, and re-measure.
+    # Raising these shortens a full refresh but multiplies peak memory, because each in-flight
+    # comparison holds an Application's rendered and live state at once. Set too high for
+    # limits.memory, the controller is OOMKilled mid-sync and leaves objects half applied. Raise
+    # them only together with limits.memory below, and re-measure.
     statusProcessors: 20        # concurrent status reconciliations (Argo CD default: 20)
     operationProcessors: 10     # concurrent sync operations (Argo CD default: 10)
     # GOMEMLIMIT is DERIVED as this percentage of limits.memory below, so the two cannot drift.
@@ -148,12 +153,12 @@ gitops:
       memory: 512Mi
   # PolicyGenerator ConfigManagementPlugin (CMP) for rendering kustomize/PolicyGenerator
   # policies in the hub repo-server. Required for GIT/source deployments. Adds an init
-  # container (stages the PG binary from the ACM subscription image) and a CMP sidecar that
+  # container (stages the PG binary from the acm-cli-downloads image) and a CMP sidecar that
   # runs `kustomize build --enable-alpha-plugins` after substituting the per-deployment
   # ${...} placeholders. Defined in templates/policy-gitops-systems-argocd.yaml.
   # Gated by gitops.policyGenerator.enabled (above): OCI-only deployments consume prerendered Helm
   # charts and set it false to omit the sidecar. Its init/sidecar images are resolved at enforcement
-  # time by spoke-side lookups of the running repo-server and ACM subscription deployments, so they
+  # time by spoke-side lookups of the running repo-server and acm-cli-downloads deployments, so they
   # always match the versions on the cluster.
   server:
     autoscale:
@@ -200,7 +205,7 @@ gitops:
 # gitops<bool>: 'true' - Required to enable GitOps management. This is required for all HUB clusters
 #
 # Configuration:
-# gitops-channel<String>: Operator channel (default: 'gitops-1.21')
+# gitops-channel<String>: Operator channel (default: 'gitops-1.22')
 # gitops-install-plan-approval<String>: 'Automatic' or 'Manual' (default: 'Automatic')
 # gitops-source<String>: Operator catalog source (default: 'redhat-operators')
 # gitops-source-namespace<String>: Catalog namespace (default: 'openshift-marketplace')

@@ -1,5 +1,9 @@
+# Undoes create-infra-gitops: runOnInfra off, and the infra tolerations stripped from the GitopsService
+# and from every Argo CD instance in the gitops namespace. musthave never removes a field, so each is a
+# read-modify-write under mustonlyhave; other tolerations and the rest of each spec are kept.
 object-templates-raw: |
-  {{- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace") | default "openshift-gitops" }}
+  {{- /* Labels exist only in hub templates; .ManagedClusterLabels is nil on the managed cluster. */}}
+  {{- $gitopsNs := "{{hub index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops" hub}}" }}
   {{- $ArgoCD := (lookup "pipelines.openshift.io/v1alpha1" "GitopsService" $gitopsNs "cluster") | default dict }}
   {{- if not (empty $ArgoCD) }}
   {{- $spec := $ArgoCD.spec }}
@@ -10,4 +14,28 @@ object-templates-raw: |
   - complianceType: mustonlyhave
     objectDefinition:
       {{ $objectDefinition | toYaml | autoindent }}
+  {{- end }}
+  {{- range $argo := (lookup "argoproj.io/v1beta1" "ArgoCD" $gitopsNs "").items }}
+  {{- $placement := (dig "spec" "nodePlacement" (dict) $argo) }}
+  {{- $tolerations := (dig "tolerations" (list) $placement) }}
+  {{- $kept := list }}
+  {{- range $t := $tolerations }}
+  {{- if ne (index $t "key" | default "") "node-role.kubernetes.io/infra" }}
+  {{- $kept = append $kept $t }}
+  {{- end }}
+  {{- end }}
+  {{- if ne (len $kept) (len $tolerations) }}
+  {{- $newPlacement := unset $placement "tolerations" }}
+  {{- if $kept }}
+  {{- $newPlacement = set $newPlacement "tolerations" $kept }}
+  {{- end }}
+  {{- $newSpec := unset $argo.spec "nodePlacement" }}
+  {{- if $newPlacement }}
+  {{- $newSpec = set $newSpec "nodePlacement" $newPlacement }}
+  {{- end }}
+  {{- $objectDefinition := dict "apiVersion" "argoproj.io/v1beta1" "kind" "ArgoCD" "metadata" (dict "name" $argo.metadata.name "namespace" $gitopsNs) "spec" $newSpec }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      {{ $objectDefinition | toYaml | autoindent }}
+  {{- end }}
   {{- end }}
