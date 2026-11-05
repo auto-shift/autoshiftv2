@@ -166,6 +166,27 @@ object-templates-raw: |
           # <instance>-agent-agent.
           name: {{hub printf "%s-agent-agent" $instName hub}}
           namespace: {{hub $teamNs hub}}
+  # The agent loads its certificate authority and client certificate ONCE, at startup, and never
+  # reloads them, so a renewal is not used until the pod restarts and the agent is cut off when the
+  # old certificate expires. Stamping the hub-side secrets' resourceVersions on the agent pod
+  # template rolls it onto the new material (agent-side reload is argoproj-labs/argocd-agent#1166,
+  # not yet released). The operator keeps a foreign pod template annotation,
+  # and musthave replaces a map value rather than appending to it. Emitted only once the operator
+  # has created the Deployment, because musthave would otherwise create a bare one.
+  {{- if (lookup "apps/v1" "Deployment" "{{hub $teamNs hub}}" "{{hub printf "%s-agent-agent" $instName hub}}") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: {{hub printf "%s-agent-agent" $instName hub}}
+        namespace: {{hub $teamNs hub}}
+      spec:
+        template:
+          metadata:
+            annotations:
+              autoshift.io/tls-revision: '{{hub printf "%s-%s" (dig "metadata" "resourceVersion" "0" $caSecS) (dig "metadata" "resourceVersion" "0" $clSecS) hub}}'
+  {{- end }}
   {{hub- if not $infraAttaches hub}}
   # infra's instance configures the cluster itself, so its application controller gets the same
   # cluster-admin binding infra-gitops has on a hub. Cluster scope from

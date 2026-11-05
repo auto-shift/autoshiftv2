@@ -371,7 +371,9 @@ object-templates-raw: |
   # startup, and never reloads them, so a renewal cert-manager performs is not served until the
   # pod restarts and agents are cut off when the old certificate expires. Carrying each secret's
   # resourceVersion in an env var changes the pod template whenever one is renewed, so the operator
-  # rolls the principal onto the new material.
+  # rolls the principal onto the new material. Upstream argocd-agent added TLS hot reload after
+  # v0.10.0 (argoproj-labs/argocd-agent#1125); once Red Hat OpenShift GitOps ships it, the
+  # certificates no longer need the roll, but the JWT key still does.
   {{hub- $certRev := list hub}}
   {{hub- range $sn := (list "gitops-agent-principal-tls" "gitops-agent-resource-proxy-tls" "gitops-agent-ca" "gitops-agent-jwt") hub}}
   {{hub- $certRev = append $certRev (dig "metadata" "resourceVersion" "0" ((lookup "v1" "Secret" $agentNs $sn) | default dict)) hub}}
