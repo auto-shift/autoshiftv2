@@ -582,7 +582,10 @@ oc delete pvc spire-data-spire-server-0 -n zero-trust-workload-identity-manager
 oc scale sts spire-server -n zero-trust-workload-identity-manager --replicas=1
 ```
 
-Do this only after all three nested policies report Compliant. No policy attempts it.
+Do this only after all three nested policies report Compliant. Setting
+`autoshift.io/ztwim-nested-auto-reset` to `'true'` has a policy do it instead, once the spoke's
+configuration is correct and its server is ready. If the chain can never form, that policy clears the
+datastore again after every restart, so leave it off unless the fleet is too large to do this by hand.
 
 ### Why there are three inform checks
 
@@ -669,6 +672,29 @@ deployment as unsupported by Red Hat until that annotation changes.
 Because `tls-profiles` is false, the cluster-wide `TLSSecurityProfile` does not propagate to SPIRE
 endpoints. A hardened deployment cannot centrally enforce cipher suites on them, so do not assume
 cluster TLS policy covers this component.
+
+## Remove it
+
+AutoShift has no uninstall path for SPIRE: setting `autoshift.io/ztwim` to `'false'` stops the
+policies but leaves everything they created. To remove SPIRE from a cluster, do it in this order:
+
+1. Set `autoshift.io/ztwim` to `'false'` in the values files, so no policy recreates what you delete.
+2. Delete the `ZeroTrustWorkloadIdentityManager` named `cluster`. Every operand resource is owned by
+   it, so the server, agents, CSI driver and OIDC discovery provider go with it.
+3. Wait until no pods remain in `zero-trust-workload-identity-manager`.
+4. Delete the `Subscription` and the `ClusterServiceVersion`, then the namespace.
+
+Order matters at step 3. Deleting the namespace while the operands are still running removes the
+SPIFFE CSI driver before the pods that mount its volumes. Those pods cannot unmount, and the
+namespace stays in `Terminating` until they are force-deleted.
+
+On a nested spoke, also delete what the nested policies created outside the namespace: the
+`spire-agent-upstream` `SecurityContextConstraints`, `ClusterRole` and `ClusterRoleBinding`, the
+`ztwim-tokenreview-*` `ClusterRole` and `ClusterRoleBindings`, and the `upstream.csi.spiffe.io`
+`CSIDriver`. On a nested hub, delete the `ztwim-tokenreview` `ManagedServiceAccount` in each spoke's
+namespace.
+
+The CRDs stay, as do the `ClusterRoles` OLM generated for them.
 
 ## Verify
 

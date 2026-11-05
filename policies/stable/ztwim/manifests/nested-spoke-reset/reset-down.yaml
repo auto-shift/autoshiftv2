@@ -7,12 +7,15 @@
 # `spire` upstream-authority field, so the operator cannot generate a correct config in the first
 # place. Holding the server down first would be a race, not a guarantee.
 #
-# THIS DELETES A PERSISTENTVOLUMECLAIM. It is therefore gated on FOUR conditions, all of which must
+# THIS DELETES A PERSISTENTVOLUMECLAIM. It is therefore gated on FIVE conditions, all of which must
 # hold, and it is off unless autoshift.io/ztwim-nested-auto-reset is 'true':
 #   1. the spoke's server.conf already carries the spire UpstreamAuthority (config is correct)
 #   2. the upstream CSI driver is Ready (the path to the hub actually exists)
 #   3. the spoke's trust bundle still differs from the hub's root (the chain has NOT formed)
 #   4. the StatefulSet is not already scaled down (so this is a no-op once resumed)
+#   5. the server is Ready. After a resume the spoke's spire-bundle ConfigMap still holds the old
+#      root until the restarted server republishes it, so without this the reset fired again every
+#      few seconds: six times in 25 seconds on a live spoke before the chain formed.
 # Once the chain forms, condition 3 is permanently false and this only asserts that the
 # StatefulSet exists, with no fields, which changes nothing. Rendering nothing would report
 # Compliant on a spoke where SPIRE was never deployed.
@@ -34,7 +37,8 @@ object-templates-raw: |
   {{- $csiReady := gt (dig "status" "numberReady" 0 $csi | toInt) 0 }}
   {{- $sts := (lookup "apps/v1" "StatefulSet" $ns "spire-server") | default dict }}
   {{- $running := gt (dig "spec" "replicas" 0 $sts | toInt) 0 }}
-  {{- if and $hub $hasUA $csiReady $running (ne $hub $spoke) }}
+  {{- $ready := gt (dig "status" "readyReplicas" 0 $sts | toInt) 0 }}
+  {{- if and $hub $hasUA $csiReady $running $ready (ne $hub $spoke) }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: apps/v1
