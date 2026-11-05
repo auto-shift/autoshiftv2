@@ -86,7 +86,9 @@ usage() {
     echo "  --target TARGET          Placement target: hub, spoke, both, all (default: prompted)"
     echo "  --label LABEL            Label predicate key without autoshift.io/ prefix"
     echo "                           (default: directory basename; ignored for hub/all targets)"
-    echo "  --dependency POLICY      Policy dependency name (repeatable)"
+    echo "  --dependency POLICY      Policy this one depends on (repeatable). Takes the policy name"
+    echo "                           with or without its 'policy-' prefix: 'lvm-operator-install'"
+    echo "                           and 'policy-lvm-operator-install' both name the same policy"
     echo "  --add-to-autoshift       Add enable label to AutoShift values files (spoke/both targets)"
     echo "  --values-files FILES     Comma-separated list of values files to update (e.g., 'hub,sbx')"
     echo "  --help                   Show this help message"
@@ -115,7 +117,9 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --dependency)
-            DEPENDENCIES+=("$2")
+            # Accept the full policy name as well as the unprefixed form; without this,
+            # --dependency policy-foo generated a dependency on policy-policy-foo.
+            DEPENDENCIES+=("${2#policy-}")
             shift 2
             ;;
         --add-to-autoshift)
@@ -340,7 +344,8 @@ EOF
 }
 
 # Build the PolicyGenerator dependencies block for a policies[] entry (4-space indent).
-# Emits nothing when there are no dependencies.
+# Emits nothing when there are no dependencies. DEPENDENCIES is normalised to the unprefixed
+# form at parse time, so the prefix is added back exactly once here.
 build_dependency_block() {
     if [[ ${#DEPENDENCIES[@]} -eq 0 ]]; then
         return
@@ -803,7 +808,7 @@ if [[ "$TARGET" != "all" ]]; then
     echo "  Label:     autoshift.io/${LABEL}"
 fi
 if [[ ${#DEPENDENCIES[@]} -gt 0 ]]; then
-    echo "  Depends:   ${DEPENDENCIES[*]}"
+    echo "  Depends:   ${DEPENDENCIES[*]/#/policy-}"
 fi
 echo ""
 
