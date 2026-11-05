@@ -28,6 +28,10 @@ object-templates-raw: |
   {{- if not $cliImage }}
   {{-   fail "The upstream poll cannot resolve its image. Missing: ImageStream openshift/cli tag latest (or set config.images.cli)" }}
   {{- end }}
+  {{- /* Every run needs the token, so the CronJob waits for it rather than fail each run until GitLab is up */}}
+  {{- if not (dig "data" "token" "" (lookup "v1" "Secret" "autoshift-ci" "gitlab-autoshift-token")) }}
+  {{-   fail "The upstream poll is waiting for GitLab. Missing: Secret autoshift-ci/gitlab-autoshift-token key token (policy-autoshift-cicd-endpoints, once GitLab has created gitlab-system/tssc-gitlab-credentials)" }}
+  {{- end }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: batch/v1
@@ -122,7 +126,12 @@ object-templates-raw: |
                             die("autoshift-ci-endpoints has no gitlabUrl; check policy-autoshift-cicd-endpoints")
                         mirror = "%s/%s.git" % (gitlab, os.environ["PROJECT"])
                         up = refs(os.environ["UPSTREAM"])
-                        have = refs(mirror, "oauth2:" + os.environ["GITLAB_TOKEN"])
+                        try:
+                            have = refs(mirror, "oauth2:" + os.environ["GITLAB_TOKEN"])
+                        except urllib.error.HTTPError as e:
+                            if e.code == 404:
+                                die("GitLab has no project %s to mirror into yet; run the bootstrap-gitlab pipeline" % os.environ["PROJECT"])
+                            raise
                         wanted = os.environ["REFS"].split()
                         heads = [r for r in up if r.startswith("refs/heads/")] if "*" in wanted else ["refs/heads/" + b for b in wanted]
                         moved = [r for r in heads if r in up and up[r] != have.get(r)]

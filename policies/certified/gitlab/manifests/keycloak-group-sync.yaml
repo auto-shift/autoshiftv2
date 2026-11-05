@@ -49,8 +49,11 @@ object-templates-raw: |
           glh = {'PRIVATE-TOKEN': GLT}
           grp = [g for g in json.load(req(f"{GL}/groups?search={GROUP_PATH}", headers=glh))
                  if g['full_path'] == GROUP_PATH]
+          # Nothing else creates the group, and it must exist before any user can be added to it
           if not grp:
-              raise SystemExit(f"GitLab group '{GROUP_PATH}' not found")
+              grp = [json.load(req(f"{GL}/groups", {'name': GROUP_PATH, 'path': GROUP_PATH, 'visibility': 'internal'},
+                                   headers=glh, method='POST'))]
+              print(f"created GitLab group {GROUP_PATH}")
           gid = grp[0]['id']
 
           for kc_name, access in ROLES.items():
