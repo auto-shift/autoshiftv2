@@ -35,6 +35,16 @@ spec:
     channel: '{{ .Values.subscription.channel }}'
     startingCSV: >-
 {{ .Values.subscription.startingCSV | default "" | indent 6 }}
+    {{- /* config (optional): the Subscription's spec.config, most often env vars that change how
+          the operator itself behaves. OperatorPolicy declares subscription as a free-form object
+          with x-kubernetes-preserve-unknown-fields, so the whole Subscription spec is accepted
+          here. Setting it through the OperatorPolicy that OWNS the Subscription avoids a second
+          policy patching a field of a resource another policy manages. Passed through verbatim,
+          so values may be literals or ACM lookups. */}}
+    {{- with .Values.subscription.config }}
+    config:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
   {{- /* upgradeApproval (optional): defaults to Automatic. The OperatorPolicy enum is None|Automatic
         (there is no Manual — pin a version via `versions` for manual-approval behavior). Passed
         through verbatim, so a caller may supply a literal or an ACM lookup (e.g. a per-cluster label). */}}
