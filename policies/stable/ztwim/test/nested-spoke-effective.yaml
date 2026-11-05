@@ -1,0 +1,23 @@
+# inform-only: catches a nested SPOKE that reports green while doing nothing.
+#
+# Same hazard as the hub check: an unsatisfied guard renders nothing, and an empty
+# ConfigurationPolicy reports Compliant. The spoke has more ways to fail silently than the hub --
+# config.ztwim.trustDomain unset, the hub trust bundle never arriving because the elevated hub
+# template service account lacks watch, or the operator's RELATED_IMAGE_* env not resolving.
+#
+# Asserting the upstream agent Deployment exists covers all three at once: it is only emitted when
+# trustDomain, the hub endpoint AND the agent image all resolved.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spire-agent-upstream
+  namespace: zero-trust-workload-identity-manager
+---
+# The hub trust bundle is delivered by a hub template reading the hub's spire-bundle ConfigMap
+# cross-namespace. If the elevated service account is missing or lacks get/list/WATCH, that lookup
+# returns empty forever and the Secret is never created, silently.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hub-trust-bundle
+  namespace: zero-trust-workload-identity-manager

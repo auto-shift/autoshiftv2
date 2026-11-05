@@ -797,7 +797,7 @@ labels:
 - **disconnected-mirror**: ImageDigestMirrorSet and ImageContentSourcePolicy (ICSP), CatalogSources (name = `{source}-{suffix}`), OperatorHub disable
 - **Operator policies**: source ternary reads `disconnected-mirror` + `mirror-catalog-suffix` labels
 
-**ClusterImageSet note:** The Assisted Installer does NOT use ImageDigestMirrorSet (IDMS) — the ClusterImageSet `releaseImage` must point directly to the mirror registry. AutoShift handles this automatically when `disconnected.mirrorRegistry.url` is set.
+**ClusterImageSet note:** The Assisted Installer does NOT use ImageDigestMirrorSet (IDMS) — the ClusterImageSet `releaseImage` must point directly to the mirror registry. AutoShift handles this automatically when `disconnected.mirrorRegistry.host` is set.
 
 ```bash
 # Generate ImageSet for disconnected environments
@@ -855,14 +855,14 @@ Without the subscription-name label, scripts cannot:
 # Correct - scripts will detect this operator
 gitops: 'true'
 gitops-subscription-name: openshift-gitops-operator
-gitops-channel: gitops-1.21
+gitops-channel: gitops-1.22
 gitops-source: redhat-operators
 gitops-source-namespace: openshift-marketplace
 
 # Incorrect - scripts will NOT detect this operator (subscription-name missing)
 gitops: 'true'
 # gitops-subscription-name: openshift-gitops-operator  # Commented out!
-gitops-channel: gitops-1.21
+gitops-channel: gitops-1.22
 ```
 
 ## 🧪 Testing and Validation
