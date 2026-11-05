@@ -22,12 +22,20 @@
 # hostPID and the podAffinity to spire-server are both load-bearing: the agent needs host PID for
 # workload attestation, and must land on the same node as the local spire-server so the CSI socket
 # is reachable.
+# The hub's ZeroTrustWorkloadIdentityManager is read only once OLM has created its view role. Hub
+# templates read through cluster-reader, which gains the kind only when that role is aggregated into
+# it, about a second AFTER the CSV reports Succeeded. A lookup inside that window fails with
+# forbidden, and a hub template that errors is not resolved again on its own; an absent role returns
+# nothing instead, and its arrival triggers a fresh resolution.
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
   {{hub- $nested := (index $cfg "nested" | default dict) hub}}
   {{hub- $cfgTd := (index $cfg "trustDomain" | default "") hub}}
-  {{hub- $hubZtwim := (lookup "operator.openshift.io/v1alpha1" "ZeroTrustWorkloadIdentityManager" "" "cluster") | default dict hub}}
+  {{hub- $hubZtwim := dict hub}}
+  {{hub- if (lookup "rbac.authorization.k8s.io/v1" "ClusterRole" "" "zerotrustworkloadidentitymanagers.operator.openshift.io-v1alpha1-view") hub}}
+  {{hub- $hubZtwim = (lookup "operator.openshift.io/v1alpha1" "ZeroTrustWorkloadIdentityManager" "" "cluster") | default dict hub}}
+  {{hub- end hub}}
   {{hub- $td := ($cfgTd | default (dig "spec" "trustDomain" "" $hubZtwim)) hub}}
   {{hub- $cfgEndpoint := (index $nested "hubEndpoint" | default "") hub}}
   {{hub- $route := (lookup "route.openshift.io/v1" "Route" "zero-trust-workload-identity-manager" "spire-server-grpc") | default dict hub}}
@@ -42,6 +50,9 @@ object-templates-raw: |
   {{- range $e := (dig "env" (list) $c) }}
   {{- if eq (dig "name" "" $e) "RELATED_IMAGE_SPIRE_AGENT" }}{{- $agentImage = dig "value" "" $e }}{{- end }}
   {{- end }}
+  {{- end }}
+  {{- if not $trustDomain }}
+  {{- fail "Set config.ztwim.trustDomain to the hub's trust domain. This nested SPIRE spoke has none configured, and the hub's ZeroTrustWorkloadIdentityManager could not be read to derive it: either SPIRE is not installed on the hub, or the hub's OLM did not create the zerotrustworkloadidentitymanagers.operator.openshift.io-v1alpha1-view ClusterRole this lookup waits for." }}
   {{- end }}
   {{- if and $trustDomain $hubEndpoint $agentImage }}
   - complianceType: musthave

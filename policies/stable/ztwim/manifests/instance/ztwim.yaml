@@ -15,16 +15,27 @@
 #
 # clusterName defaults to the ManagedCluster name, which is what the k8s_psat node attestor stamps
 # into every agent SPIFFE ID (spiffe://<td>/spire/agent/k8s_psat/<clusterName>/<node-uid>).
+# The hub's ZeroTrustWorkloadIdentityManager is read only once OLM has created its view role. Hub
+# templates read through cluster-reader, which gains the kind only when that role is aggregated into
+# it, about a second AFTER the CSV reports Succeeded. A lookup inside that window fails with
+# forbidden, and a hub template that errors is not resolved again on its own; an absent role returns
+# nothing instead, and its arrival triggers a fresh resolution.
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
   {{hub- $td := (index $cfg "trustDomain" | default "") hub}}
   {{hub- $role := (index .ManagedClusterLabels "autoshift.io/ztwim-nested-role" | default "") hub}}
-  {{hub- $hubZtwim := (lookup "operator.openshift.io/v1alpha1" "ZeroTrustWorkloadIdentityManager" "" "cluster") | default dict hub}}
+  {{hub- $hubZtwim := dict hub}}
+  {{hub- if (lookup "rbac.authorization.k8s.io/v1" "ClusterRole" "" "zerotrustworkloadidentitymanagers.operator.openshift.io-v1alpha1-view") hub}}
+  {{hub- $hubZtwim = (lookup "operator.openshift.io/v1alpha1" "ZeroTrustWorkloadIdentityManager" "" "cluster") | default dict hub}}
+  {{hub- end hub}}
   {{hub- $hubTd := (dig "spec" "trustDomain" "" $hubZtwim) hub}}
   {{hub- $td = (ternary ($td | default $hubTd) $td (eq $role "spoke")) hub}}
   {{hub- $cluster := (index $cfg "clusterName" | default .ManagedClusterName) hub}}
   {{hub- $bundle := (index $cfg "bundleConfigMap" | default "spire-bundle") hub}}
+  {{hub- if and (eq $role "spoke") (not $td) hub}}
+  {{- fail "Set config.ztwim.trustDomain to the hub's trust domain. This nested SPIRE spoke has none configured, and the hub's ZeroTrustWorkloadIdentityManager could not be read to derive it: either SPIRE is not installed on the hub, or the hub's OLM did not create the zerotrustworkloadidentitymanagers.operator.openshift.io-v1alpha1-view ClusterRole this lookup waits for." }}
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: operator.openshift.io/v1alpha1
