@@ -50,6 +50,15 @@ policies:
       noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
     manifests:
       - path: manifests/endpoints
+  # The poll-upstream CronJob, for evaluation: it needs the GitLab token and endpoints, so it waits
+  # for them here instead of holding back the bootstrap policy they depend on.
+  - name: policy-autoshift-cicd-poll
+    dependencies:
+      - name: policy-autoshift-cicd-endpoints
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
+    manifests:
+      - path: manifests/poll
   # One AutoShift deployment per file in site-config/deployments/, through an ApplicationSet in the
   # infra Argo CD, with the repository credentials it needs.
   - name: policy-autoshift-cicd-deployments

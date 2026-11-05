@@ -12,6 +12,7 @@ procedure in [AutoShift CI/CD](../../../docs/autoshift-cicd.md).
 |---|---|
 | `policy-autoshift-cicd-bootstrap` | The `autoshift-ci` namespace, the bootstrap Tasks and Pipelines, and while `tas` is on, read access to the Keycloak admin Secret and realm import for `bootstrap-keycloak` |
 | `policy-autoshift-cicd-deployments` | The `autoshift-deployments` ApplicationSet, which deploys each file in `site-config/deployments/`, the Argo CD credentials it needs, and the `prune-deployments` CronJob, which removes the files of deleted branches |
+| `policy-autoshift-cicd-poll` | The `poll-upstream` CronJob, while `source.pollSchedule` is set. It waits for `policy-autoshift-cicd-endpoints`, which provides the GitLab token it uses |
 | `policy-autoshift-cicd-source` | The Pipelines as Code Repository for the AutoShift source on GitHub or GitLab |
 | `policy-autoshift-cicd-endpoints` | Gathers what the Tasks read into `autoshift-ci`: endpoint URLs, the trust bundle, the GitLab token, while `tas` is on, the Trusted Artifact Signer URLs and the `autoshift-ci` signing client, and while `trusted-profile-analyzer` is on, its URL and the `cli` upload client |
 

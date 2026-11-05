@@ -42,7 +42,7 @@ it by hand or need to understand what the automation does.
 | The site configuration repository, its branch and push credential, on GitHub or GitLab | `policy-autoshift-cicd-endpoints` | [Site configuration repository](#site-configuration-repository) |
 | GitLab group and the projects config places on the hub's GitLab, with the Pipelines as Code webhook | `bootstrap-gitlab` pipeline | [GitLab group, projects and webhook](#gitlab-group-projects-and-webhook) |
 | Upstream branches mirrored into the GitLab `autoshift` project | `bootstrap-gitlab` and `sync-upstream` pipelines | [Upstream mirror](#upstream-mirror) |
-| Polling upstream, for evaluation | `poll-upstream` CronJob, from `policy-autoshift-cicd-bootstrap` | [Poll instead of a webhook](#poll-instead-of-a-webhook) |
+| Polling upstream, for evaluation | `poll-upstream` CronJob, from `policy-autoshift-cicd-poll` | [Poll instead of a webhook](#poll-instead-of-a-webhook) |
 | The site configuration seeded from the AutoShift values | `bootstrap-site-config` pipeline | [Site configuration repository](#site-configuration-repository) |
 | Signing client secret and the `autoshift-ci` Keycloak client | `policy-keycloak-realm-secrets` and `policy-keycloak-realm-import` | [Signing identity](#signing-identity) |
 | Test, publish, sign and verify every branch push | `.tekton/autoshift-push.yaml`, run by Pipelines as Code | [Push pipeline](#push-pipeline) |
@@ -406,7 +406,7 @@ config:
 ```
 
 Polling needs `source.repo` to be a project path on the hub's GitLab. With another
-source, `policy-autoshift-cicd-bootstrap` fails and says so. Removing `pollSchedule` removes the
+source, `policy-autoshift-cicd-poll` fails and says so. Removing `pollSchedule` removes the
 CronJob. `sync-upstream` never forces, so a branch rewritten upstream stops syncing until you run
 `sync-upstream` with `force=true`. Watching `*` builds every upstream branch, so list the branches
 you want deployed.
