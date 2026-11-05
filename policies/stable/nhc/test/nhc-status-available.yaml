@@ -1,0 +1,31 @@
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $templates := (index (index $config "nhc" | default dict) "templates") | default list hub}}
+  {{hub- $types := list hub}}
+  {{hub- range $t := $templates hub}}
+  {{hub- range $c := ((index $t "unhealthyConditions") | default list) hub}}
+  {{hub- $types = append $types (index $c "type") hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $types = uniq $types hub}}
+  {{hub- if not $types hub}}
+  {{hub- fail "no unhealthyConditions found in nhc.templates config" hub}}
+  {{hub- end hub}}
+  {{hub- range $type := $types hub}}
+  {{- range $n := (lookup "v1" "Node" "" "").items }}
+  {{- $st := "" }}
+  {{- range $c := $n.status.conditions }}
+  {{- if eq $c.type "{{hub $type hub}}" }}{{- $st = $c.status }}{{- end }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ $n.metadata.name }}
+      status:
+        conditions:
+          - type: {{hub $type hub}}
+  {{- end }}
+  {{hub- end hub}}
