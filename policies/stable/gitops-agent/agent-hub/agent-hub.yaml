@@ -117,10 +117,12 @@ object-templates-raw: |
       spec:
         ca:
           secretName: gitops-agent-ca
-  # Serving certificates for the principal and its resource proxy. The Route host is not known on
-  # the first pass, because the Route does not exist until the instance below is created, so the
-  # certificate is issued for the in-cluster names first and reissued with the host once the
-  # lookup above resolves. Two passes of an already-reconciling policy, no ordering required.
+  # Serving certificates for the principal and its resource proxy. The certificate must carry the
+  # Route host BEFORE the principal first starts: the principal loads its serving certificate once
+  # and does not reload it, so a certificate reissued with the host later is never served and no
+  # agent can connect. The Route does not exist until the instance below is created, so the host is
+  # built from the OpenShift default, <route>-<namespace>.<ingress domain>. The domain is read by a
+  # managed-cluster template, so it is the domain of the cluster that runs the principal.
   - complianceType: musthave
     objectDefinition:
       apiVersion: cert-manager.io/v1
@@ -136,9 +138,7 @@ object-templates-raw: |
           - {{hub printf "%s.%s.svc" $pSvc $agentNs hub}}
           - {{hub printf "%s.%s.svc.cluster.local" $pSvc $agentNs hub}}
           - localhost
-          {{hub- if ne $pHost "" hub}}
-          - {{hub $pHost hub}}
-          {{hub- end hub}}
+          - '{{hub printf "%s-%s" $pSvc $agentNs hub}}.{{ (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}'
         ipAddresses:
           - 127.0.0.1
         issuerRef:
@@ -183,10 +183,10 @@ object-templates-raw: |
   # invalidates outstanding agent tokens, and agents simply re-authenticate. That was observed
   # directly when a principal restarted and every agent reconnected unattended.
   #
-  # The key changes at renewal, so jwtDuration IS the cryptoperiod. A running principal keeps using
-  # the key it loaded until it restarts, so rotation takes effect on the next restart rather than
-  # cutting anything off mid-flight. Set rotationPolicy Never to pin the key instead, which is the
-  # right answer only where re-authentication is more expensive than a stale key.
+  # The key changes at renewal, so jwtDuration IS the cryptoperiod. The principal loads the key only
+  # at startup, so the principal below is rolled whenever this secret changes, and agents then
+  # re-authenticate. Set rotationPolicy Never to pin the key instead, which is the right answer only
+  # where re-authentication is more expensive than a stale key.
   - complianceType: musthave
     objectDefinition:
       apiVersion: cert-manager.io/v1
@@ -344,8 +344,10 @@ object-templates-raw: |
   # auth matches any common name by default. Isolation between teams rests on each team having its
   # OWN certificate authority intermediate, not on this pattern.
   #
-  # allowedNamespaces is a wildcard by default because the principal mirrors into a namespace per
-  # connected cluster, whose names are not known ahead of time.
+  # allowedNamespaces defaults to the enrolled agents' namespaces, which are the only ones the
+  # principal maps. A wildcard would have it watch every Application on the hub, AutoShift's own in
+  # the gitops namespace included, and log a warning for each. It falls back to the wildcard only
+  # while nothing is enrolled.
   {{hub- $livePrincipal := (lookup "argoproj.io/v1beta1" "ArgoCD" $agentNs $pName) | default dict hub}}
   {{hub- $liveMeta := (dig "metadata" dict $livePrincipal) hub}}
   {{hub- $pSpec := (dig "spec" dict $livePrincipal) hub}}
@@ -356,7 +358,7 @@ object-templates-raw: |
   {{hub- $pr = set $pr "destinationBasedMapping" (dig "destinationBasedMapping" false $agentCfg) hub}}
   {{hub- $pr = set $pr "auth" (dig "auth" "mtls:CN=([^,]+)" $agentCfg) hub}}
   {{hub- $pr = set $pr "logLevel" (dig "logLevel" "info" $agentCfg) hub}}
-  {{hub- $prNs := set (dig "namespace" dict $pr) "allowedNamespaces" (dig "principalNamespaces" (list "*") $agentCfg) hub}}
+  {{hub- $prNs := set (dig "namespace" dict $pr) "allowedNamespaces" (dig "principalNamespaces" (ternary $agentNames (list "*") (gt (len $agentNames) 0)) $agentCfg) hub}}
   {{hub- $pr = set $pr "namespace" (set $prNs "enableNamespaceCreate" (dig "enableNamespaceCreate" true $agentCfg)) hub}}
   {{hub- $prSrv := (dig "server" dict $pr) hub}}
   {{hub- $pr = set $pr "server" (set $prSrv "route" (set (dig "route" dict $prSrv) "enabled" true)) hub}}
@@ -365,6 +367,16 @@ object-templates-raw: |
   {{hub- $pr = set $pr "tls" $prTls hub}}
   {{hub- $pr = set $pr "jwt" (set (set (dig "jwt" dict $pr) "insecureGenerate" false) "secretName" "gitops-agent-jwt") hub}}
   {{hub- $pr = set $pr "resourceProxy" (set (set (dig "resourceProxy" dict $pr) "secretName" "gitops-agent-resource-proxy-tls") "caSecretName" "gitops-agent-ca") hub}}
+  # The principal reads its serving certificates, certificate authority and token key ONCE, at
+  # startup, and never reloads them, so a renewal cert-manager performs is not served until the
+  # pod restarts and agents are cut off when the old certificate expires. Carrying each secret's
+  # resourceVersion in an env var changes the pod template whenever one is renewed, so the operator
+  # rolls the principal onto the new material.
+  {{hub- $certRev := list hub}}
+  {{hub- range $sn := (list "gitops-agent-principal-tls" "gitops-agent-resource-proxy-tls" "gitops-agent-ca" "gitops-agent-jwt") hub}}
+  {{hub- $certRev = append $certRev (dig "metadata" "resourceVersion" "0" ((lookup "v1" "Secret" $agentNs $sn) | default dict)) hub}}
+  {{hub- end hub}}
+  {{hub- $pr = set $pr "env" (list (dict "name" "AUTOSHIFT_TLS_REVISION" "value" (join "-" $certRev))) hub}}
   {{hub- $pSpec = set $pSpec "controller" $pCtl hub}}
   {{hub- $pSpec = set $pSpec "argoCDAgent" (set $pAgent "principal" $pr) hub}}
   {{hub- if $srcNs hub}}

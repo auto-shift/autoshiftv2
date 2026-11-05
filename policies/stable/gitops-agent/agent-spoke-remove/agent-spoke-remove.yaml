@@ -64,6 +64,15 @@ object-templates-raw: |
       metadata:
         name: gitops-agent-ca
         namespace: {{hub $teamNs hub}}
+  # infra's cluster-admin binding, which only an instance of its own has.
+  {{hub- if and $isInfra (not $isHubCluster) hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{hub printf "gitops-infra-%s-infra-agent-cluster-admin" $teamNs hub}}
+  {{hub- end hub}}
   # The cluster-scoped namespace reader the agent needs for its Namespace informer.
   - complianceType: mustnothave
     objectDefinition:

@@ -167,6 +167,24 @@ object-templates-raw: |
             - TaskRun
             - PipelineRun
         disableAdmin: {{hub dig "disableAdmin" "true" $spec hub}}
+  # infra standalone configures the cluster itself, so its application controller gets the same
+  # cluster-admin binding infra-gitops has on a hub.
+  {{hub- if $isInfra hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{hub printf "gitops-infra-%s-argocd-dev-cluster-admin" $teamNs hub}}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: cluster-admin
+      subjects:
+        - kind: ServiceAccount
+          name: argocd-dev-argocd-application-controller
+          namespace: {{hub $teamNs hub}}
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: argoproj.io/v1alpha1
