@@ -57,7 +57,8 @@ namespaces. A cluster runs the infrastructure agent alongside one agent for each
 
 ### Enable
 
-The hub needs the policy placed, and each team needs its principal enabled in configuration:
+Where a team's control plane runs and where it deploys are chosen separately, the same way they
+are for infra. On the hub that hosts the team's principal:
 
 ```yaml
 config:
@@ -68,9 +69,17 @@ config:
           enabled: true
           caIssuer: 'autoshift-ca'
 labels:
-  gitops-agent-teams: 'true'     # place the team principal policy on this hub
-  gitops-dev-team-test: 'hub'    # the team instance, and therefore its principal, runs here
+  gitops-agent-teams: 'true'     # run a principal here for each team with agent.enabled
 ```
+
+That alone gives the team a control plane on the hub and nothing that deploys there, which suits an
+application team that only deploys on spokes. To have the team deploy on the hub as well, add its
+label there too: `gitops-dev-team-test: 'hub'` for the team's own Argo CD instance, or an agent mode
+for an agent reporting to the principal on the same hub.
+
+A principal serves the clusters its hub manages, because each spoke finds its principal through the
+hub that manages it. A team can have a principal on more than one hub, each its own control plane
+with its own certificate authority.
 
 Each cluster that joins a team's agent needs two labels:
 
@@ -92,6 +101,73 @@ labels name that team. Two teams share a cluster by both being enrolled on it, a
 own instance, project and namespaces.
 
 [![Which teams deploy where](diagrams/autoshift-gitops-team-clusters.drawio.svg)](diagrams/autoshift-gitops-team-clusters.drawio.svg)
+
+### Projects
+
+Each team gets a `default` project derived from its agent settings: `destinationNamespaces`
+(default `<team>-*`), `sourceRepos` (default any) and `clusterResources` (default none). Add more
+under `projects`, keyed by name, each entry being the `AppProject` spec as written. An entry named
+`default` replaces the derived one.
+
+```yaml
+config:
+  gitops:
+    teams:
+      test:
+        projects:
+          frontend:
+            sourceRepos:
+              - 'https://git.example.com/acme/frontend.git'
+            destinations:
+              - namespace: 'test-frontend'
+                server: '*'
+```
+
+AutoShift creates the projects where the team's Argo CD reads them, and enforces each one exactly,
+so a repository or destination removed from configuration is removed from the project:
+
+| Team mode on a cluster | Where the projects are created |
+|---|---|
+| `hub` or `standalone` | The team's own instance on that cluster. Its built-in `default` is left alone unless configuration defines one |
+| `agent-autonomous` | The team's agent instance on that cluster, which owns its Applications |
+| `agent-managed` | The team principal on the hub, which delivers them to the agent. AutoShift fills `sourceNamespaces` with the agent namespaces unless an entry sets it |
+
+### Where to see everything
+
+Each principal has its own Argo CD UI on the hub, with OpenShift login and a link in the console's
+application menu:
+
+| UI | Shows | Who gets in |
+|---|---|---|
+| The hub's own infra instance | The hub's own AutoShift Applications | `config.gitops.infra.rbac_policies` |
+| `Infra fleet Argo CD` | Every enrolled cluster's infra Applications | `config.gitops.infra.rbac_policies` |
+| `<team> fleet Argo CD` | The team's Applications on every enrolled cluster | The team's `gitops_rbac_policies` and project roles |
+
+In autonomous mode the UI mirrors each cluster's Applications, with live status, resource tree and
+logs fetched from the cluster, and you can sync them or stop a running sync from it. In managed mode
+it is where the Applications are authored. Project roles take effect here, and nothing grants access
+by default.
+Set `agent.ui: false` to run a principal without a route or login.
+
+A team agent's instance on a spoke has no UI of its own, so a team in an agent mode uses its fleet UI.
+
+### Namespaces a team deploys into
+
+A team's Argo CD instance is scoped to namespaces, so it can deploy only into a namespace labeled
+as managed by it. `CreateNamespace=true` cannot create one. Create each destination namespace
+first, with the label:
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test-frontend
+  labels:
+    argocd.argoproj.io/managed-by: openshift-gitops-test
+```
+
+The label value is the team's Argo CD namespace, `openshift-gitops-<team>` by default. Without it,
+the Application reports that the namespace is not managed.
 
 ## Modes
 

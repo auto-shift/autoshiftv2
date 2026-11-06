@@ -374,8 +374,8 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-namespace`              | string    | (`gitopsNamespace`)       | Per-cluster override of the ArgoCD namespace, e.g. in hub-of-hubs setups |
 | `gitops-disable-default-argocd` | bool      | `true`                    | Controls `DISABLE_DEFAULT_ARGOCD_INSTANCE` on the operator Subscription |
 | `gitops-infra`                  | string    | `hub` on a hub, else `push` | The shape of infra Argo CD on this cluster: `hub`, `push`, `standalone`, `agent`, `agent-autonomous`, `agent-managed`, or `uninstall` to tear down its agent. See [Argo CD agent](gitops-agent.md) |
-| `gitops-agent`                  | bool      | `false`                   | Hub label. Run AutoShift's infra Argo CD Agent principal on this hub. Settings are in `config.gitops.infra.agent` |
-| `gitops-agent-teams`            | bool      | `false`                   | Hub label. Place the team agent principal policy here. Which teams run one is `config.gitops.teams.<team>.agent.enabled` |
+| `gitops-agent`                  | bool      | `false`                   | Hub label. Run AutoShift's infra Argo CD Agent principal on this hub. Settings are in `config.gitops.infra.agent`. Independent of this hub's own `gitops-infra` mode. `uninstall` tears the principal down |
+| `gitops-agent-teams`            | bool      | `false`                   | Hub label. Run a principal here for each team with `config.gitops.teams.<team>.agent.enabled` in this hub's config, whether or not this hub carries that team's `gitops-dev-team-<team>` label |
 | `gitops-agent-enrolled`         | bool      | `false`                   | Cluster label. Place the spoke agent policy here, for clusters whose `gitops-dev-team-<team>` label carries an agent mode |
 
 **Config block** (`config.gitops`):
@@ -782,6 +782,14 @@ no interactive administrator until you either configure OpenID Connect and list 
 |---------------------------------------|-------------------|---------------------------|-------|
 | `gitops-dev`                          | bool              |                           | If not set Developer OpenShift GitOps instances will not be managed |
 | `gitops-dev-team-{INSERT_TEAM_NAME}`  | string        |                           | Team that can deploy onto cluster from dev team gitops. Must match a team in the `gitops-dev` helm chart values file |
+
+**Config block** (`config.gitops.teams.<team>.projects`):
+
+AppProjects for the team, keyed by name. Each entry is the `AppProject` spec as written, created
+where the team's Argo CD reads it and enforced exactly. With an agent, `default` is derived from the
+agent settings and an entry named `default` replaces it. See
+[Argo CD agent: Projects](gitops-agent.md#projects), which also covers labeling the namespaces a
+team deploys into.
 
 ### Loki
 

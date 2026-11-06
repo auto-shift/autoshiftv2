@@ -1278,6 +1278,10 @@ hubClusterSets:
             # The issuer the infra agent certificate authority is an intermediate under.
             caIssuer: 'autoshift-ca'
             destinationBasedMapping: false
+            # The principal's Argo CD UI on the hub, with OpenShift login and a console link: the
+            # fleet view of every enrolled cluster's infra Applications. Access comes from
+            # config.gitops.infra.rbac_policies, the same list infra-gitops uses.
+            ui: true
         #
         # Infra (main) ArgoCD instance config: the same knobs as teams.<team> below, plus the
         # infra-only fields server.autoscale, controller.statusProcessors,
@@ -1506,6 +1510,23 @@ hubClusterSets:
               # certificate from authenticating against another team's principal.
               caIssuer: 'autoshift-ca'
               logLevel: 'info'
+              # The team principal's Argo CD UI on the hub, with OpenShift login and a console link,
+              # where the team sees its Applications on every enrolled cluster and its project roles
+              # take effect. Access comes from gitops_rbac_policies below and from project roles.
+              ui: true
+            # AppProjects for this team, keyed by name. Each entry is the AppProject spec as
+            # written. They are created wherever the team's Argo CD reads them: in its own instance
+            # in hub or standalone mode, on the spoke in agent-autonomous mode, and on the principal
+            # in agent-managed mode, which propagates them. With an agent, default is derived from
+            # the agent settings above, and an entry named default replaces it. On the principal,
+            # sourceNamespaces is filled in unless an entry sets it.
+            projects:
+              frontend:
+                sourceRepos:
+                  - 'https://github.com/acme/frontend.git'
+                destinations:
+                  - namespace: 'dev-frontend'
+                    server: '*'
             gitops_rbac_policies:
               - 'g, openshift-systems, role:admin'
               - 'g, openshift-dev-leads, role:admin'
@@ -1754,7 +1775,9 @@ hubClusterSets:
       gitops-infra: 'hub'
       # Run AutoShift's infra agent principal on this hub. Settings are in config.gitops.infra.agent.
       # Needs cert-manager on this hub: the principal's certificate authority is issued from
-      # autoshift-ca, or from config.gitops.infra.agent.caIssuer.
+      # autoshift-ca, or from config.gitops.infra.agent.caIssuer. Independent of gitops-infra above,
+      # which is what this hub itself runs, so a hub can host the principal and run an agent too.
+      # 'uninstall' tears the principal down.
       gitops-agent: 'true'
       gitops-channel: gitops-1.22
       gitops-version: 'openshift-gitops-operator.v1.22.1'
@@ -2178,16 +2201,15 @@ hubClusterSets:
       # Developer OpenShift GitOps (team ArgoCD instances)
       # =======================================================================
       gitops-dev: 'false'
-      # Does this HUB run team Argo CD agent principals? A label rather than config because
-      # placement cannot read config.gitops.teams.<team>.agent.enabled, and a config-only gate
-      # would leave a hub with no team agents holding a policy that renders nothing and reports
-      # Compliant. Which teams get a principal is still decided by that config; this only decides
-      # whether the policy is placed at all.
+      # Does this HUB run team Argo CD agent principals? Each team with agent.enabled in this hub's
+      # config gets one here, whether or not this hub carries a gitops-dev-team-<team> label: where
+      # a team's control plane runs is chosen apart from where it deploys. A label rather than
+      # config because placement cannot read config.gitops.teams.<team>.agent.enabled.
       gitops-agent-teams: 'true'
       # Does this cluster run any team agents? The per-team gitops-dev-team-<team>: 'agent' labels
       # decide WHICH teams; this exists because a placement selector cannot match a label prefix.
       gitops-agent-enrolled: 'true'
-      gitops-dev-team-dev: 'hub'             # 'hub' or 'standalone'
+      gitops-dev-team-dev: 'hub'             # the team's own instance here; omit it for a principal only
       gitops-dev-team-test: 'agent'          # 'hub', 'standalone', 'agent', 'agent-managed', 'agent-autonomous' or 'uninstall'
       # 'uninstall' tears a team's agent down on this cluster. Removal is opt-in by that value
       # alone: a label that merely disappears removes nothing.

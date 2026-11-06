@@ -105,7 +105,7 @@ spec:
                   {{ "{{hub-" }} $modeDflt := ternary "hub" "push" (eq (index $mcLabels "autoshift.io/cluster-type" | default "") "hub") {{ "hub}}" }}
                   {{ "{{hub-" }} $mode := (index $mcLabels $modeKey | default (ternary $modeDflt "" (eq $team "infra"))) {{ "hub}}" }}
                   {{ "{{hub-" }} $agentOn := ternary (eq (index $mcLabels "autoshift.io/gitops-agent" | default "false") "true") (dig "agent" "enabled" false $spec) (eq $team "infra") {{ "hub}}" }}
-                  {{ "{{hub-" }} if and $agentOn (eq $mode "hub") {{ "hub}}" }}
+                  {{ "{{hub-" }} if and $agentOn (ternary true (eq (index $mcLabels "autoshift.io/gitops-agent-teams" | default "false") "true") (eq $team "infra")) (ne $mode "uninstall") {{ "hub}}" }}
                   {{ "{{hub-" }} $namespaces = printf "%s,%s" $namespaces (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} if and (eq $team "infra") (ne (index $mcLabels "autoshift.io/cluster-type" | default "") "hub") (or (eq $mode "standalone") (hasPrefix "agent" $mode)) {{ "hub}}" }}

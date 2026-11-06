@@ -191,6 +191,33 @@ object-templates-raw: |
               autoshift.io/tls-revision: '{{hub printf "%s-%s" (dig "metadata" "resourceVersion" "0" $caSecS) (dig "metadata" "resourceVersion" "0" $clSecS) hub}}'
   {{- end }}
   {{hub- if not $infraAttaches hub}}
+  # The projects the instance's Applications use, in AUTONOMOUS mode only, where this cluster owns
+  # them. In managed mode the principal propagates them from the hub, and a second writer here would
+  # fight it. The instance runs without a server, so Argo CD never creates its own default project:
+  # without these, every Application here fails with "project default does not exist".
+  # default is derived from the agent settings exactly as on the principal; a team's
+  # config.gitops.teams.<team>.projects adds more, and an entry named default replaces it.
+  {{hub- if eq $clientMode "autonomous" hub}}
+  {{hub- $destNs := (dig "destinationNamespaces" (ternary (list "*") (list (printf "%s-*" $team)) $isInfra) $agentCfg) hub}}
+  {{hub- $clusterRes := (dig "clusterResources" (ternary (list (dict "group" "*" "kind" "*")) (list) $isInfra) $agentCfg) hub}}
+  {{hub- $dests := list hub}}
+  {{hub- range $destNs hub}}{{hub- $dests = append $dests (dict "namespace" . "server" "*") hub}}{{hub- end hub}}
+  {{hub- $derived := dict "sourceRepos" (dig "sourceRepos" (list "*") $agentCfg) "destinations" $dests hub}}
+  {{hub- if $clusterRes hub}}{{hub- $derived = set $derived "clusterResourceWhitelist" $clusterRes hub}}{{hub- end hub}}
+  {{hub- $projects := dict "default" $derived hub}}
+  {{hub- range $projName, $projSpec := (ternary dict (dig "projects" dict $spec) $isInfra) hub}}{{hub- $projects = set $projects $projName $projSpec hub}}{{hub- end hub}}
+  {{hub- range $projName, $projSpec := $projects hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: '{{hub $projName hub}}'
+        namespace: {{hub $teamNs hub}}
+      spec:
+        {{hub $projSpec | toYaml | autoindent hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
   # infra's instance configures the cluster itself, so its application controller gets the same
   # cluster-admin binding infra-gitops has on a hub. Cluster scope from
   # ARGOCD_CLUSTER_CONFIG_NAMESPACES lets it watch the whole cluster; it does not grant writes.

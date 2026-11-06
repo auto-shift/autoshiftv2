@@ -186,6 +186,23 @@ object-templates-raw: |
           name: argocd-dev-argocd-application-controller
           namespace: {{hub $teamNs hub}}
   {{hub- end hub}}
+  # The team's projects, from config.gitops.teams.<team>.projects: one AppProject per entry, the
+  # entry being the spec as written. mustonlyhave so the config is authoritative: musthave merges
+  # lists, so a repository or destination removed from config would stay on the project. The
+  # instance's own default project is left alone unless config defines one named default.
+  {{hub- if not $isInfra hub}}
+  {{hub- range $projName, $projSpec := (dig "projects" dict $spec) hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: '{{hub $projName hub}}'
+        namespace: {{hub $teamNs hub}}
+      spec:
+        {{hub $projSpec | toYaml | autoindent hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: argoproj.io/v1alpha1

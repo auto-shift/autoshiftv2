@@ -94,8 +94,9 @@ other.
 mode is derived rather than set. The map always carries `infra`, deriving `hub` on a hub and `push`
 elsewhere.
 
-That matters for a gate a derived value can pass. `agent-hub.yaml` gates on `eq $mode "hub"` and
-`gitops-dev.yaml` on `hub` or `standalone`, so both need the map. It does NOT matter for a gate only
+That matters for a gate a derived value can pass. `gitops-dev.yaml` gates on `hub` or `standalone`,
+so it needs the map. `agent-hub.yaml` iterates the map too, and adds every team with `agent.enabled`
+in this hub's config, because a team's principal does not depend on a label for that team here. It does NOT matter for a gate only
 an explicit value can pass: the readiness and teardown manifests gate on `hasPrefix "agent"` or
 `eq "uninstall"`, and no derived mode is ever either of those, so iterating labels there is
 equivalent and is not a bug to fix.

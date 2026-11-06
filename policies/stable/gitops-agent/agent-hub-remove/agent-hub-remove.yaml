@@ -1,6 +1,6 @@
 object-templates-raw: |
-  # HUB teardown, at two scopes, both driven by the same 'uninstall' value on a
-  # gitops-dev-team-<team> label. Doing nothing is the default: only that value removes anything.
+  # HUB teardown, at two scopes, both driven by an 'uninstall' value. Doing nothing is the default:
+  # only that value removes anything.
   #
   #   on a SPOKE's label   that cluster leaves the team. Its credentials and mapping go.
   #   on THIS hub's label  the team is finished. Its whole principal goes.
@@ -87,11 +87,14 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
-  # THE WHOLE TEAM, when this hub's own label says so. Removing the principal namespace takes the
-  # principal, its certificate authority, the token signing key, the project and every remaining
-  # per-cluster credential with it, so nothing else needs listing here.
+  # THE WHOLE PRINCIPAL, when this hub's own label says so: gitops-agent for infra, matching the
+  # label that runs it, and gitops-dev-team-<team> for a team. infra's principal is not tied to this
+  # hub's own gitops-infra mode, so tearing down this hub's infra agent leaves a principal it hosts
+  # for other clusters alone. Removing the principal namespace takes the principal, its certificate
+  # authority, the token signing key, the projects and every remaining per-cluster credential with
+  # it, so nothing else needs listing here.
   {{hub- range $label, $val := .ManagedClusterLabels hub}}
-  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
+  {{hub- $isInfra := eq $label "autoshift.io/gitops-agent" hub}}
   {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") hub}}
   {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
   - complianceType: mustnothave
@@ -113,5 +116,13 @@ object-templates-raw: |
       kind: ClusterRole
       metadata:
         name: {{hub printf "gitops-agent-%s-principal" $team hub}}
+  # The principal UI's console link, which is cluster-scoped and so outlives the namespace. Named
+  # after the principal namespace.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: console.openshift.io/v1
+      kind: ConsoleLink
+      metadata:
+        name: '{{hub (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) (ternary $hubInfra (index $hubTeams $team | default dict) $isInfra)) hub}}'
   {{hub- end hub}}
   {{hub- end hub}}

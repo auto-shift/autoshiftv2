@@ -9,12 +9,10 @@ object-templates-raw: |
   # more honest than asserting defaults.
   {{hub- $rcmCfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $cfg := $rcmCfg hub}}
-  # infra joins the iteration as a team named infra when this hub's gitops-infra label puts it in
-  # hub mode, which is the only mode where its principal lives here.
+  # infra joins the iteration as a team named infra; whether its principal lives here is the
+  # gitops-agent label, not this hub's own gitops-infra mode.
   {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
-  {{hub- if eq (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default "hub") "hub" hub}}
   {{hub- $teamSpecs = merge (dict "infra" (dig "gitops" "infra" dict $cfg)) $teamSpecs hub}}
-  {{hub- end hub}}
   # Hoisted: range rebinds the dot, and the uninstall test below needs this hub's own labels.
   {{hub- $hubLabels := .ManagedClusterLabels hub}}
   {{hub- range $team, $spec := $teamSpecs hub}}
@@ -22,8 +20,9 @@ object-templates-raw: |
   # Skipped once this hub's label for the team reads uninstall. Teardown is driven by the label
   # while this loop reads config, so a torn-down team would otherwise stay asserted here forever.
   # Keying on the label alone means the operator sets one value rather than two.
-  # infra's agent is on when this hub carries gitops-agent; a team's when its config enables it.
-  {{hub- $agentOn := ternary (eq (index $hubLabels "autoshift.io/gitops-agent" | default "") "true") (dig "enabled" false $agentCfg) (eq $team "infra") hub}}
+  # infra's principal is here when this hub carries gitops-agent; a team's when this hub carries
+  # gitops-agent-teams and the team's config enables its agent.
+  {{hub- $agentOn := ternary (eq (index $hubLabels "autoshift.io/gitops-agent" | default "") "true") (and (dig "enabled" false $agentCfg) (eq (index $hubLabels "autoshift.io/gitops-agent-teams" | default "") "true")) (eq $team "infra") hub}}
   {{hub- if and $agentOn (ne (index $hubLabels (printf "autoshift.io/gitops-dev-team-%s" $team) | default "") "uninstall") hub}}
   {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) hub}}
   # The namespace, which exists whenever this policy has ever run. Asserting it means a Compliant

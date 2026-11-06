@@ -38,6 +38,17 @@ object-templates-raw: |
   # infra's agent is switched on by the gitops-agent label on the hub that runs its principal; a
   # team's by agent.enabled in its config.
   {{hub- $infraAgentOn := eq (index .ManagedClusterLabels "autoshift.io/gitops-agent" | default "false") "true" hub}}
+  # Where a principal runs is chosen independently of what deploys here, the same way infra's is:
+  # infra's on a hub carrying gitops-agent, a team's on a hub carrying gitops-agent-teams for each
+  # team with agent.enabled in this hub's config. A team needs no gitops-dev-team-<team> label on
+  # this hub to have its principal here, so it joins the loop from config when it has none; an app
+  # team that deploys only on spokes then has a control plane here and nothing that deploys here.
+  {{hub- $teamsHub := eq (index .ManagedClusterLabels "autoshift.io/gitops-agent-teams" | default "false") "true" hub}}
+  {{hub- range $t, $ts := $teamSpecs hub}}
+  {{hub- if and (dig "agent" "enabled" false $ts) (not (hasKey $modes $t)) hub}}
+  {{hub- $modes = set $modes $t "none" hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
   {{hub- range $team, $mode := $modes hub}}
   {{hub- $isInfra := eq $team "infra" hub}}
   {{hub- if ne $mode "" hub}}
@@ -70,10 +81,11 @@ object-templates-raw: |
   {{hub- $pHost := (dig "spec" "host" "" $pRoute) hub}}
   {{hub- $route := (lookup "route.openshift.io/v1" "Route" $teamNs "argocd-dev-server") | default dict hub}}
   {{hub- $host := (dig "spec" "host" "" $route) hub}}
-  # The principal belongs wherever the team's Argo CD instance is, which is mode hub. Keyed on the
-  # mode rather than $isHub, because that variable is also true for a managed hub, which may run
-  # this team's agent instead.
-  {{hub- if and (eq $mode "hub") $agentOn hub}}
+  # The principal runs here when this hub hosts it (above), whatever this hub's own mode for the
+  # team is, except while that label reads uninstall: hub, standalone and agent modes all coexist
+  # with it, so a hub can run a team's principal and also deploy for that team, or run only the
+  # principal.
+  {{hub- if and $agentOn (ternary $infraAgentOn $teamsHub $isInfra) (ne $mode "uninstall") hub}}
   # The team's Argo CD agent principal. It lives in its OWN namespace, not the team's, because
   # enabling the principal requires the application controller to be OFF and the team's instance
   # needs its controller for the applications it deploys itself. Their instance is untouched.
@@ -386,6 +398,26 @@ object-templates-raw: |
   {{hub- else hub}}
   {{hub- $pSpec = unset $pSpec "sourceNamespaces" hub}}
   {{hub- end hub}}
+  # The principal's own Argo CD UI and API, where the agents' Applications are viewed (autonomous) or
+  # authored (managed) and where project roles take effect. Red Hat's setup gets this by making the
+  # hub's main instance the principal; a dedicated instance has to ask for it. On by default;
+  # agent.ui: false leaves the principal without a route or login. OpenShift login through Dex, and
+  # defaultPolicy empty, so only the RBAC below and project roles grant anything: a team's
+  # gitops_rbac_policies, infra's rbac_policies (the same default as infra-gitops).
+  {{hub- $uiOn := (dig "ui" true $agentCfg) hub}}
+  {{hub- $uiRbac := $rbac hub}}
+  {{hub- if $isInfra hub}}
+  {{hub- $uiRbac = "" hub}}
+  {{hub- range (dig "rbac_policies" (list "g, system:cluster-admins, role:admin" "g, cluster-admins, role:admin" "g, openshift-systems, role:admin") $spec) hub}}{{hub- $uiRbac = printf "%s%s\n" $uiRbac . hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $pSrv := (dig "server" dict $pSpec) hub}}
+  {{hub- $pSpec = set $pSpec "server" (set $pSrv "route" (set (dig "route" dict $pSrv) "enabled" $uiOn)) hub}}
+  {{hub- if $uiOn hub}}
+  {{hub- $pSpec = set $pSpec "sso" (dict "provider" "dex" "dex" (dict "openShiftOAuth" true)) hub}}
+  {{hub- else hub}}
+  {{hub- $pSpec = unset $pSpec "sso" hub}}
+  {{hub- end hub}}
+  {{hub- $pSpec = set $pSpec "rbac" (dict "defaultPolicy" "" "policy" $uiRbac "scopes" "[groups]") hub}}
   {{hub- $pMeta := dict "name" $pName "namespace" $agentNs hub}}
   {{hub- range $k := (list "labels" "annotations" "finalizers") hub}}
   {{hub- if hasKey $liveMeta $k hub}}
@@ -396,6 +428,25 @@ object-templates-raw: |
   - complianceType: mustonlyhave
     objectDefinition:
       {{hub $pObj | toYaml | autoindent hub}}
+  # A link in the OpenShift console's application menu, beside the hub's own Argo CD. The Route is
+  # looked up on the cluster running the principal, by a spoke template, and the link is written
+  # only once it exists.
+  {{hub- if $uiOn hub}}
+  {{- if (lookup "route.openshift.io/v1" "Route" "{{hub $agentNs hub}}" "{{hub printf "%s-server" $pName hub}}") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: console.openshift.io/v1
+      kind: ConsoleLink
+      metadata:
+        name: '{{hub $agentNs hub}}'
+      spec:
+        applicationMenu:
+          section: OpenShift GitOps
+        href: 'https://{{ (lookup "route.openshift.io/v1" "Route" "{{hub $agentNs hub}}" "{{hub printf "%s-server" $pName hub}}").spec.host }}'
+        location: ApplicationMenu
+        text: '{{hub ternary "Infra fleet Argo CD" (printf "%s fleet Argo CD" $team) $isInfra hub}}'
+  {{- end }}
+  {{hub- end hub}}
   #
   # The team's AppProject. The principal only propagates AppProjects whose destinations and source
   # namespaces match the agent configuration, and it skips propagation SILENTLY when they do not,
@@ -409,48 +460,39 @@ object-templates-raw: |
   # infra is the exception. Its Applications configure the cluster itself, across every namespace
   # and with cluster-scoped resources, so it defaults to both wildcards, matching infra-gitops.
   {{hub- $destNs := (dig "destinationNamespaces" (ternary (list "*") (list (printf "%s-*" $team)) $isInfra) $agentCfg) hub}}
+  # The team's projects. default is DERIVED from the agent settings above; config.gitops.teams.<team>
+  # .projects adds more, each entry being an AppProject spec as written, and an entry named default
+  # replaces the derived one. sourceNamespaces is filled with the agent namespaces unless an entry
+  # sets it: the principal propagates a project to an agent in managed mode only when it names that
+  # agent's namespace, and gets it wrong silently.
+  #
   # mustonlyhave, NOT musthave. Argo CD ships a `default` project wildcarded to
   # destinations '*' and clusterResourceWhitelist '*'. musthave MERGES lists and never removes a
   # field, so a scoped destination would be APPENDED to the wildcard and the restriction would be
   # decorative. mustonlyhave replaces the spec outright, which is the only way to actually narrow a
   # project that already exists.
+  #
+  # clusterResources is empty by default for a team, which denies every cluster-scoped resource. A
+  # team that needs its own Namespaces or custom resources widens it deliberately.
+  {{hub- $clusterRes := (dig "clusterResources" (ternary (list (dict "group" "*" "kind" "*")) (list) $isInfra) $agentCfg) hub}}
+  {{hub- $dests := list hub}}
+  {{hub- range $destNs hub}}{{hub- $dests = append $dests (dict "namespace" . "server" "*") hub}}{{hub- end hub}}
+  {{hub- $derived := dict "sourceRepos" (dig "sourceRepos" (list "*") $agentCfg) "destinations" $dests hub}}
+  {{hub- if $clusterRes hub}}{{hub- $derived = set $derived "clusterResourceWhitelist" $clusterRes hub}}{{hub- end hub}}
+  {{hub- $projects := dict "default" $derived hub}}
+  {{hub- range $projName, $projSpec := (ternary dict (dig "projects" dict $spec) $isInfra) hub}}{{hub- $projects = set $projects $projName $projSpec hub}}{{hub- end hub}}
+  {{hub- range $projName, $projSpec := $projects hub}}
+  {{hub- if and $srcNs (not (hasKey $projSpec "sourceNamespaces")) hub}}{{hub- $projSpec = set $projSpec "sourceNamespaces" $srcNs hub}}{{hub- end hub}}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: argoproj.io/v1alpha1
       kind: AppProject
       metadata:
-        name: default
+        name: '{{hub $projName hub}}'
         namespace: {{hub $agentNs hub}}
       spec:
-        # Every templated value here is QUOTED. A bare '*' is a YAML alias indicator and breaks
-        # the whole object-templates-raw parse, taking the entire policy down with it, not just
-        # this object. sourceRepos defaults to '*', so this is not hypothetical.
-        {{hub- if $srcNs hub}}
-        sourceNamespaces:
-          {{hub- range $srcNs hub}}
-          - '{{hub . hub}}'
-          {{hub- end hub}}
-        {{hub- end hub}}
-        sourceRepos:
-          {{hub- range (dig "sourceRepos" (list "*") $agentCfg) hub}}
-          - '{{hub . hub}}'
-          {{hub- end hub}}
-        destinations:
-          {{hub- range $destNs hub}}
-          - namespace: '{{hub . hub}}'
-            server: '*'
-          {{hub- end hub}}
-        # Empty by default for a team, which denies every cluster-scoped resource. A team that needs
-        # to create its own Namespaces or custom resources widens this deliberately rather than
-        # inheriting the ability.
-        {{hub- $clusterRes := (dig "clusterResources" (ternary (list (dict "group" "*" "kind" "*")) (list) $isInfra) $agentCfg) hub}}
-        {{hub- if $clusterRes hub}}
-        clusterResourceWhitelist:
-          {{hub- range $clusterRes hub}}
-          - group: '{{hub (dig "group" "" .) hub}}'
-            kind: '{{hub (dig "kind" "" .) hub}}'
-          {{hub- end hub}}
-        {{hub- end hub}}
+        {{hub $projSpec | toYaml | autoindent hub}}
+  {{hub- end hub}}
   # One client certificate per cluster that has opted into THIS team's agent. Enumerated from the
   # managed clusters carrying gitops-dev-team-<team>: 'agent', so adding a cluster to a team is a
   # label change and the certificate follows. The common name is what the principal's auth pattern
