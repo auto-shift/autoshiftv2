@@ -8,35 +8,17 @@ both at once.
 | Infrastructure | The cluster's own Argo CD reports to, or is driven by, a principal on the hub | One |
 | Team | Application teams share a cluster without seeing each other's namespaces | One for each enrolled team |
 
-The infrastructure tier has **two implementations, and a cluster runs one or the other**. The team
-tier is unaffected by that choice and is always built from AutoShift policies.
-
 [![Infrastructure and team GitOps](diagrams/autoshift-gitops-infra-vs-team.drawio.svg)](diagrams/autoshift-gitops-infra-vs-team.drawio.svg)
 
 > [!NOTE]
-> The Red Hat Advanced Cluster Management for Kubernetes side of this feature is Technology Preview.
-> The team tier is built from AutoShift policies and does not depend on the add-on.
+> Using the Red Hat Advanced Cluster Management GitOps add-on as the infrastructure agent is in
+> development and is not part of this release. Both tiers are built from AutoShift policies.
 
-## Choosing an infrastructure implementation
+## Infrastructure agent
 
-Four things separate them.
-
-| | AutoShift agent | GitOps add-on |
-|---|---|---|
-| **Choose it when** | The agent mesh must chain to an organization certificate authority, or teams need their own agents on the same cluster | The cluster has no cert-manager, and one agent for each cluster is enough |
-| Certificate authority | cert-manager issues it, under a root you choose | The add-on creates and rotates its own |
-| Agents for each cluster | Several, so team agents run alongside the infrastructure one | One. Every object the add-on creates has a fixed name |
-| Installs GitOps on the spoke | No. The operator policy does that | Yes. It brings its own installer |
-
-Both produce the same pieces: an Argo CD Agent on the cluster, a trust bundle and a client
-certificate beside it, and a principal on the hub. They differ in who builds those pieces and what
-each one is named.
-
-## Infrastructure with the AutoShift agent
-
-This is the default path. AutoShift creates the principal, issues every certificate with
-cert-manager, and enrolls each cluster. The principal runs in `openshift-gitops-infra-agent`, and
-each cluster's agent is named `<cluster>-infra`.
+AutoShift creates the principal, issues every certificate with cert-manager, and enrolls each
+cluster. The principal runs in `openshift-gitops-infra-agent`, and each cluster's agent is named
+`<cluster>-infra`.
 
 ### Enable
 
@@ -65,63 +47,7 @@ agent client certificate. Every name is set on the `ArgoCD` CR, so AutoShift cho
 The principal policy issues that secret with cert-manager whenever the hub carries `gitops-agent`,
 as an intermediate under `config.gitops.infra.agent.caIssuer`, which defaults to `autoshift-ca`.
 Team principals each get an intermediate of their own under the issuer set by
-`config.gitops.teams.<team>.agent.caIssuer`. The `gitops-agent-ca` label plays no part here: it
-belongs to the add-on.
-
-## Infrastructure with the GitOps add-on
-
-The opt-in alternative. The `GitOpsCluster` controller
-[creates and automates the public key infrastructure](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/2.17/html/gitops/gitops-overview),
-deploys the agent, and propagates the hub certificate authority to each managed cluster. It also
-brings its own GitOps installer, which is what makes it useful on a cluster with no cert-manager.
-The principal runs in `openshift-gitops-agent`, and each cluster's agent takes the cluster's name.
-
-### Enable
-
-On the hub clusterset. `gitops-agent-addon` is independent of `gitops-agent`, so a hub can run
-either principal or both:
-
-```yaml
-labels:
-  gitops-agent-addon: 'true'    # run the add-on principal on this hub
-  gitops-agent-ca: 'true'       # issue the add-on signing authority with cert-manager
-```
-
-On each cluster that should run the add-on agent, choose it as the infra mode:
-
-```yaml
-labels:
-  gitops-infra: 'addon'   # the add-on agent is this cluster's infra agent
-```
-
-Because the add-on is a value of `gitops-infra`, a cluster runs one infra agent: the add-on's or
-AutoShift's, never both. The add-on always installs into `openshift-gitops` on the managed cluster;
-the namespace is fixed in the add-on itself. The chart therefore refuses to render a cluster with
-`gitops-infra: 'addon'` whose `gitops-namespace` is anything else, counting labels it inherits from
-its clusterset.
-
-Moving a cluster off `'addon'` takes it out of the add-on placement but does not remove the add-on
-from it. Delete its `gitops-addon` `ManagedClusterAddOn` in the cluster's namespace on the hub, which
-runs the add-on's own cleanup.
-
-### Public key infrastructure
-
-The add-on derives everything from one secret in its principal namespace, `argocd-agent-ca`. That
-name is fixed by the `GitOpsCluster` controller, as are the agent instance name and its client
-secrets, which is why the add-on allows only one agent for each cluster.
-
-The add-on adopts that secret rather than replacing it. Create it with cert-manager before enabling
-the add-on and the whole mesh chains to an existing authority. Leave it absent and the add-on
-generates a self-signed authority of its own.
-
-> [!WARNING]
-> `renewBefore` must stay above `duration` divided by five. The add-on re-generates any signing
-> certificate past eighty percent of its lifetime, and does so without reporting an error, which
-> silently replaces an adopted authority with one of its own. The default of `8760h0m0s` with
-> `2160h0m0s` leaves a margin of several days.
->
-> This renewal behavior is observed, not documented by Red Hat. Red Hat documents that the
-> controller automates the public key infrastructure, but not how it renews it.
+`config.gitops.teams.<team>.agent.caIssuer`.
 
 ## Team agents
 
@@ -224,7 +150,6 @@ Each path ships an inform policy that asserts the result rather than the intent:
 
 | Policy | What it asserts |
 |---|---|
-| `policy-gitops-addon-ready` | The infrastructure principal is serving, and the trust bundle reached the spokes |
 | `policy-gitops-agent-hub-ready` | For each team: namespace, signing authority, token key, principal, and rollout. For each enrolled cluster: agent namespace, client certificate, mapping secret, and the `AppProject` permit list |
 | `policy-gitops-agent-spoke-ready` | For each team on this cluster: namespace, client certificate, instance, and that the agent rollout completed |
 

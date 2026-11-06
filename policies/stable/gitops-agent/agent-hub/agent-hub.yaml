@@ -50,7 +50,9 @@ object-templates-raw: |
   # That policy is placed on hub clustersets only, so on a spoke there is nothing to attach to and
   # infra takes the openshift-gitops-<team> default like anyone else.
   {{hub- $nsDefault := ternary $gitopsNs (printf "openshift-gitops-%s" $team) (and $isInfra $isHubCluster) hub}}
-  {{hub- $teamNs := (dig "namespace" $nsDefault $spec) hub}}
+  # On a hub, infra's instance is the one policy-gitops-systems-argocd builds, always in the gitops
+  # namespace; config.gitops.infra.namespace names only the instance infra builds on a spoke.
+  {{hub- $teamNs := ternary $gitopsNs (dig "namespace" $nsDefault $spec) (and $isInfra $isHubCluster) hub}}
   {{hub- $rbac := "g, system:cluster-admins, role:admin\n" hub}}
   {{hub- range (dig "gitops_rbac_policies" list $spec) hub}}
   {{hub- $rbac = printf "%s%s\n" $rbac . hub}}

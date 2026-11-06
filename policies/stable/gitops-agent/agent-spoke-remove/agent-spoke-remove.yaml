@@ -26,9 +26,11 @@ object-templates-raw: |
   # That policy is placed on hub clustersets only, so on a spoke there is nothing to attach to and
   # infra takes the openshift-gitops-<team> default like anyone else.
   {{hub- $nsDefault := ternary $gitopsNs (printf "openshift-gitops-%s" $team) (and $isInfra $isHubCluster) hub}}
-  {{hub- $teamNs := (dig "namespace" $nsDefault $spec) hub}}
+  # On a hub, infra's instance is the one policy-gitops-systems-argocd builds, always in the gitops
+  # namespace; config.gitops.infra.namespace names only the instance infra builds on a spoke.
+  {{hub- $teamNs := ternary $gitopsNs (dig "namespace" $nsDefault $spec) (and $isInfra $isHubCluster) hub}}
   # The agent instance. Removing this stops the process dialling the principal, so it goes first.
-  # infra on a hub has no instance of its own: it runs inside infra-gitops, which
+  # infra on a hub has no instance of its own: it runs inside the infra instance, which
   # policy-gitops-systems-argocd switches the agent off in when gitops-infra reads uninstall. What
   # proves the agent stopped there is its Deployment being gone.
   {{hub- if and $isInfra $isHubCluster hub}}
@@ -37,7 +39,7 @@ object-templates-raw: |
       apiVersion: apps/v1
       kind: Deployment
       metadata:
-        name: infra-gitops-agent-agent
+        name: {{hub printf "%s-agent-agent" (dig "name" "infra-gitops" $spec) hub}}
         namespace: {{hub $teamNs hub}}
   {{hub- else hub}}
   - complianceType: mustnothave

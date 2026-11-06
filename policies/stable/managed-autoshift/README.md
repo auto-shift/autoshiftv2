@@ -72,7 +72,7 @@ These values are read from the per-cluster `rendered-config` ConfigMap on the hu
 |-----|------|---------|-------------|
 | `appName` | string | the hub's cluster name | Name of the generated Argo CD Application, and the `Release.Name` of the nested AutoShift. **Max 11 characters**, because it becomes `policies-<appName>` and that namespace is capped at 20. The name `autoshift` is refused: it belongs to the top-level deployment, and this policy uses `mustonlyhave`, so it would overwrite it. An entry breaking either rule creates nothing |
 | `repoUrl` | string | `""` | Git repository URL for the AutoShift source. Required in git mode, alongside `targetRevision` |
-| `gitopsNamespace` | string | `openshift-gitops` | Namespace where the ArgoCD Application and repo Secret are created |
+| `gitopsNamespace` | string | the managed hub's `gitops-namespace` label, else `openshift-gitops` | Namespace where the ArgoCD Application and repo Secret are created. It must be the namespace the managed hub's infra Argo CD runs in, which is why it follows that label by default |
 | `valuesFiles` | list | `["values.<clusterName>.yaml"]` | List of Helm values files passed to the ArgoCD Application source |
 | `argoProject` | string | `default` | ArgoCD project for the Application |
 | `argoServer` | string | `https://kubernetes.default.svc` | Destination server for the generated Application. Ignored when the hub above writes it, which targets the agent with `destination.name: <cluster>-infra` |

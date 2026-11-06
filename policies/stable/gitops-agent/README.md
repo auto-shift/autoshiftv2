@@ -2,7 +2,7 @@
 
 The Argo CD agent, for every team **and** for infra.
 
-User-facing documentation lives in [docs/gitops-agent.md](../../../docs/gitops-agent.md). This file
+User-facing documentation lives in [Argo CD agent](../../../docs/gitops-agent.md). This file
 covers the policy structure and the reasons behind it.
 
 ## Who drives it
@@ -17,11 +17,11 @@ from:
 
 infra is handled as a team named `infra`, with one structural difference: on a hub its Argo CD
 already exists. `policy-gitops-systems-argocd` places `infra-gitops` in the gitops namespace, and it
-is placed on hub clustersets only. So infra's agent ATTACHES there, and that chart carries the agent
+is placed on hub clustersets only. So the infra agent ATTACHES there, and that chart carries the agent
 stanza, because a namespace holds one Argo CD and the Applications worth mirroring are the ones that
 instance already owns.
 
-On a spoke there is no such instance, so infra builds one like a team does, in
+On a spoke there is no such instance, so infra builds one the way a team does, in
 `openshift-gitops-<team>`. A spoke derives `push`, so this happens only where someone sets
 `gitops-infra` to an agent mode deliberately. The case that pays is a MANAGED HUB, which runs its
 own AutoShift and owns real Applications; a plain spoke is configured by push from its hub and has
@@ -35,10 +35,6 @@ a hub template sees the TARGET cluster's labels, so the hub half reads the hub's
 and the spoke half reads the spoke's. They are different clusters' namespaces and are meant to
 differ. What must match across the halves is the agent name and the principal namespace, and both
 derive from cluster name plus team, so they agree by construction.
-
-The Red Hat Advanced Cluster Management add-on is the alternative, not part of this chart: see
-`policy-gitops-addon` in [openshift-gitops](../openshift-gitops/README.md). The two are mutually
-exclusive, which is why their config sits side by side under `config.gitops.infra`.
 
 ## Files
 
@@ -82,7 +78,6 @@ Four names are NOT ours and must stay as they are:
 | `argocd.argoproj.io/secret-type: cluster` | Argo CD, on the mapping secret |
 | `argocd-agent.argoproj-labs.io/agent-name` | argocd-agent, on the mapping secret |
 | `managed-by: argocd-agent` | argocd-agent, the marker on secrets it manages |
-| `argocd-agent-ca` in the add-on path | The `GitOpsCluster` controller, which is why cert-manager's `gitops-agent-ca` policy still emits that name |
 
 Rename an object and its references in the same pass. Every reference here is a plain string field,
 so a half-done rename leaves the principal pointing at a secret nothing creates, the agent with no
@@ -95,7 +90,7 @@ on, including the synthetic `infra` entry. Change it in one place and you must c
 other.
 
 **Build the mode map before looping WHERE A DERIVED MODE CAN SATISFY THE GATE.** Iterating
-`.ManagedClusterLabels` only sees clusters that carry the label, so it misses infra wherever infra's
+`.ManagedClusterLabels` only sees clusters that carry the label, so it misses infra wherever the infra
 mode is derived rather than set. The map always carries `infra`, deriving `hub` on a hub and `push`
 elsewhere.
 
@@ -109,7 +104,7 @@ equivalent and is not a bug to fix.
 leaving a principal with no mapping, certificate or namespace. Use the `$enrollKey` ternary.
 
 **Match the mode with `hasPrefix "agent"`, never `eq "agent"`.** The label carries the mode, so the
-value may be `agent`, `agent-managed` or `agent-autonomous`.
+value can be `agent`, `agent-managed` or `agent-autonomous`.
 
 **`sourceNamespaces` is enumerated, never `'*'`.** A wildcard makes the Argo CD operator claim every
 namespace on the cluster, and a namespace carries only one

@@ -324,7 +324,7 @@ principal. See
 | `targetRevision` | string | `main` | Git branch or tag |
 | `ociRepo` | string | | Registry namespace, for example `quay.io/autoshift`, **without** the `oci://` scheme. Setting it selects OCI mode instead of git. Policy charts are read from `<ociRepo>/policies` |
 | `ociVersion` | string | | Chart version. Required whenever `ociRepo` is set |
-| `gitopsNamespace` | string | `openshift-gitops` | Namespace on the managed hub for the Application and repository Secrets |
+| `gitopsNamespace` | string | the managed hub's `gitops-namespace` label, else `openshift-gitops` | Namespace on the managed hub for the Application and repository Secrets. It must be where that hub's infra Argo CD runs |
 | `argoProject` | string | `default` | Argo CD project |
 | `argoServer` | string | `https://kubernetes.default.svc` | Destination server, the managed hub itself |
 | `valuesFiles` | list | `["values.<clusterName>.yaml"]` | Values files passed to the chart |
@@ -373,12 +373,10 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-cluster-ca-bundle`      | bool      | `false`                   | Inject cluster trusted CA bundle into ArgoCD repo server |
 | `gitops-namespace`              | string    | (`gitopsNamespace`)       | Per-cluster override of the ArgoCD namespace, e.g. in hub-of-hubs setups |
 | `gitops-disable-default-argocd` | bool      | `true`                    | Controls `DISABLE_DEFAULT_ARGOCD_INSTANCE` on the operator Subscription |
-| `gitops-infra`                  | string    | `hub` on a hub, else `push` | The shape of infra Argo CD on this cluster: `hub`, `push`, `standalone`, `agent`, `agent-autonomous`, `agent-managed`, `addon` for the Red Hat Advanced Cluster Management add-on's agent (requires `gitops-namespace` `openshift-gitops`), or `uninstall` to tear down its agent. See [Argo CD agent](gitops-agent.md) |
+| `gitops-infra`                  | string    | `hub` on a hub, else `push` | The shape of infra Argo CD on this cluster: `hub`, `push`, `standalone`, `agent`, `agent-autonomous`, `agent-managed`, or `uninstall` to tear down its agent. See [Argo CD agent](gitops-agent.md) |
 | `gitops-agent`                  | bool      | `false`                   | Hub label. Run AutoShift's infra Argo CD Agent principal on this hub. Settings are in `config.gitops.infra.agent` |
 | `gitops-agent-teams`            | bool      | `false`                   | Hub label. Place the team agent principal policy here. Which teams run one is `config.gitops.teams.<team>.agent.enabled` |
 | `gitops-agent-enrolled`         | bool      | `false`                   | Cluster label. Place the spoke agent policy here, for clusters whose `gitops-dev-team-<team>` label carries an agent mode |
-| `gitops-agent-addon`            | bool      | `false`                   | Hub label. Run the Red Hat Advanced Cluster Management GitOps add-on principal on this hub. Independent of `gitops-agent`. Technology Preview |
-| `gitops-agent-ca`               | string    | `false`                   | Hub label for the add-on, three states. `false`: the add-on self-signs an authority per hub. `true`: cert-manager issues it from `config.gitops.infra.addon.ca.issuer`. `external`: you deliver the secret yourself and AutoShift places only the monitoring |
 
 **Config block** (`config.gitops`):
 
@@ -388,7 +386,7 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `defaultInstance` | bool | `false` | Keep the operator default Argo CD instance in `openshift-gitops`. Drives `gitops-disable-default-argocd` |
 | `policyGenerator` | bool | (deployment flag) | Install the PolicyGenerator plugin sidecar in the infra repo server. Git and source hubs must set `true`. Read only from the self-managed hub cluster set |
 | `teams` | map | | Developer Argo CD instances, one entry per team. See [Developer OpenShift gitops](#developer-openshift-gitops) |
-| `infra` | map | | Tuning for the infra Argo CD instance, plus `infra.agent` and `infra.addon`. See the tables below |
+| `infra` | map | | Tuning for the infra Argo CD instance, plus `infra.agent`. See the tables below |
 
 **Config block** (`config.gitops.infra.agent`):
 
@@ -398,36 +396,6 @@ defaults differ, because infra Applications configure the cluster itself: `desti
 defaults to `*` and `clusterResources` to every group and kind. The principal namespace is
 `config.gitops.infra.agentNamespace`, default `openshift-gitops-infra-agent`.
 
-**Config block** (`config.gitops.infra.addon`):
-
-The Red Hat Advanced Cluster Management GitOps add-on derives the whole Argo CD Agent public key
-infrastructure from one secret, `argocd-agent-ca`, in the hub Argo CD namespace. The controller
-adopts that secret when it already exists, so issuing it with cert-manager places the agent mesh
-under a known certificate authority. The `gitops-agent-ca` label selects which of the three applies.
-
-Set `external` when the authority comes from somewhere cert-manager cannot reach. AutoShift then
-creates no `Certificate`, and places only the check that the secret exists. That check matters more
-in this state than in any other, because nothing renews the certificate and the add-on replaces a
-stale authority with a self-signed one of its own without raising an error.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `clusterSets` | list | `[]` | Cluster sets to bind into the Argo CD namespace so the enrollment placement can see them. Leave empty on a self-managed hub. A managed hub must list its own spoke cluster sets |
-| `propagateHubCA` | bool | `true` | Whether the add-on ships the agent trust bundle to each spoke. Turn it off only where the organization distributes that trust by other means |
-| `serverAddress` | string | | Where agents reach the principal. Empty lets the add-on derive it from the principal Route |
-| `serverPort` | string | | Port for the address above |
-| `mode` | string | | Agent mode. Empty takes the add-on default |
-| `ca.issuer` | map | `autoshift-ca` ClusterIssuer | Issuer that signs the agent certificate authority. Point it at an existing issuer to chain the agent mesh to an organization public key infrastructure. The issuer must be able to issue a certificate authority certificate, so a public ACME issuer cannot serve here |
-| `ca.duration` | string | `8760h0m0s` | Lifetime of the agent certificate authority |
-| `ca.renewBefore` | string | `2160h0m0s` | How far ahead of expiry to renew. Must stay above `duration` divided by 5. See the warning below |
-| `ca.privateKey` | map | RSA 4096 | Key algorithm and size. This key is shared by several controllers and the agent transport, so RSA is the conservative default |
-
-!!! warning "Keep `renewBefore` above one fifth of `duration`"
-    Once the certificate passes 80 percent of its lifetime, the GitOpsCluster controller replaces
-    the secret with a self-signed certificate authority of its own, and every chain to the
-    organization root breaks with no error raised. Keeping `renewBefore` above that threshold means
-    cert-manager always refreshes first. Change one of the two values and you must change the other.
-
 **Config block** (`config.gitops.infra`):
 
 Every field is optional. A field left unset falls back to the chart default in
@@ -436,6 +404,7 @@ bootstrap and Day 2 agree. Set a field here to override it for one cluster or cl
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `name` | string | `infra-gitops` | Name of the infra Argo CD instance. Every policy that targets the instance by name reads it: the instance itself, its cluster-admin binding, the console link, and the infra agent that attaches to it on a hub. On the self-managed hub the bootstrap chart creates the instance as its `gitops.argoName`, so keep the two equal there. The namespace is the cluster's `gitops-namespace` label |
 | `rbac_policies` | list | admin for `system:cluster-admins`, `cluster-admins` and `openshift-systems` | The complete Argo CD RBAC policy. Setting it replaces the default list rather than appending. A `g` line assigns a subject to a role and accepts a user or a group, but OpenShift login identifies users by an opaque Dex `sub` claim rather than a username, so name OpenShift Groups here. `defaultPolicy` is empty, so an empty list leaves no access apart from the built-in admin account |
 | `disableAdmin` | bool | `false` | Disable the Argo CD built-in admin account |
 | `server.limits` | map | cpu `500m`, memory `256Mi` | Argo CD server resource limits |
