@@ -478,6 +478,26 @@ hubClusterSets:
       gitops-disable-default-argocd: 'false'
 ```
 
+#### Changing the infra Argo CD name or namespace on a running cluster
+
+Per cluster, the namespace is the `gitops-namespace` label and the name is
+`config.gitops.infra.name`. Changing either builds a new instance and leaves the old one running,
+because nothing is removed automatically. Two AutoShift Applications then reconcile the same
+objects until you remove the old instance:
+
+1. Change the label, the name, or both, and wait until the new instance is up and
+   `policy-gitops-systems-argocd` reports Compliant.
+2. Delete the old top-level AutoShift `Application` in the old namespace. Check it has no
+   `resources-finalizer.argocd.argoproj.io` first, or its resources are deleted with it.
+3. Delete the old `ApplicationSet` with `--cascade=orphan`. Otherwise it keeps restoring the
+   finalizer on the `Application` objects it generated.
+4. Remove the finalizer from each remaining `Application` in the old namespace, then delete them.
+   The new instance adopts their resources.
+5. Delete the old `ArgoCD` and its `cluster-admin-<old-name>-argocd-application-controller`
+   binding. When the name and namespace change together, also look for an instance with the NEW
+   name in the OLD namespace: the name can reach the policy before the label does, and it builds
+   one there for that interval.
+
 
 ### Master nodes
 

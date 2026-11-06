@@ -45,7 +45,9 @@ object-templates-raw: |
     {{hub range $autoshiftConfig := $autoshiftConfigs hub}}
       {{hub $appName := index $autoshiftConfig "appName" | default $targetName hub}}
       {{hub- $repoUrl := index $autoshiftConfig "repoUrl" | default "" hub}}
-      # Defaults to the managed hub's own gitops namespace, where its infra instance runs.
+      # Defaults to the managed hub's own gitops namespace, where its infra instance runs. It is also
+      # passed to the nested chart as gitopsNamespace, so the nested AutoShift creates its own
+      # Applications in that namespace too, unless helmValues sets it.
       {{hub- $gitopsNamespace := (dig "gitopsNamespace" (index $targetLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") $autoshiftConfig) hub}}
       # Managed mode: the namespace named after the managed hub's infra agent, which the principal
       # maps to that agent. The agent creates the Application in its own namespace on the managed hub.
@@ -113,6 +115,9 @@ object-templates-raw: |
               {{hub- if eq $versionedClusterSets "true" hub}}
               versionedClusterSets: "true"
               {{hub- end hub}}
+              {{hub- if not (hasKey $helmValues "gitopsNamespace") hub}}
+              gitopsNamespace: {{hub $gitopsNamespace hub}}
+              {{hub- end hub}}
               {{hub- if $helmValues hub}}
               {{hub $helmValues | toYaml | autoindent hub}}
               {{hub- end hub}}
@@ -137,6 +142,9 @@ object-templates-raw: |
                 {{hub- end hub}}
                 {{hub- if eq $versionedClusterSets "true" hub}}
                 versionedClusterSets: "true"
+                {{hub- end hub}}
+                {{hub- if not (hasKey $helmValues "gitopsNamespace") hub}}
+                gitopsNamespace: {{hub $gitopsNamespace hub}}
                 {{hub- end hub}}
                 {{hub- if $helmValues hub}}
                 {{hub $helmValues | toYaml | autoindent hub}}

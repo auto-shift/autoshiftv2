@@ -18,7 +18,7 @@ infra takes the `standalone` branch but never the `hub` branch: its hub instance
 owned by `policy-gitops-systems-argocd`, and a second one here would fight it.
 
 For the agent modes, and for the mode catalog as a whole, see
-[docs/gitops-agent.md](../../../docs/gitops-agent.md).
+[Argo CD agent](../../../docs/gitops-agent.md).
 
 ## Files
 
@@ -26,9 +26,8 @@ For the agent modes, and for the mode catalog as a whole, see
 |---|---|---|
 | `manifests/` | `policy-gitops-dev` | The team's Argo CD instance, RBAC, console link and cluster registration |
 
-The agent policies used to live here and now sit in
-[gitops-agent](../gitops-agent/README.md). They moved because they serve infra as well as teams, and
-naming them after `gitops-dev` made infra's principal read as a dev-team object.
+The agent policies are in [gitops-agent](../gitops-agent/README.md), because they serve infra as
+well as teams.
 
 ## Things that will bite you
 

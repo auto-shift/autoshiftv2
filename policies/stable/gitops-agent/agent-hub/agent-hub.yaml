@@ -181,9 +181,8 @@ object-templates-raw: |
   #
   # rotationPolicy defaults to Always here, because the same Red Hat page that documents this key
   # also says to "rotate keys periodically for security", and a signing key that never changes is
-  # the kind of thing a cryptoperiod control asks about. The cost is bounded and measured: rotating
-  # invalidates outstanding agent tokens, and agents simply re-authenticate. That was observed
-  # directly when a principal restarted and every agent reconnected unattended.
+  # the kind of thing a cryptoperiod control asks about. The cost is bounded: rotating invalidates
+  # outstanding agent tokens, and agents re-authenticate unattended.
   #
   # The key changes at renewal, so jwtDuration IS the cryptoperiod. The principal loads the key only
   # at startup, so the principal below is rolled whenever this secret changes, and agents then
@@ -232,9 +231,8 @@ object-templates-raw: |
       data:
         jwt.key: {{hub $jwtKey hub}}
   {{hub- end hub}}
-  # The principal itself. auth is OUR pattern, not the pattern the Red Hat Advanced Cluster
-  # Management add-on uses, because these client certificates are minted by cert-manager and we
-  # choose the naming: CN=<cluster>-<team>.
+  # The principal itself. auth matches the client certificates this policy has cert-manager issue,
+  # whose common name is <cluster>-<team>.
   # The cluster-scoped rules the principal itself uses: it mirrors applications from its agents and
   # creates a namespace per connected cluster. This does NOT keep the principal out of
   # ARGOCD_CLUSTER_CONFIG_NAMESPACES. policy-gitops-operator-install lists every hub-mode principal
@@ -374,8 +372,8 @@ object-templates-raw: |
   # pod restarts and agents are cut off when the old certificate expires. Carrying each secret's
   # resourceVersion in an env var changes the pod template whenever one is renewed, so the operator
   # rolls the principal onto the new material. Upstream argocd-agent added TLS hot reload after
-  # v0.10.0 (argoproj-labs/argocd-agent#1125); once Red Hat OpenShift GitOps ships it, the
-  # certificates no longer need the roll, but the JWT key still does.
+  # v0.10.0 (argoproj-labs/argocd-agent#1125); once Red Hat OpenShift GitOps ships it, only the JWT
+  # key needs the roll.
   {{hub- $certRev := list hub}}
   {{hub- range $sn := (list "gitops-agent-principal-tls" "gitops-agent-resource-proxy-tls" "gitops-agent-ca" "gitops-agent-jwt") hub}}
   {{hub- $certRev = append $certRev (dig "metadata" "resourceVersion" "0" ((lookup "v1" "Secret" $agentNs $sn) | default dict)) hub}}

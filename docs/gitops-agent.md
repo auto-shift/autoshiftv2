@@ -196,7 +196,7 @@ oc get policy -n <cluster> policies-autoshift.policy-gitops-agent-spoke \
 A count of zero against a label that asks for an agent is worth reporting. It reaches a cluster when
 that cluster changes role or mode, because the condition deciding whether each object is emitted is
 then evaluated against a state it was never tested against. Promoting a spoke to a managed hub is
-the case that has produced it.
+the most likely trigger.
 
 ### One cluster silently leaves a team
 
