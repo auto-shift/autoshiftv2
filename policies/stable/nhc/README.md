@@ -15,8 +15,6 @@ nhc/
     operator-install/
       kustomization.yaml        # renders the shared components/operator-install chart (Namespace +
                                 #   OperatorPolicy); per-operator ACM lookups are visible here
-    nhc-templates/              
-      nhc-tempate-far.yaml      # Node Health Check with Fence Agent Remediation
 ```
 The operator-install renders the shared `components/operator-install` chart — edit the visible ACM
 lookups in `manifests/operator-install/kustomization.yaml` to tune the subscription/version. Add

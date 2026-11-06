@@ -1,138 +1,23 @@
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
-  {{hub- $nhcList := (index (index $config "nhc" | default dict) "templates") | default list hub}}
-  {{hub- $roleKeyMap := dict "worker" "node-role.kubernetes.io/worker" "control-plane" "node-role.kubernetes.io/control-plane" "infra" "node-role.kubernetes.io/infra" "storage" "node-role.kubernetes.io/storage" hub}}
-  {{hub- if not $nhcList hub}}
+  {{hub- if hasKey $config "Error" hub}}
+  {{hub- fail (printf "nhc config error: rendered-config YAML parse error: %v" (index $config "Error")) hub}}
+  {{hub- end hub}}
+  {{hub- $list := (index (index $config "nhc" | default dict) "templates") | default list hub}}
+  {{hub- if not $list hub}}
   {{hub- fail "nhc config error: nhc.templates must contain at least one entry" hub}}
   {{hub- end hub}}
-  {{hub- range $nhc := $nhcList hub}}
-  {{hub- $conditions := (index $nhc "unhealthyConditions") | default list hub}}
-  {{hub- $selectorKeys := (index $nhc "selectorKeys") | default list hub}}
-  {{hub- $minSet := hasKey $nhc "minHealthy" hub}}
-  {{hub- $maxSet := hasKey $nhc "maxUnhealthy" hub}}
-  {{hub- if and $minSet $maxSet hub}}
-  {{hub- fail (printf "nhc config error for %v: set only one of minHealthy or maxUnhealthy, not both" (index $nhc "name")) hub}}
+  {{hub- /* One NodeHealthCheck per entry. The entry spec is passed through unchanged, so any NHC field works */hub}}
+  {{hub- range $nhc := $list hub}}
+  {{hub- if not (and $nhc.name $nhc.spec) hub}}
+  {{hub- fail (printf "nhc config error: every entry needs a name and a spec, got %v" $nhc) hub}}
   {{hub- end hub}}
-  {{hub- if and (not $minSet) (not $maxSet) hub}}
-  {{hub- fail (printf "nhc config error for %v: one of minHealthy or maxUnhealthy must be set" (index $nhc "name")) hub}}
-  {{hub- end hub}}
-  {{hub- $thresholdField := "minHealthy" hub}}
-  {{hub- if $maxSet hub}}{{hub- $thresholdField = "maxUnhealthy" hub}}{{hub- end hub}}
-  {{hub- $thresholdStr := printf "%v" (index $nhc $thresholdField) hub}}
-  {{hub- $isPercent := regexMatch "^(100|[1-9]?[0-9])%$" $thresholdStr hub}}
-  {{hub- $isCount := regexMatch "^[0-9]+$" $thresholdStr hub}}
-  {{hub- if not (or $isPercent $isCount) hub}}
-  {{hub- fail (printf "nhc config error for %v: %v must be a percent between 0%% and 100%% (e.g. 66%%) or a non-negative node count (e.g. 2), got '%v'" (index $nhc "name") $thresholdField $thresholdStr) hub}}
-  {{hub- end hub}}
-  {{hub- if not $selectorKeys hub}}
-  {{hub- fail (printf "nhc config error for %v: selectorKeys must contain at least one entry" (index $nhc "name")) hub}}
-  {{hub- end hub}}
-  {{hub- $far := index $nhc "far" hub}}
-  {{hub- if ne $far true hub}}
-  {{hub- fail (printf "nhc config error for %v: 'far' must be set to true - only Fence Agents Remediation (FAR) is currently supported, the other remediation types (Self Node Remediation, Machine Deletion) are not yet implemented" (index $nhc "name")) hub}}
-  {{hub- end hub}}
-  {{hub- $resolved := list hub}}
-  {{hub- $hasEq := false hub}}
-  {{hub- $hasExpr := false hub}}
-  {{hub- range $sel := $selectorKeys hub}}
-  {{hub- if not (kindIs "string" $sel) hub}}
-  {{hub- fail (printf "nhc config error for %v: each selectorKeys entry must be a plain string such as worker, beta.kubernetes.io/arch=amd64, or 'key in (a,b)' - got %v" (index $nhc "name") $sel) hub}}
-  {{hub- end hub}}
-  {{hub- $s := trim $sel hub}}
-  {{hub- $key := "" hub}}
-  {{hub- $op := "" hub}}
-  {{hub- $vals := list hub}}
-  {{hub- if hasKey $roleKeyMap $s hub}}
-  {{hub- $key = index $roleKeyMap $s hub}}
-  {{hub- $op = "Exists" hub}}
-  {{hub- else if regexMatch `(?i)^\S+\s+(in|notin)\s*\(.*\)$` $s hub}}
-  {{hub- $key = regexReplaceAll `(?i)^(\S+)\s+(?:in|notin)\s*\(.*\)$` $s "${1}" hub}}
-  {{hub- $kw := lower (regexReplaceAll `(?i)^\S+\s+(in|notin)\s*\(.*\)$` $s "${1}") hub}}
-  {{hub- if eq $kw "in" hub}}{{hub- $op = "In" hub}}{{hub- else hub}}{{hub- $op = "NotIn" hub}}{{hub- end hub}}
-  {{hub- $inner := regexReplaceAll `(?i)^\S+\s+(?:in|notin)\s*\((.*)\)$` $s "${1}" hub}}
-  {{hub- range $v := splitList "," $inner hub}}
-  {{hub- $tv := trim $v hub}}
-  {{hub- if not $tv hub}}
-  {{hub- fail (printf "nhc config error for %v: selectorKeys entry '%v' has an empty value in its list" (index $nhc "name") $s) hub}}
-  {{hub- end hub}}
-  {{hub- $vals = append $vals $tv hub}}
-  {{hub- end hub}}
-  {{hub- else if regexMatch `^[^=!\s]+\s*!=\s*\S+$` $s hub}}
-  {{hub- $parts := regexSplit `!=` $s 2 hub}}
-  {{hub- $key = trim (index $parts 0) hub}}
-  {{hub- $op = "NotIn" hub}}
-  {{hub- $vals = list (trim (index $parts 1)) hub}}
-  {{hub- else if regexMatch `^[^=!\s]+\s*==?\s*\S+$` $s hub}}
-  {{hub- $parts := regexSplit `==?` $s 2 hub}}
-  {{hub- $key = trim (index $parts 0) hub}}
-  {{hub- $op = "Equals" hub}}
-  {{hub- $vals = list (trim (index $parts 1)) hub}}
-  {{hub- else if hasPrefix "!" $s hub}}
-  {{hub- $key = trim (trimPrefix "!" $s) hub}}
-  {{hub- $op = "DoesNotExist" hub}}
-  {{hub- else hub}}
-  {{hub- $key = $s hub}}
-  {{hub- $op = "Exists" hub}}
-  {{hub- end hub}}
-  {{hub- if not (regexMatch `^[A-Za-z0-9._/-]+$` $key) hub}}
-  {{hub- fail (printf "nhc config error for %v: could not parse selectorKeys entry '%v' (resolved label key '%v' is not a valid label key). Supported forms: worker | control-plane | infra | storage | key | !key | key=value | key!=value | key in (a,b) | key notin (a,b)" (index $nhc "name") $s $key) hub}}
-  {{hub- end hub}}
-  {{hub- if eq $op "Equals" hub}}
-  {{hub- $hasEq = true hub}}
-  {{hub- else hub}}
-  {{hub- $hasExpr = true hub}}
-  {{hub- end hub}}
-  {{hub- $resolved = append $resolved (dict "key" $key "operator" $op "values" $vals) hub}}
-  {{hub- end hub}}
-  - complianceType: mustonlyhave
+  - complianceType: musthave
     objectDefinition:
       apiVersion: remediation.medik8s.io/v1alpha1
       kind: NodeHealthCheck
       metadata:
-        name: {{hub index $nhc "name" hub}}
-      spec:
-        selector:
-        {{hub- if $hasEq hub}}
-          matchLabels:
-          {{hub- range $r := $resolved hub}}
-          {{hub- if eq $r.operator "Equals" hub}}
-            {{hub $r.key | quote hub}}: {{hub (index $r.values 0) | quote hub}}
-          {{hub- end hub}}
-          {{hub- end hub}}
-        {{hub- end hub}}
-        {{hub- if $hasExpr hub}}
-          matchExpressions:
-          {{hub- range $r := $resolved hub}}
-          {{hub- if ne $r.operator "Equals" hub}}
-          {{hub- if or (eq $r.operator "In") (eq $r.operator "NotIn") hub}}
-            - key: {{hub $r.key hub}}
-              operator: {{hub $r.operator hub}}
-              values:
-              {{hub- range $v := $r.values hub}}
-                - {{hub $v | quote hub}}
-              {{hub- end hub}}
-          {{hub- else hub}}
-            - key: {{hub $r.key hub}}
-              operator: {{hub $r.operator hub}}
-          {{hub- end hub}}
-          {{hub- end hub}}
-          {{hub- end hub}}
-        {{hub- end hub}}
-        unhealthyConditions:
-        {{hub- range $cond := $conditions hub}}
-          - type: {{hub (index $cond "type") hub}}
-            status: {{hub (index $cond "status") | quote hub}}
-            duration: {{hub (index $cond "duration") hub}}
-        {{hub- end hub}}
-        {{hub- if $isPercent hub}}
-        {{hub $thresholdField hub}}: {{hub $thresholdStr | quote hub}}
-        {{hub- else hub}}
-        {{hub $thresholdField hub}}: {{hub $thresholdStr hub}}
-        {{hub- end hub}}
-        remediationTemplate:
-          kind: {{hub (index $nhc "remediationTemplateKind") | default "FenceAgentsRemediationTemplate" hub}}
-          apiVersion: {{hub (index $nhc "remediationTemplateApiVersion") | default "fence-agents-remediation.medik8s.io/v1alpha1" hub}}
-          name: {{hub index $nhc "remediationTemplateName" hub}}
-          namespace: {{hub index $nhc "remediationTemplateNamespace" hub}}
+        name: {{hub $nhc.name hub}}
+      spec: {{hub toRawJson $nhc.spec hub}}
   {{hub- end hub}}
