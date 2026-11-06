@@ -184,14 +184,26 @@ managedClusterSets:
       quay-source: '' # redhat-operators
       quay-source-namespace: '' # openshift-marketplace
       ### Developer OpenShift Gitops
-      # GitOps operator (required by gitops-dev). The infra ArgoCD instance is hub-only, not created here.
+      # GitOps operator, required by gitops-dev and by the infra agent.
       gitops: 'true'
+      # Infra Argo CD agent. The principal on the hub owns this cluster's infra Applications.
+      gitops-infra: 'agent-managed'
       gitops-subscription-name: openshift-gitops-operator
       gitops-channel: gitops-1.22
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
       gitops-dev: 'true'
-      gitops-dev-team-test: 'hub' #hub or standalone
+      # hub | standalone | agent | agent-autonomous | agent-managed. The agent values run this
+      # team's Argo CD agent here, reporting to the team's principal on the hub. Bare 'agent' takes
+      # the team default from config.gitops.teams.<team>.agent.mode; the suffixed forms pin the mode
+      # for THIS cluster, so one team can run some clusters managed and others autonomous.
+      # gitops-dev-team-test: 'agent'
+      # MUST accompany any gitops-dev-team-<team>: 'agent*' label above. A placement selector cannot
+      # match a label prefix, so this boolean is what actually places the team agent's spoke policy;
+      # the per-team labels only decide WHICH teams. Set one without the other and the hub still
+      # builds everything (namespace, client certificate, mapping secret, source namespace entry)
+      # while no agent is ever deployed, and every policy reports Compliant.
+      gitops-agent-enrolled: 'false'
       # gitops-dev-team-{INSERT_TEAM_NAME}
       ### Loki
       loki: 'true'

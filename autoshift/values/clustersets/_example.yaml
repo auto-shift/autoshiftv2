@@ -763,7 +763,8 @@ hubClusterSets:
       # =======================================================================
       # One entry per AutoShift deployment to create on each MANAGED hub selected by the
       # autoshift-enable-install label. The policy runs on that hub and creates an Argo CD
-      # Application there. Set either the git pair or the OCI pair, not both: ociRepo selects
+      # Application there; a hub with gitops-infra 'agent-managed' gets it from this hub instead,
+      # through the infra principal, in its <cluster>-infra namespace. Set either the git pair or the OCI pair, not both: ociRepo selects
       # OCI mode and requires ociVersion, matching the top-level chart's own rule.
       # appName may not be 'autoshift'; that name belongs to the top-level deployment.
       managedAutoshift:
@@ -1256,6 +1257,32 @@ hubClusterSets:
         # infra-gitops instance). Drives gitops-disable-default-argocd (disable = not defaultInstance).
         # defaultInstance: false
         #
+        # Infra GitOps. agent configures AutoShift's infra Argo CD agent, and is DATA only: the
+        # gitops-agent label switches it on.
+        infra:
+          # Namespace of AutoShift's infra principal on the hub.
+          agentNamespace: 'openshift-gitops-infra-agent'
+          # Name of the infra Argo CD instance, in the cluster's gitops-namespace. On the
+          # self-managed hub, keep it equal to the bootstrap chart's gitops.argoName, which created it.
+          name: 'infra-gitops'
+          # AUTOSHIFT'S OWN infra agent. The hub runs the principal when it carries gitops-agent;
+          # a cluster runs an agent when its gitops-infra label is an agent mode. Every key here is
+          # optional and takes the same settings as config.gitops.teams.<team>.agent, except
+          # enabled, which the label replaces. The values shown are the defaults, except
+          # destinationNamespaces and clusterResources: infra defaults to both wildcards because
+          # its Applications configure the cluster itself.
+          agent:
+            # The mode for a cluster whose gitops-infra label reads plain 'agent'.
+            mode: 'autonomous'
+            logLevel: 'info'
+            # The issuer the infra agent certificate authority is an intermediate under.
+            caIssuer: 'autoshift-ca'
+            destinationBasedMapping: false
+            # The principal's Argo CD UI on the hub, with OpenShift login and a console link: the
+            # fleet view of every enrolled cluster's infra Applications. Access comes from
+            # config.gitops.infra.rbac_policies, the same list infra-gitops uses.
+            ui: true
+        #
         # Infra (main) ArgoCD instance config: the same knobs as teams.<team> below, plus the
         # infra-only fields server.autoscale, controller.statusProcessors,
         # controller.operationProcessors, repo.replicas and repo.cluster_ca_bundle. The
@@ -1297,6 +1324,21 @@ hubClusterSets:
         #
         # Full table: docs/values-reference.md, "OpenShift GitOps".
         # infra:
+        #   # namespace is the instance infra builds on a SPOKE in standalone or an agent mode; on a hub
+        #   # the instance lives in the gitops-namespace label. agentNamespace is where the infra
+        #   # principal lives on the hub. Both show their defaults.
+        #   namespace: 'openshift-gitops-infra'
+        #   agentNamespace: 'openshift-gitops-infra-agent'
+        #   # Infra's agent, switched on by the gitops-infra label. The project values are what make
+        #   # infra different from a team: infra configures whole clusters, so it needs every
+        #   # destination and cluster-scoped resources, where a team gets neither.
+        #   agent:
+        #     caIssuer: 'autoshift-ca'
+        #     destinationNamespaces:
+        #       - '*'
+        #     clusterResources:
+        #       - group: '*'
+        #         kind: '*'
         #   rbac_policies:
         #     - 'g, system:cluster-admins, role:admin'
         #     - 'g, cluster-admins, role:admin'
@@ -1380,6 +1422,111 @@ hubClusterSets:
         #     useManifestGeneratePaths: true
         teams:
           dev:
+            # Argo CD agent for THIS team. Enabling it stands up a per-team agent principal on the
+            # hub, in its own namespace openshift-gitops-<team>-agent, with a per-team certificate
+            # authority intermediate under the shared autoshift-ca root. Clusters opt in per team
+            # with the gitops-dev-team-<team> label set to 'agent', and because that label is
+            # per-team a single cluster can run an agent for several teams at once.
+            agent:
+              enabled: true
+              # The team-wide DEFAULT mode, used by any cluster whose label is a bare 'agent'.
+              # A cluster overrides it per team with gitops-dev-team-<team>: 'agent-managed' or
+              # 'agent-autonomous', because mode is genuinely a per-cluster choice and one team may
+              # run some clusters managed and others autonomous.
+              #   autonomous  the spoke owns its Application resources and they are mirrored to
+              #               this team's principal on the hub for visibility and sync or terminate
+              #   managed     the hub becomes the source of truth and pushes Application specs down
+              # Only autonomous has been exercised.
+              mode: 'autonomous'
+              # Namespaces this team may deploy INTO, as the AppProject destinations. Defaults to
+              # '<team>-*', so a team is confined to namespaces carrying its own name. Widen it
+              # deliberately; the project grants no cluster-scoped resources either way.
+              # destinationNamespaces:
+              #   - 'dev-*'
+              #   - 'shared-tooling'
+              # Port of the principal's resource proxy service, used in the agent-to-cluster
+              # mapping secret. The hub reaches workload clusters through that proxy.
+              # resourceProxyPort: '9090'
+              # Port the agent dials the principal on. Defaults to the Route's 443.
+              # principalServerPort: '443'
+              # Lifetime of every leaf this team issues: principal, resource proxy, agent client
+              # and hub proxy client. renewBefore must stay comfortably inside duration.
+              # leafDuration: '720h0m0s'
+              # leafRenewBefore: '240h0m0s'
+              # The agent certificate authority for this team. Same keys as
+              # config.gitops.infra.agent.ca, so a team can set its own lifetime or key algorithm
+              # independently of the fleet.
+              # ca:
+              #   duration: '8760h0m0s'
+              #   renewBefore: '2160h0m0s'
+              #   privateKey:
+              #     algorithm: 'RSA'
+              #     size: 4096
+              # Identity pattern the principal accepts. Any common name by default; isolation
+              # between teams rests on each having its own certificate authority, so tighten this
+              # only when you want the pattern to constrain identity too.
+              # auth: 'mtls:CN=([^,]+-dev)'
+              # Namespaces the PRINCIPAL may manage on the hub. Defaults to the namespace of each
+              # enrolled agent, <cluster>-<team>, and to the principal's own namespace while none is.
+              # principalNamespaces:
+              #   - 'my-cluster-dev'
+              # Namespaces the AGENT may manage on its own cluster.
+              # agentNamespaces:
+              #   - '*'
+              # Whether the principal may CREATE per-cluster namespaces. Turning this off also lets
+              # the create verb be dropped from its ClusterRole.
+              # enableNamespaceCreate: true
+              # As on the infra agent: false maps by namespace and is the default, true maps by
+              # destination and loses status back-propagation in managed mode.
+              # destinationBasedMapping: false
+              # Lifetime of the JWT signing key this team's principal uses.
+              # jwtDuration IS the cryptoperiod of the signing key when rotation is on: the key
+              # changes at renewal. Rotating invalidates outstanding agent tokens and the agents
+              # re-authenticate unattended.
+              # jwtDuration: '8760h0m0s'
+              # jwtRenewBefore: '2160h0m0s'
+              # Always (default) rotates the signing key at each renewal, matching Red Hat's advice
+              # to rotate periodically. Never pins the key forever, which avoids re-authentication
+              # but leaves a signing key with no cryptoperiod at all.
+              # jwtRotationPolicy: 'Always'
+              # Repositories the team may deploy FROM. Defaults to any.
+              # sourceRepos:
+              #   - 'https://github.com/acme/dev-apps.git'
+              # Namespaces the team's Application resources live IN. Follows the mode by default
+              # and rarely needs setting: autonomous uses the team's own GitOps namespace on the
+              # spoke, managed uses the per-cluster namespaces on the hub, because that is where
+              # the Applications are authored in each case. Setting this wrongly does not error;
+              # the principal skips propagating the project and the applications never appear.
+              # sourceNamespaces:
+              #   - 'openshift-gitops-dev'
+              # Cluster-scoped resources the team may manage. EMPTY by default, which denies them
+              # all. Widen only where a team genuinely needs to create its own namespaces.
+              # clusterResources:
+              #   - group: ''
+              #     kind: 'Namespace'
+              # Signer for this team's agent certificate authority. Defaults to the built-in
+              # autoshift-ca, so every team chains to one fleet root while staying a separate
+              # intermediate. A separate intermediate per team is what stops one team's client
+              # certificate from authenticating against another team's principal.
+              caIssuer: 'autoshift-ca'
+              logLevel: 'info'
+              # The team principal's Argo CD UI on the hub, with OpenShift login and a console link,
+              # where the team sees its Applications on every enrolled cluster and its project roles
+              # take effect. Access comes from gitops_rbac_policies below and from project roles.
+              ui: true
+            # AppProjects for this team, keyed by name. Each entry is the AppProject spec as
+            # written. They are created wherever the team's Argo CD reads them: in its own instance
+            # in hub or standalone mode, on the spoke in agent-autonomous mode, and on the principal
+            # in agent-managed mode, which propagates them. With an agent, default is derived from
+            # the agent settings above, and an entry named default replaces it. On the principal,
+            # sourceNamespaces is filled in unless an entry sets it.
+            projects:
+              frontend:
+                sourceRepos:
+                  - 'https://github.com/acme/frontend.git'
+                destinations:
+                  - namespace: 'dev-frontend'
+                    server: '*'
             gitops_rbac_policies:
               - 'g, openshift-systems, role:admin'
               - 'g, openshift-dev-leads, role:admin'
@@ -1606,11 +1753,41 @@ hubClusterSets:
       gitops: 'true'
       gitops-subscription-name: openshift-gitops-operator
       gitops-disable-default-argocd: 'true'
+      # Argo CD agent. gitops-agent is a hub-only label: cluster-type hub selects the self-managed
+      # hub AND every managed hub, so setting it in a managed hub's clusterset values enables that
+      # hub alone and nothing above it.
+      # What shape of infra Argo CD this cluster runs. The same mode set the per-team
+      # gitops-dev-team-<team> labels take, so infra and teams read alike.
+      #   'hub'               infra-gitops runs here. Placed by clusterset membership, so a hub
+      #                       gets this whether or not the label is set
+      #   'push'              no local instance; the hub deploys in through the cluster secret
+      #                       argo-acm-importer registers. The default for a spoke
+      #   'standalone'        a local instance, owning its own Applications, reporting to nothing
+      #   'agent'             a local agent instance, mode from config.gitops.infra.agent.mode
+      #   'agent-autonomous'  the spoke owns its Applications and mirrors them to the hub
+      #   'agent-managed'     the hub owns them and the agent pulls them down
+      #
+      # The agent modes are aimed at a HUB, where infra-gitops already exists and the agent attaches
+      # to it. On a managed hub that mirrors the AutoShift Applications it owns, which is the fleet
+      # view. A plain spoke may opt in by setting an agent mode here, and gets an instance of its
+      # own in openshift-gitops-infra, but it owns no Applications of its own, so that instance is
+      # empty until something puts Applications in it.
+      gitops-infra: 'hub'
+      # Run AutoShift's infra agent principal on this hub. Settings are in config.gitops.infra.agent.
+      # Needs cert-manager on this hub: the principal's certificate authority is issued from
+      # autoshift-ca, or from config.gitops.infra.agent.caIssuer. Independent of gitops-infra above,
+      # which is what this hub itself runs, so a hub can host the principal and run an agent too.
+      # 'uninstall' tears the principal down.
+      gitops-agent: 'true'
       gitops-channel: gitops-1.22
       gitops-version: 'openshift-gitops-operator.v1.22.2'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
-      gitops-namespace: 'openshift-gitops'          # Override ArgoCD namespace per-cluster
+      # Always stamped, on every cluster. Set it here or per cluster to override; leave it out
+      # and it is stamped from config.gitops.namespace, else the global gitopsNamespace. It is
+      # the single source of truth for the namespace, because the Helm policies and the
+      # PolicyGenerator ones cannot share a default any other way.
+      gitops-namespace: 'openshift-gitops'
       gitops-cluster-ca-bundle: 'true'              # Inject cluster trusted CA bundle into ArgoCD repo server
       gitops-console-plugin: 'false'                  # GitOps console plugin (tech preview) — adds ArgoCD to OCP console
 
@@ -2024,8 +2201,19 @@ hubClusterSets:
       # Developer OpenShift GitOps (team ArgoCD instances)
       # =======================================================================
       gitops-dev: 'false'
-      gitops-dev-team-dev: 'hub'             # 'hub' or 'standalone'
-      gitops-dev-team-test: 'hub'            # 'hub' or 'standalone'
+      # Does this HUB run team Argo CD agent principals? Each team with agent.enabled in this hub's
+      # config gets one here, whether or not this hub carries a gitops-dev-team-<team> label: where
+      # a team's control plane runs is chosen apart from where it deploys. A label rather than
+      # config because placement cannot read config.gitops.teams.<team>.agent.enabled.
+      gitops-agent-teams: 'true'
+      # Does this cluster run any team agents? The per-team gitops-dev-team-<team>: 'agent' labels
+      # decide WHICH teams; this exists because a placement selector cannot match a label prefix.
+      gitops-agent-enrolled: 'true'
+      gitops-dev-team-dev: 'hub'             # the team's own instance here; omit it for a principal only
+      gitops-dev-team-test: 'agent'          # 'hub', 'standalone', 'agent', 'agent-managed', 'agent-autonomous' or 'uninstall'
+      # 'uninstall' tears a team's agent down on this cluster. Removal is opt-in by that value
+      # alone: a label that merely disappears removes nothing.
+      gitops-dev-team-retired: 'uninstall'
 
       # =======================================================================
       # Loki
