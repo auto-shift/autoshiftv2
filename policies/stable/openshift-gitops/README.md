@@ -59,7 +59,7 @@ in `policy-gitops-operator-install.yaml`.
 `templates/policy-gitops-addon.yaml` runs the **infrastructure** Argo CD agent principal, in a
 dedicated instance so the principal never shares a process with the instance that reconciles every
 policy on the fleet. Its `sourceNamespaces` is enumerated from the clusters carrying
-`gitops-agent-enroll`, never `'*'`, because a wildcard makes the operator claim every namespace on
+`gitops-infra: 'addon'`, never `'*'`, because a wildcard makes the operator claim every namespace on
 the cluster and locks the per-team principals out of their own agent namespaces.
 
 That lookup is cluster-scoped, so the policy sets
@@ -73,5 +73,5 @@ un-enforces itself over.
 a cluster-scoped instance. Comments belong **above** that env key, never inside its value: it is a
 folded scalar, hub templates have no comment syntax, and a `#` line there is folded into the value.
 
-See [docs/gitops-agent.md](../../../docs/gitops-agent.md) for the user-facing guide and
-[policies/stable/gitops-dev](../gitops-dev/README.md) for the per-team agents.
+See [Argo CD agent](../../../docs/gitops-agent.md) for the user-facing guide and
+[gitops-dev](../gitops-dev/README.md) for the per-team agents.

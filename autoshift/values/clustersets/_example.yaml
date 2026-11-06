@@ -763,7 +763,8 @@ hubClusterSets:
       # =======================================================================
       # One entry per AutoShift deployment to create on each MANAGED hub selected by the
       # autoshift-enable-install label. The policy runs on that hub and creates an Argo CD
-      # Application there. Set either the git pair or the OCI pair, not both: ociRepo selects
+      # Application there; a hub with gitops-infra 'agent-managed' gets it from this hub instead,
+      # through the infra principal, in its <cluster>-infra namespace. Set either the git pair or the OCI pair, not both: ociRepo selects
       # OCI mode and requires ociVersion, matching the top-level chart's own rule.
       # appName may not be 'autoshift'; that name belongs to the top-level deployment.
       managedAutoshift:
@@ -1524,7 +1525,7 @@ hubClusterSets:
               # only when you want the pattern to constrain identity too.
               # auth: 'mtls:CN=([^,]+-dev)'
               # Namespaces the PRINCIPAL may manage on the hub. Defaults to the namespace of each
-              # enrolled agent, <cluster>-<team>, and to a wildcard only while none is enrolled.
+              # enrolled agent, <cluster>-<team>, and to the principal's own namespace while none is.
               # principalNamespaces:
               #   - 'my-cluster-dev'
               # Namespaces the AGENT may manage on its own cluster.
@@ -1807,6 +1808,10 @@ hubClusterSets:
       #   'agent'             a local agent instance, mode from config.gitops.infra.agent.mode
       #   'agent-autonomous'  the spoke owns its Applications and mirrors them to the hub
       #   'agent-managed'     the hub owns them and the agent pulls them down
+      #   'addon'             the Red Hat Advanced Cluster Management add-on's agent instead, reporting
+      #                       to the add-on principal (gitops-agent-addon on the hub). Settings are in
+      #                       the hub's config.gitops.infra.addon. The add-on always runs in
+      #                       openshift-gitops, so the chart refuses it with any other gitops-namespace
       #
       # The agent modes are aimed at a HUB, where infra-gitops already exists and the agent attaches
       # to it. On a managed hub that mirrors the AutoShift Applications it owns, which is the fleet
@@ -1821,11 +1826,6 @@ hubClusterSets:
       # Run the Red Hat Advanced Cluster Management add-on principal on this hub instead, or as well.
       # Independent of gitops-agent. Settings are in config.gitops.infra.addon.
       gitops-agent-addon: 'false'
-      # Deploy the ADD-ON agent on THIS cluster rather than the one AutoShift builds. Opt-in: the
-      # add-on brings its own GitOps installer and allows one agent for each cluster, so the
-      # gitops-infra agent modes are the default path. Turn this on for a cluster with no
-      # cert-manager, where the add-on's self-signed authority is the whole point.
-      gitops-agent-enroll: 'false'
       # Who issues the agent signing certificate authority, the one secret the add-on derives the
       # whole agent public key infrastructure from. Three states:
       #   'false'     the add-on generates a self-signed authority per hub. Turnkey, and a fleet of

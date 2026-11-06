@@ -8,8 +8,11 @@
 # untouched.
 #
 # Two labels, two meanings:
-#   autoshift.io/gitops-agent-addon    on a HUB:   run the add-on principal here (places THIS policy)
-#   autoshift.io/gitops-agent-enroll   on a SPOKE: deploy an add-on agent there (selected below)
+#   autoshift.io/gitops-agent-addon       on a HUB:     run the add-on principal here (places THIS policy)
+#   autoshift.io/gitops-infra: 'addon'    on a CLUSTER: its infra agent is the add-on's (selected below)
+#
+# The add-on is one value of gitops-infra rather than a label of its own, so a cluster cannot run
+# both the add-on agent and AutoShift's infra agent.
 #
 # Separate from gitops-agent, which runs AutoShift's own infra principal (the gitops-agent
 # policies). The two are independent opt-ins, so enabling one never installs the other.
@@ -138,7 +141,7 @@ spec:
                   {{ "{{hub-" }} $enrolled := list {{ "hub}}" }}
                   {{ "{{hub-" }} range $mc := ($mcs.items | default list) {{ "hub}}" }}
                   {{ "{{hub-" }} $mcLabels := (dig "metadata" "labels" dict $mc) {{ "hub}}" }}
-                  {{ "{{hub-" }} if and (eq (dig "autoshift.io/gitops-agent-enroll" "" $mcLabels) "true") (ne (dig "local-cluster" "" $mcLabels) "true") {{ "hub}}" }}
+                  {{ "{{hub-" }} if and (eq (dig "autoshift.io/gitops-infra" "" $mcLabels) "addon") (ne (dig "local-cluster" "" $mcLabels) "true") {{ "hub}}" }}
                   {{ "{{hub-" }} $enrolled = append $enrolled (dig "metadata" "name" "" $mc) {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
@@ -226,10 +229,10 @@ spec:
                     - requiredClusterSelector:
                         labelSelector:
                           matchExpressions:
-                            - key: 'autoshift.io/gitops-agent-enroll'
+                            - key: 'autoshift.io/gitops-infra'
                               operator: In
                               values:
-                                - 'true'
+                                - 'addon'
                             # The hub reaches itself as the built-in in-cluster destination and
                             # never runs an agent against itself. The controller skips
                             # local-cluster when propagating the trust bundle for the same reason.

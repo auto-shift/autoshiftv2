@@ -69,7 +69,7 @@ settles (PROGRESSING True→False), then `cert-manager-ingress-cert`.
 ## Argo CD agent signing CA (opt-in, hub only)
 
 The full two-path agent architecture, including the team agents AutoShift builds itself, is
-documented in [docs/gitops-agent.md](../../../docs/gitops-agent.md). This section covers only the
+documented in [Argo CD agent](../../../docs/gitops-agent.md). This section covers only the
 signing certificate authority this policy issues.
 
 The Red Hat Advanced Cluster Management GitOps add-on derives the entire Argo CD agent public key
@@ -85,9 +85,9 @@ certificate is missing, unparseable, expired, or past 80 percent of its own life
 secret with cert-manager therefore places the agent mesh under a known certificate authority without
 a fork and without unsupported configuration.
 
-Enable it with the `autoshift.io/gitops-agent-ca` label on a hub, alongside `autoshift.io/gitops-agent`
-which runs the principal there. Both are hub labels. Spokes enroll separately with
-`autoshift.io/gitops-agent-enroll`.
+Enable it with the `autoshift.io/gitops-agent-ca` label on a hub, alongside
+`autoshift.io/gitops-agent-addon` which runs the add-on principal there. Both are hub labels.
+Clusters enroll separately with `autoshift.io/gitops-infra: 'addon'`.
 
 ### The 80 percent rule
 

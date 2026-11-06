@@ -346,8 +346,8 @@ object-templates-raw: |
   #
   # allowedNamespaces defaults to the enrolled agents' namespaces, which are the only ones the
   # principal maps. A wildcard would have it watch every Application on the hub, AutoShift's own in
-  # the gitops namespace included, and log a warning for each. It falls back to the wildcard only
-  # while nothing is enrolled.
+  # the gitops namespace included, and log a warning for each. While nothing is enrolled it falls
+  # back to the principal's own namespace, which holds no Applications, for the same reason.
   {{hub- $livePrincipal := (lookup "argoproj.io/v1beta1" "ArgoCD" $agentNs $pName) | default dict hub}}
   {{hub- $liveMeta := (dig "metadata" dict $livePrincipal) hub}}
   {{hub- $pSpec := (dig "spec" dict $livePrincipal) hub}}
@@ -358,7 +358,7 @@ object-templates-raw: |
   {{hub- $pr = set $pr "destinationBasedMapping" (dig "destinationBasedMapping" false $agentCfg) hub}}
   {{hub- $pr = set $pr "auth" (dig "auth" "mtls:CN=([^,]+)" $agentCfg) hub}}
   {{hub- $pr = set $pr "logLevel" (dig "logLevel" "info" $agentCfg) hub}}
-  {{hub- $prNs := set (dig "namespace" dict $pr) "allowedNamespaces" (dig "principalNamespaces" (ternary $agentNames (list "*") (gt (len $agentNames) 0)) $agentCfg) hub}}
+  {{hub- $prNs := set (dig "namespace" dict $pr) "allowedNamespaces" (dig "principalNamespaces" (ternary $agentNames (list $agentNs) (gt (len $agentNames) 0)) $agentCfg) hub}}
   {{hub- $pr = set $pr "namespace" (set $prNs "enableNamespaceCreate" (dig "enableNamespaceCreate" true $agentCfg)) hub}}
   {{hub- $prSrv := (dig "server" dict $pr) hub}}
   {{hub- $pr = set $pr "server" (set $prSrv "route" (set (dig "route" dict $prSrv) "enabled" true)) hub}}

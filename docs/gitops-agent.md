@@ -87,12 +87,22 @@ labels:
   gitops-agent-ca: 'true'       # issue the add-on signing authority with cert-manager
 ```
 
-On each cluster that should run the add-on agent:
+On each cluster that should run the add-on agent, choose it as the infra mode:
 
 ```yaml
 labels:
-  gitops-agent-enroll: 'true'   # deploy the add-on agent here
+  gitops-infra: 'addon'   # the add-on agent is this cluster's infra agent
 ```
+
+Because the add-on is a value of `gitops-infra`, a cluster runs one infra agent: the add-on's or
+AutoShift's, never both. The add-on always installs into `openshift-gitops` on the managed cluster;
+the namespace is fixed in the add-on itself. The chart therefore refuses to render a cluster with
+`gitops-infra: 'addon'` whose `gitops-namespace` is anything else, counting labels it inherits from
+its clusterset.
+
+Moving a cluster off `'addon'` takes it out of the add-on placement but does not remove the add-on
+from it. Delete its `gitops-addon` `ManagedClusterAddOn` in the cluster's namespace on the hub, which
+runs the add-on's own cleanup.
 
 ### Public key infrastructure
 
@@ -181,13 +191,15 @@ applications are declared and pushes them down.
 
 One place the two would otherwise contend is handled for you. `policy-managed-autoshift` writes
 the AutoShift `Application` into a managed hub's own Argo CD, and in `agent-managed` mode the hub
-above owns that same object through the principal. Its placement excludes `agent-managed`, so
-AutoShift steps back and the principal is the only writer. Setting a managed hub to `agent-managed`
-therefore means the hub above supplies its AutoShift `Application`.
+above owns that same object through the principal. Its placement excludes `agent-managed`, so the
+principal is the only writer. `policy-managed-autoshift-agent` then writes that `Application` on
+the hub above, in the managed hub's `<cluster>-infra` namespace, from the same
+`config.managedAutoshift` entries, and the agent syncs it on the managed hub. See
+[managed-autoshift](../policies/stable/managed-autoshift/README.md).
 
 `destinationBasedMapping` decides how the principal maps an `Application` to an agent. It defaults
 to `false` on both paths, which means mapping by namespace, and it is worth leaving alone. The
-setting is not symmetric, and the asymmetry appears only in managed mode. For the detail, see
+setting is not symmetric, and the asymmetry shows only in managed mode. For the detail, see
 [Status never returns to the hub](#status-never-returns-to-the-hub).
 
 Autonomous mode is unaffected by it, because the agent mirrors into the hub namespace that already
@@ -231,7 +243,7 @@ fail. Work through them in order, because each one hides the one that follows it
 the compliance message, which distinguishes a policy that had nothing to do from one that should
 have done something.
 
-### No agent appears on a cluster
+### No agent runs on a cluster
 
 Read the compliance message on the policy before anything else. Rendering nothing is a legitimate
 result, so both agent policies state what a Compliant verdict covered:
@@ -301,7 +313,7 @@ the spoke namespace and is looked up under that name on the hub, where nothing o
 This affects managed mode alone. In autonomous mode the agent mirrors into the hub namespace that
 already carries its agent name, so the value makes no difference and status returns either way.
 
-### A configuration change appears to apply and does not
+### A configuration change seems to apply and does not
 
 Read the agent pod rather than the `Deployment`. The agent announces its mode in its authentication
 token, so the principal reports whatever the running pod says. At one replica a rolling update needs

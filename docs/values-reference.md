@@ -304,8 +304,10 @@ config:
 > Hub Clusters Only
 
 Deploys a nested AutoShift onto each managed hub. The policy runs on that hub and creates an Argo CD
-Application in the hub's own GitOps instance, so the hub goes on to configure its own spokes. Nothing
-is created on the hub above it. See
+Application in the hub's own GitOps instance, so the hub goes on to configure its own spokes. A hub
+whose infra agent runs managed (`gitops-infra: 'agent-managed'`) gets the same Application from the
+hub above instead, written into its `<cluster>-infra` namespace there and delivered by the infra
+principal. See
 [policies/stable/managed-autoshift](../policies/stable/managed-autoshift/README.md) and
 [Hub of hubs](hub-of-hubs.md).
 
@@ -371,13 +373,12 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-cluster-ca-bundle`      | bool      | `false`                   | Inject cluster trusted CA bundle into ArgoCD repo server |
 | `gitops-namespace`              | string    | (`gitopsNamespace`)       | Per-cluster override of the ArgoCD namespace, e.g. in hub-of-hubs setups |
 | `gitops-disable-default-argocd` | bool      | `true`                    | Controls `DISABLE_DEFAULT_ARGOCD_INSTANCE` on the operator Subscription |
-| `gitops-infra`                  | string    | `hub` on a hub, else `push` | The shape of infra Argo CD on this cluster: `hub`, `push`, `standalone`, `agent`, `agent-autonomous`, `agent-managed`, or `uninstall` to tear down its agent. See [Argo CD agent](gitops-agent.md) |
+| `gitops-infra`                  | string    | `hub` on a hub, else `push` | The shape of infra Argo CD on this cluster: `hub`, `push`, `standalone`, `agent`, `agent-autonomous`, `agent-managed`, `addon` for the Red Hat Advanced Cluster Management add-on's agent (requires `gitops-namespace` `openshift-gitops`), or `uninstall` to tear down its agent. See [Argo CD agent](gitops-agent.md) |
 | `gitops-agent`                  | bool      | `false`                   | Hub label. Run AutoShift's infra Argo CD Agent principal on this hub. Settings are in `config.gitops.infra.agent` |
 | `gitops-agent-teams`            | bool      | `false`                   | Hub label. Place the team agent principal policy here. Which teams run one is `config.gitops.teams.<team>.agent.enabled` |
 | `gitops-agent-enrolled`         | bool      | `false`                   | Cluster label. Place the spoke agent policy here, for clusters whose `gitops-dev-team-<team>` label carries an agent mode |
 | `gitops-agent-addon`            | bool      | `false`                   | Hub label. Run the Red Hat Advanced Cluster Management GitOps add-on principal on this hub. Independent of `gitops-agent`. Technology Preview |
 | `gitops-agent-ca`               | string    | `false`                   | Hub label for the add-on, three states. `false`: the add-on self-signs an authority per hub. `true`: cert-manager issues it from `config.gitops.infra.addon.ca.issuer`. `external`: you deliver the secret yourself and AutoShift places only the monitoring |
-| `gitops-agent-enroll`           | bool      | `false`                   | Cluster label. Deploy the add-on agent here, connecting to the add-on principal on the hub that manages this cluster |
 
 **Config block** (`config.gitops`):
 

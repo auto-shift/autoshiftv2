@@ -128,9 +128,10 @@ spec:
               # cert-manager, and a principal that self-signs would quietly opt out of it.
               - name: ARGOCD_PRINCIPAL_TLS_SERVER_ALLOW_GENERATE
                 value: 'false'
-              # Redis for the principal. The documented value assumes the principal runs inside the
-              # openshift-gitops instance; AutoShift gives it an instance of its own, so this has to
-              # name that instance's Redis service rather than the default one.
+              # Redis for the Red Hat Advanced Cluster Management add-on's principal, which runs in
+              # the add-on namespace (config.gitops.infra.addon.namespace), so this names that
+              # instance's Redis service. AutoShift's own principals do not use it: the operator
+              # gives each one its own instance's Redis.
               - name: ARGOCD_PRINCIPAL_REDIS_SERVER_ADDRESS
                 value: >-
                   {{ "{{hub-" }} $agentCfg := (dig "gitops" "infra" "addon" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
