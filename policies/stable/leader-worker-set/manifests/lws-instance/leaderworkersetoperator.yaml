@@ -1,0 +1,22 @@
+# The LeaderWorkerSet controller itself.
+#
+# Installing the operator is not enough. The subscription brings up
+# openshift-lws-operator, which does nothing until a LeaderWorkerSetOperator CR
+# tells it to deploy the controller — the same two-step shape as
+# nvidia-gpu-operator needing a ClusterPolicy and connectivity-link needing a
+# Kuadrant CR.
+#
+# Without this the operator is Succeeded, the policy installing it is Compliant,
+# and no LeaderWorkerSet workload can ever be scheduled, with nothing reporting
+# a problem.
+#
+# Named "cluster" because this is a singleton operator CR, which is the
+# convention for operator.openshift.io and what the CSV's own example uses.
+apiVersion: operator.openshift.io/v1
+kind: LeaderWorkerSetOperator
+metadata:
+  name: cluster
+spec:
+  managementState: Managed
+  logLevel: Normal
+  operatorLogLevel: Normal
