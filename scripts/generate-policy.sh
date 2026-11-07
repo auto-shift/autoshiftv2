@@ -351,6 +351,48 @@ build_dependency_block() {
     done
 }
 
+# One paragraph for the generated README describing which clusters the placement selects.
+placement_summary() {
+    case "$TARGET" in
+        hub)
+            echo "Hub clusters only: the placement selects \`autoshift.io/cluster-type: hub\`."
+            ;;
+        spoke)
+            echo "Managed clusters only, and only those with the label \`autoshift.io/${LABEL}: 'true'\`."
+            echo "The placement also requires \`autoshift.io/cluster-type: spoke\`, so a self-managed hub never matches."
+            echo "Set the label in the values files, never directly on a cluster."
+            ;;
+        both)
+            echo "Every cluster, hub or managed, with the label \`autoshift.io/${LABEL}: 'true'\`."
+            echo "Set the label in the values files, never directly on a cluster."
+            ;;
+        all)
+            echo "Every cluster bound to the policy namespace. No label selects it."
+            ;;
+    esac
+}
+
+# Write README.md for a new directory from the configuration-policy template. The structure test
+# (tools/internal/resolver/policy_structure_test.go) fails a new policy directory without one.
+write_readme() {
+    local summary
+    summary="$(placement_summary)"
+    while IFS= read -r line; do
+        case "$line" in
+            '{{PLACEMENT_SUMMARY}}')
+                echo "$summary"
+                ;;
+            *)
+                line="${line//\{\{DIR_BASENAME\}\}/$DIR_BASENAME}"
+                line="${line//\{\{POLICY_NAME\}\}/$POLICY_NAME}"
+                line="${line//\{\{POLICY_DIR\}\}/$POLICY_DIR}"
+                echo "$line"
+                ;;
+        esac
+    done < "$TEMPLATE_DIR/README-config.md.template" > "$POLICY_DIR/README.md"
+    log_success "Created README.md (complete the TODOs)"
+}
+
 # --- AutoShift values file integration ---
 
 # Find the last label line number in a section/clusterset (to append at bottom).
@@ -726,6 +768,9 @@ if [[ "$IS_NEW_DIR" == "true" ]]; then
 
     # bare manifest
     write_manifest
+
+    # README.md
+    write_readme
 else
     log_step "Appending policy to existing PolicyGenerator directory: $POLICY_DIR"
 
@@ -812,6 +857,11 @@ echo -e "${BLUE}📋 Next Steps:${NC}"
 echo "1. Edit $OUTPUT_FILE"
 echo "   - Replace the placeholder ConfigMap with your actual bare resource (no ConfigurationPolicy wrapper)"
 echo "   - For hub templates / loops / conditionals, use a bare 'object-templates-raw:' manifest instead"
+if [[ "$IS_NEW_DIR" == "true" ]]; then
+    echo "   Complete the TODOs in $POLICY_DIR/README.md"
+else
+    echo "   Add policy-${POLICY_NAME} to $POLICY_DIR/README.md"
+fi
 echo "2. Validate: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
 echo "   Full validation: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
 if [[ "$TARGET" != "all" ]]; then
