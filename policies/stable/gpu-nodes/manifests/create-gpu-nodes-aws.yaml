@@ -1,0 +1,109 @@
+# GPU MachineSets, cloned from the cluster's own worker MachineSet.
+#
+# Cloning rather than writing a MachineSet from scratch is what makes this portable: the AMI,
+# subnet, security groups, IAM instance profile and cluster tags are all cluster-specific and
+# cannot be expressed as labels.
+#
+# Subnet, security groups and block devices are copied VERBATIM from the base worker rather than
+# reconstructed from the infrastructure ID. Reconstruction (`<infra-id>-subnet-private-<zone>`)
+# only holds for installer-created VPCs. A cluster installed into a pre-existing VPC via
+# platform.aws.vpc.subnets references its subnet by raw ID, and its subnets carry whatever Name
+# tags the VPC owner chose — so a reconstructed tag:Name filter matches nothing and every machine
+# fails to provision. Copying the worker's own value is correct in both cases.
+object-templates-raw: |
+  {{- /* Specify the parameters needed to create the MachineSet */ -}}
+  {{- $machineset_role := "gpu" }}
+  {{- $zones_from_labels := list {{hub range $label, $labelvalue := .ManagedClusterLabels hub}}{{hub if $label | hasPrefix "autoshift.io/gpu-nodes-zone" hub}}"{{hub $labelvalue hub}}"{{hub end hub}}{{hub end hub}} }}
+  {{- $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName }}
+  {{- /* Index every worker MachineSet by its zone, so a GPU set in zone X clones the worker that
+         already lives in zone X and inherits a subnet that actually exists there. $worker_ms is
+         the fallback for a requested zone that has no worker of its own. */ -}}
+  {{- $worker_ms := dict }}
+  {{- $workers_by_zone := dict }}
+  {{- range (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items }}
+    {{- if hasPrefix (printf "%s-worker" $infrastructure_id) .metadata.name }}
+      {{- $worker_ms = . }}
+      {{- $_ := set $workers_by_zone .spec.template.spec.providerSpec.value.placement.availabilityZone . }}
+    {{- end }}
+  {{- end }}
+  {{- $spot := "{{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes-spot" hub}}" }}
+  {{- /* Generate the MachineSet for each zone as specified or default to the worker az */ -}}
+  {{- range $zone := ternary (list $worker_ms.spec.template.spec.providerSpec.value.placement.availabilityZone ) $zones_from_labels (eq 0 (len $zones_from_labels)) }}
+  {{- $base := $worker_ms }}
+  {{- if hasKey $workers_by_zone $zone }}
+    {{- $base = index $workers_by_zone $zone }}
+  {{- end }}
+  {{- $provider := $base.spec.template.spec.providerSpec.value }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: machine.openshift.io/v1beta1
+      kind: MachineSet
+      metadata:
+        labels:
+          machine.openshift.io/cluster-api-cluster: {{ $infrastructure_id }}
+        name: {{ $infrastructure_id }}-{{ $machineset_role }}-{{ $zone }}
+        namespace: openshift-machine-api
+      spec:
+        replicas: {{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes" | default "0" hub}}
+        selector:
+          matchLabels:
+            machine.openshift.io/cluster-api-cluster: {{ $infrastructure_id }}
+            machine.openshift.io/cluster-api-machineset: {{ $infrastructure_id }}-{{ $machineset_role }}-{{ $zone }}
+        template:
+          metadata:
+            labels:
+              machine.openshift.io/cluster-api-cluster: {{ $infrastructure_id }}
+              machine.openshift.io/cluster-api-machine-role: worker
+              machine.openshift.io/cluster-api-machine-type: worker
+              machine.openshift.io/cluster-api-machineset: {{ $infrastructure_id }}-{{ $machineset_role }}-{{ $zone }}
+          spec:
+            metadata:
+              labels:
+                node-role.kubernetes.io/gpu: ''
+                node-role.kubernetes.io/worker: ''
+            # Taint so that only pods explicitly tolerating a GPU land on an expensive instance.
+            # The NVIDIA GPU operator's own operands tolerate this key, as do the RHOAI serving
+            # runtimes, so tainting does not stop the driver stack installing.
+            # No `value:` — the convention is a valueless nvidia.com/gpu:NoSchedule taint, which
+            # an `operator: Exists` toleration matches. Adding a value would silently stop every
+            # existing Exists-style toleration from matching.
+            taints:
+              - effect: NoSchedule
+                key: nvidia.com/gpu
+            providerSpec:
+              value:
+                apiVersion: machine.openshift.io/v1beta1
+                kind: AWSMachineProviderConfig
+                userDataSecret:
+                  name: {{ $provider.userDataSecret.name }}
+                credentialsSecret:
+                  name: {{ $provider.credentialsSecret.name }}
+                placement:
+                  availabilityZone: {{ $zone }}
+                  region: {{ "{{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes-region" hub}}" | default $provider.placement.region }}
+                instanceType: {{ "{{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes-instance-type" hub}}" | default $provider.instanceType }}
+                {{- if eq $spot "true" }}
+                # An empty spotMarketOptions means "bid up to the on-demand price", which is the
+                # documented recommendation. Note there is no fallback to on-demand: if spot
+                # capacity is unavailable or denied by an SCP the machines simply never appear,
+                # and policy-gpu-nodes-test reports NonCompliant.
+                spotMarketOptions: {}
+                {{- end }}
+                ami:
+                  id: {{ $provider.ami.id }}
+                deviceIndex: 0
+                iamInstanceProfile:
+                  id: {{ $provider.iamInstanceProfile.id }}
+                # Emitted as flow-style JSON, which is valid YAML, rather than `toYaml | nindent`.
+                # nindent writes an absolute indent, but PolicyGenerator re-indents this whole
+                # block when it embeds it, so a nindent-ed structure lands at the wrong depth and
+                # the result stops parsing. Flow style has no indentation to get wrong.
+                subnet: {{ $provider.subnet | toJson }}
+                securityGroups: {{ $provider.securityGroups | toJson }}
+                blockDevices: {{ $provider.blockDevices | toJson }}
+                tags:
+                  {{- range $tag := $provider.tags }}
+                  - name: {{ $tag.name }}
+                    value: {{ $tag.value }}
+                  {{- end }}
+  {{- end }}

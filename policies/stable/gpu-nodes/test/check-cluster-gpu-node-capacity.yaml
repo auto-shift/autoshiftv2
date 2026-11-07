@@ -1,0 +1,41 @@
+# Does each GPU node actually expose a GPU to the scheduler?
+#
+# A Ready node is not enough. The failure that matters here is the machine coming up fine while the
+# NVIDIA driver stack never finishes — the node joins, looks healthy, and reports no
+# nvidia.com/gpu capacity, so every GPU workload sits Pending with no obvious cause. Asserting on
+# status.allocatable is what separates "the instance booted" from "the GPU is usable".
+#
+# Two assertions per node. The first — Ready — is a plain musthave. The second cannot be: whether
+# a key is absent is not a property musthave can express, so a node that reports no GPU capacity
+# emits an object that can never exist, which is how this repo already signals a condition
+# musthave cannot state directly (see storage-nodes/test/check-cluster-storage-node-count.yaml).
+#
+# Only nodes already carrying the GPU role label are checked, so this stays silent until the
+# MachineSet has produced at least one node.
+object-templates-raw: |
+  {{- $want := "{{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes" | default "0" hub}}" }}
+  {{- if and (ne $want "") (ne $want "0") }}
+    {{- $gpu_nodes := (lookup "v1" "Node" "" "" "node-role.kubernetes.io/gpu").items }}
+    {{- range $gpu_nodes }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ .metadata.name }}
+      status:
+        conditions:
+          - type: Ready
+            status: 'True'
+      {{- if not (hasKey .status.allocatable "nvidia.com/gpu") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ .metadata.name }}
+        labels:
+          gpu-capacity-never-reported: ''
+      {{- end }}
+    {{- end }}
+  {{- end }}
