@@ -146,7 +146,7 @@ Missing required values are prompted interactively.
 - `--dir DIR`: Policy directory - existing or new (default: prompted)
 - `--target TARGET`: Placement target: `hub`, `spoke`, `both`, `all` (default: prompted)
 - `--label LABEL`: Label predicate key without `autoshift.io/` prefix (default: directory basename; ignored for `hub`/`all` targets)
-- `--dependency POLICY`: Policy dependency name, repeatable (e.g., `--dependency lvm-operator-install`)
+- `--dependency POLICY`: Policy this one depends on, repeatable. Takes the policy name with or without its `policy-` prefix, so `--dependency lvm-operator-install` and `--dependency policy-lvm-operator-install` are equivalent
 - `--add-to-autoshift`: Add enable label to AutoShift values files (only for `spoke`/`both` targets)
 - `--values-files FILES`: Comma-separated list of values files to update (e.g., `hub,sbx`). Default: all non-example files
 - `--help`: Display help message
