@@ -1,0 +1,45 @@
+# Cluster-wide Authorino. MaaS talks to Authorino to authorise API keys.
+#
+# listener.tls follows the certificate rather than being set once, because the
+# three pieces are circular: Authorino will not start without the certificate,
+# the certificate is issued by OpenShift's service-ca in response to an
+# annotation on the Authorino Service, and that Service does not exist until
+# Authorino starts. Asking for TLS up front therefore guarantees it never
+# comes up, and leaves no Service in the namespace to annotate:
+#
+#   Ready=False AuthorinoNotReady: listener secret name authorino-server-cert
+#   not found
+#
+# A managed-side lookup resolves this without a second policy. TLS is off
+# until the Secret exists and on once it does, so the sequence runs itself:
+# Authorino starts, the Service appears, policy-rhcl-authorino-cert annotates
+# it, service-ca issues the Secret, this policy re-evaluates and enables TLS.
+#
+# Note spec.listener.tls is a REQUIRED field, so it cannot simply be omitted
+# and left to the operator's default, and complianceType musthave merges —
+# removing the field from this file would not remove it from a cluster that
+# already has it set. Driving the value is the only thing that actually
+# converges.
+#
+# Two enforcing policies must not both own this field; they would fight over
+# it on every evaluation.
+apiVersion: operator.authorino.kuadrant.io/v1beta1
+kind: Authorino
+metadata:
+  name: authorino
+  namespace: kuadrant-system
+spec:
+  clusterWide: true
+  replicas: 1
+  listener:
+    tls:
+      # A quoted template piped through toLiteral, not a bare {{ if }}: this is
+      # a plain manifest that PolicyGenerator parses as YAML at build time, so
+      # a standalone template line is a parse error, and an unquoted one makes
+      # the value a string where the CRD wants a boolean.
+      enabled: '{{ (not (empty (lookup "v1" "Secret" "kuadrant-system" "authorino-server-cert"))) | ternary "true" "false" | toLiteral }}'
+      certSecretRef:
+        name: authorino-server-cert
+  oidcServer:
+    tls:
+      enabled: false
