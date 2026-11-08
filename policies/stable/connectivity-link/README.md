@@ -33,6 +33,23 @@ hubClusterSets:
 
 Set labels in values files only. The `cluster-labels` policy stamps them onto each cluster.
 
+## Packaging: 1.5 and 1.4
+
+The channel decides which packaging you get. The `rhcl-operator` package's default channel,
+`stable`, still installs 1.4. Set `connectivity-link-channel: stable-1.5` for 1.5.
+
+- **1.5:** the bundle declares no OLM dependencies. Its one Deployment,
+  `kuadrant-operator-controller-manager`, deploys the Authorino, Limitador, DNS and MCP Gateway
+  Operators itself through a `KuadrantControlPlane` custom resource, applies their CRDs, and takes
+  their images from the bundle's related images.
+- **1.4:** OLM installs the Authorino, Limitador and DNS Operators as separate dependencies of
+  `rhcl-operator`, each with its own CSV.
+
+The policies are the same for both versions, and install none of those Operators by name.
+
+Do not manage or delete the `KuadrantControlPlane` named `default`. The Operator creates it, and
+deleting it cascade-deletes Authorino, Limitador, DNS and the MCP Gateway.
+
 ## The Kuadrant stack
 
 The subscription installs the Operator into `openshift-operators`. The components that enforce
@@ -97,12 +114,11 @@ oc get deploy kuadrant-operator-controller-manager -n openshift-operators \
   -o jsonpath='{.spec.template.spec.containers[0].resources}{"\n"}'
 ```
 
-## Alongside the MCP gateway
+## MCP Gateway
 
-The MCP gateway Operator, installed by the [mcp-gateway](../mcp-gateway/README.md) policy, requires
-its own Red Hat Connectivity Link version as an OLM dependency. With both policies enabled, both
-have an opinion about which version is installed. Check that the channel here satisfies the MCP
-gateway's requirement.
+Connectivity Link 1.5 includes the MCP Gateway Operator. The Kuadrant Operator deploys it through
+`KuadrantControlPlane`, with the other components, so no separate Operator is installed for it. The
+MCP catalog in Red Hat OpenShift AI needs it. On 1.4 it is not included.
 
 ## Verifying
 
