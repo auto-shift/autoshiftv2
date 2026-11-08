@@ -77,6 +77,26 @@ turns TLS on. Three details make this the only arrangement that converges:
 The certificate comes from service-ca, not from cert-manager, as in the Red Hat procedure for MaaS:
 the Envoy-to-Authorino connection is trusted through the cluster's internal CA bundle.
 
+## Operator memory, set on the Subscription
+
+On Connectivity Link 1.5 the `kuadrant-operator-controller-manager` is OOMKilled at its shipped
+memory limit (CONNLINK-1878). The operator-install policy sets `spec.config.resources` on the
+Subscription: requests `200m` CPU and `512Mi` memory, limits `200m` CPU and `2Gi` memory.
+
+- **Not the Deployment:** OLM regenerates the operator Deployment from the CSV, so a patch applied
+  to the Deployment directly is reset on the next reconcile or upgrade. The Subscription field is
+  the one OLM applies and keeps.
+- **CPU is restated:** `config.resources` replaces the container's whole resources block, so the
+  CPU values are the shipped defaults, included to keep them.
+- **Harmless on 1.4,** where the shipped limit is enough.
+
+Check that OLM applied it:
+
+```bash
+oc get deploy kuadrant-operator-controller-manager -n openshift-operators \
+  -o jsonpath='{.spec.template.spec.containers[0].resources}{"\n"}'
+```
+
 ## Alongside the MCP gateway
 
 The MCP gateway Operator, installed by the [mcp-gateway](../mcp-gateway/README.md) policy, requires
