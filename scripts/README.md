@@ -214,7 +214,8 @@ top autoshift chart creates in the policy namespace, filtered by a label predica
 ### Behavior
 
 - **New directory**: Creates a full PolicyGenerator dir (`kustomization.yaml`,
-  `policy-generator-config.yaml`, `placement.yaml`, and a bare manifest).
+  `policy-generator-config.yaml`, `placement.yaml`, a bare manifest, and a `README.md` skeleton
+  with TODOs to complete).
 - **Existing directory** (must already be a PolicyGenerator dir): adds a bare manifest, a
   `placement-<policy>.yaml`, and appends a `policies[]` entry (with its own placement + any
   dependencies) to `policy-generator-config.yaml`.
