@@ -797,7 +797,7 @@ labels:
 - **disconnected-mirror**: ImageDigestMirrorSet and ImageContentSourcePolicy (ICSP), CatalogSources (name = `{source}-{suffix}`), OperatorHub disable
 - **Operator policies**: source ternary reads `disconnected-mirror` + `mirror-catalog-suffix` labels
 
-**ClusterImageSet note:** The Assisted Installer does NOT use ImageDigestMirrorSet (IDMS) — the ClusterImageSet `releaseImage` must point directly to the mirror registry. AutoShift handles this automatically when `disconnected.mirrorRegistry.url` is set.
+**ClusterImageSet note:** The Assisted Installer does NOT use ImageDigestMirrorSet (IDMS) — the ClusterImageSet `releaseImage` must point directly to the mirror registry. AutoShift handles this automatically when `disconnected.mirrorRegistry.host` is set.
 
 ```bash
 # Generate ImageSet for disconnected environments
@@ -855,14 +855,14 @@ Without the subscription-name label, scripts cannot:
 # Correct - scripts will detect this operator
 gitops: 'true'
 gitops-subscription-name: openshift-gitops-operator
-gitops-channel: gitops-1.21
+gitops-channel: gitops-1.22
 gitops-source: redhat-operators
 gitops-source-namespace: openshift-marketplace
 
 # Incorrect - scripts will NOT detect this operator (subscription-name missing)
 gitops: 'true'
 # gitops-subscription-name: openshift-gitops-operator  # Commented out!
-gitops-channel: gitops-1.21
+gitops-channel: gitops-1.22
 ```
 
 ## 🧪 Testing and Validation
@@ -1081,6 +1081,47 @@ oc logs -n open-cluster-management-agent-addon deployment/config-policy-controll
 # 12. Check events in operator namespaces
 oc get events -n OPERATOR_NAMESPACE --sort-by='.lastTimestamp'
 ```
+
+### Short resource names that Red Hat Advanced Cluster Management shadows
+
+Installing Red Hat Advanced Cluster Management adds the Cluster API custom resource definitions and
+the `app.k8s.io` Application definition. Each serves a resource with the same plural name as one
+that OpenShift or OpenShift GitOps already serves:
+
+| Name typed | Resource usually meant | Also served after the hub installation |
+|---|---|---|
+| `machines` | `machines.machine.openshift.io` | `machines.cluster.x-k8s.io` |
+| `machinesets` | `machinesets.machine.openshift.io` | `machinesets.cluster.x-k8s.io` |
+| `applications` | `applications.argoproj.io` | `applications.app.k8s.io` |
+
+From that point the short name is ambiguous, and `oc` can resolve it to the other API. The result
+is a wrong answer rather than an error. On a cluster whose nodes the Machine API manages, the
+Cluster API `machinesets` resource is empty:
+
+```
+$ oc get machinesets -n openshift-machine-api
+No resources found in openshift-machine-api namespace.
+
+$ oc get machinesets.machine.openshift.io -n openshift-machine-api
+NAME                              DESIRED   CURRENT   READY   AVAILABLE   AGE
+rhoai-qk2v6-worker-us-east-2a     3         3         3       3           13h
+```
+
+A command that worked while you built the cluster stops working when AutoShift takes it over, and
+the `MachineSet` objects appear to have vanished while you debug a node policy. An
+`oc annotate` or `oc patch` that names the short form can likewise act on nothing and still exit
+cleanly. Use the fully qualified name in scripts, documentation, and commands typed by hand:
+
+```bash
+oc get machines.machine.openshift.io -n openshift-machine-api
+oc get machinesets.machine.openshift.io -n openshift-machine-api
+oc get applications.argoproj.io -n openshift-gitops
+```
+
+Policies are not affected, because a template `lookup` always names the group and version, as the
+node policies do with `lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" ""`.
+That explicitness is load-bearing rather than stylistic. When you base a new lookup or manifest on
+a command from a terminal session, carry the full group across with it.
 
 ### Finding noncompliant policies
 
