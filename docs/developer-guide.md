@@ -151,7 +151,7 @@ documentation checks cannot run.
 | Go | As declared in `tools/go.mod` | The validation suite, and installing kustomize | [Install Go](https://go.dev/doc/install), and see the note below on `GOTOOLCHAIN` |
 | kustomize and PolicyGenerator | kustomize v5.8.1 | Rendering any PolicyGenerator policy | `make install-policy-generator` |
 | yq | Latest | Release tooling | `brew install yq` |
-| gitleaks | 8.24.3 | The pre-commit secret scan | [Releases](https://github.com/gitleaks/gitleaks/releases) |
+| gitleaks | 8.30.1 | The pre-commit secret scan | [Releases](https://github.com/gitleaks/gitleaks/releases) |
 | Vale | 3.17.1 | The prose check | `brew install vale`, then `vale sync` |
 | Zensical | Pinned in `docs/requirements.txt` | The documentation site build | `pip install -r docs/requirements.txt` |
 | OpenShift CLI | Latest | Working against a live cluster | [Download oc](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli) |
