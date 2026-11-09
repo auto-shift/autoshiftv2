@@ -2,9 +2,11 @@
 // top-level config key it owns.
 //
 // A policy that owns configuration reads a single top-level key from the
-// cluster's rendered-config ConfigMap, named after the policy directory either
-// verbatim or in lowerCamelCase. Keys that belong to the fleet rather than to
-// one policy, and keys that deliberately use a shorter name, are recorded as
+// cluster's rendered-config ConfigMap, named after the policy directory, either
+// verbatim (acm-failover) or in lowerCamelCase (workloadPartitioning), never
+// both. New policies should prefer the verbatim form, so the config key and the
+// gate label are spelled identically. Keys that belong to the fleet rather than
+// to one policy, and keys that deliberately use a shorter name, are recorded as
 // exceptions so each deviation is visible in review.
 package configkeys
 
@@ -176,7 +178,9 @@ func BuildReport(declared map[string][]string, dirs []string, conv *Conventions)
 
 	for key := range declared {
 		switch {
-		case owned[key], shared[key]:
+		// dirSet[key] accepts the directory name verbatim, so a policy can name its
+		// config key exactly as its gate label is spelled.
+		case owned[key], dirSet[key], shared[key]:
 			rep.OK = append(rep.OK, key)
 		default:
 			if _, ok := conv.Aliases[key]; ok {
