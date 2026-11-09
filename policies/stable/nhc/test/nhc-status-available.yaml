@@ -1,32 +1,71 @@
 object-templates-raw: |
+  {{hub- /* Load <cluster>.rendered-config and parse it */hub}}
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- if hasKey $config "Error" hub}}
+  {{hub- fail (printf "nhc config error: rendered-config YAML parse error: %v" (index $config "Error")) hub}}
+  {{hub- end hub}}
   {{hub- $templates := (index (index $config "nhc" | default dict) "templates") | default list hub}}
-  {{hub- $types := list hub}}
+  {{hub- if not $templates hub}}
+  {{hub- fail "no nhc.templates found in config" hub}}
+  {{hub- end hub}}
+  {{- /* Problems found are collected here and reported together at the end */}}
+  {{- $problems := list }}
   {{hub- range $t := $templates hub}}
-  {{hub- $conds := (index (index $t "spec" | default dict) "unhealthyConditions") | default ((index $t "unhealthyConditions") | default list) hub}}
+  {{hub- /* Conditions: spec.unhealthyConditions, falling back to the old top-level key */hub}}
+  {{hub- $spec := (index $t "spec" | default dict) hub}}
+  {{hub- $conds := (index $spec "unhealthyConditions") | default ((index $t "unhealthyConditions") | default list) hub}}
+  {{hub- $types := list hub}}
   {{hub- range $c := $conds hub}}
   {{hub- $types = append $types (index $c "type") hub}}
   {{hub- end hub}}
-  {{hub- end hub}}
   {{hub- $types = uniq $types hub}}
-  {{hub- if not $types hub}}
-  {{hub- fail "no unhealthyConditions found in nhc.templates config" hub}}
+  {{hub- /* Turn spec.selector (matchLabels + matchExpressions) into a label selector string, e.g. k=v,key,!key,key in (a,b) */hub}}
+  {{hub- $selector := (index $spec "selector" | default dict) hub}}
+  {{hub- $parts := list hub}}
+  {{hub- range $k, $v := ((index $selector "matchLabels") | default dict) hub}}
+  {{hub- $parts = append $parts (printf "%s=%v" $k $v) hub}}
   {{hub- end hub}}
+  {{hub- range $e := ((index $selector "matchExpressions") | default list) hub}}
+  {{hub- $key := index $e "key" hub}}
+  {{hub- $op := index $e "operator" hub}}
+  {{hub- $vals := join "," ((index $e "values") | default list) hub}}
+  {{hub- if eq $op "Exists" hub}}
+  {{hub- $parts = append $parts $key hub}}
+  {{hub- else if eq $op "DoesNotExist" hub}}
+  {{hub- $parts = append $parts (printf "!%s" $key) hub}}
+  {{hub- else if eq $op "In" hub}}
+  {{hub- $parts = append $parts (printf "%s in (%s)" $key $vals) hub}}
+  {{hub- else if eq $op "NotIn" hub}}
+  {{hub- $parts = append $parts (printf "%s notin (%s)" $key $vals) hub}}
+  {{hub- else hub}}
+  {{hub- fail (printf "nhc config error for %v: unsupported selector operator '%v'" (index $t "name") $op) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $sel := join "," $parts hub}}
+  {{- /* Only the nodes this NHC selects */}}
+  {{- $nodes := (lookup "v1" "Node" "" "" "{{hub $sel hub}}").items }}
+  {{- if not $nodes }}{{- $problems = append $problems (printf "NHC %s: selector '%s' matches no nodes" "{{hub index $t "name" hub}}" "{{hub $sel hub}}") }}{{- end }}
   {{hub- range $type := $types hub}}
-  {{- range $n := (lookup "v1" "Node" "" "").items }}
-  {{- $st := "" }}
-  {{- range $c := $n.status.conditions }}
-  {{- if eq $c.type "{{hub $type hub}}" }}{{- $st = $c.status }}{{- end }}
+  {{- range $n := $nodes }}
+  {{- /* Read the node's reported conditions directly instead of relying on object comparison */}}
+  {{- $has := false }}
+  {{- range $c := (default list $n.status.conditions) }}
+  {{- if eq $c.type "{{hub $type hub}}" }}{{- $has = true }}{{- end }}
   {{- end }}
+  {{- if not $has }}{{- $problems = append $problems (printf "NHC %s: node %s does not report a condition of type %s" "{{hub index $t "name" hub}}" $n.metadata.name "{{hub $type hub}}") }}{{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{- /* Evidence for the policy status: one compliant check per selected node */}}
+  {{- range $n := $nodes }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
       kind: Node
       metadata:
         name: {{ $n.metadata.name }}
-      status:
-        conditions:
-          - type: {{hub $type hub}}
   {{- end }}
   {{hub- end hub}}
+  {{- if $problems }}
+  {{- fail (printf "NHC node-condition check failed: %s" (join "; " $problems)) }}
+  {{- end }}
