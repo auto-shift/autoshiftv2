@@ -467,6 +467,36 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 
 ### Hub template pitfalls
 
+#### Where a hub template resolves
+
+A hub template resolves on the hub that placed the policy, not on the cluster the policy lands on.
+On a self-managed hub those are the same cluster. On a managed hub in a hub of hubs they are not.
+Its parent hub placed the policy, so a hub-template `lookup` reads the parent. The policy then
+reports Compliant while built from the wrong cluster's objects.
+
+Split each read by what it describes:
+
+| Read | Template |
+|---|---|
+| The target's own labels and rendered config (`.ManagedClusterLabels`, `fromConfigMap` in the policy namespace) | Hub template |
+| Anything that lives on the target: its `ManagedCluster` objects, Routes, Secrets, live custom resources | Regular template |
+
+Pass hub-side settings to the regular template as JSON in a raw string, so no value needs quoting:
+
+```yaml
+{{hub- $want := dict "team" $team "agentNs" $agentNs hub}}
+{{- $want := fromJson `{{hub $want | toJson hub}}` }}
+{{- $live := (lookup "argoproj.io/v1beta1" "ArgoCD" $want.agentNs "example") | default dict }}
+```
+
+Never read a Secret with a hub-template `lookup`. Red Hat Advanced Cluster Management writes the
+resolved value into the replicated Policy, in the managed cluster's namespace, in plain text. Hub `fromSecret` encrypts its result, but it
+decrypts only into a Secret's `data` field. A regular template reads the Secret on the cluster that
+holds it, so the value never travels.
+
+`policies/stable/gitops-agent/` follows this split for its hub-side policies, which also run on
+managed hubs. Its README explains the reasoning.
+
 #### Trim markers (`{{-` / `{{hub-`) — the indentation rule
 
 **How `{{-` works:** It trims all whitespace (spaces, tabs, newlines) to the left of the template tag until it hits non-whitespace content.
