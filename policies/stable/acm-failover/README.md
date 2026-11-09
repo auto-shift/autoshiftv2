@@ -28,6 +28,10 @@ Mode is enforced at the **placement**, never inside a template. A template condi
 nothing leaves an empty `ConfigurationPolicy`, and an empty `ConfigurationPolicy` reports
 Compliant — which for a backup policy means a hub that appears healthy while backing up nothing.
 
+The values are exact and lowercase. Any other value, such as `Active`, matches no placement and
+would leave hub disaster recovery silently off, so the AutoShift chart refuses to render it, and
+refuses `active` or `passive` on a managed clusterset.
+
 ## Policies
 
 | Policy | Runs on | Description |
