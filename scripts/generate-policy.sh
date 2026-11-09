@@ -167,6 +167,19 @@ if [[ ! "$POLICY_NAME" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
     exit 1
 fi
 
+# Longest Policy name the validation suite accepts (tools/internal/resolver/policy_name_test.go).
+# With a 20-character policy namespace it reaches ACM's 62-character limit for the replicated
+# policy name on a managed cluster.
+MAX_POLICY_NAME_LEN=40
+if (( ${#POLICY_NAME} + 7 > MAX_POLICY_NAME_LEN )); then
+    log_error "Policy name 'policy-${POLICY_NAME}' is $(( ${#POLICY_NAME} + 7 )) characters; the limit is $MAX_POLICY_NAME_LEN"
+    echo "ACM replicates each policy to managed clusters as <policy-namespace>.<policy-name>, which must"
+    echo "fit in 62 characters, and the validation suite (make test) rejects longer names."
+    echo "Choose a policy name of at most $(( MAX_POLICY_NAME_LEN - 7 )) characters. Abbreviate the component, as existing"
+    echo "policies do (acs, virt, nfd, rhtas); the directory can keep its full name."
+    exit 1
+fi
+
 # Interactive directory selection
 if [[ -z "$POLICY_DIR" ]]; then
     echo ""
