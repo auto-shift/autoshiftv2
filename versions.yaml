@@ -159,13 +159,19 @@ pins:
       - file: README.md
         pattern: 'Helm [0-9.]+, Kustomize ([0-9.]+) \|'
 
-  # The CI secret scan. A currency pin: Renovate proposes each release (the annotation in ci.yaml).
+  # The secret scan, in CI and in the devcontainer the pre-commit hook runs in. A currency pin:
+  # Renovate proposes each release through the annotations in both files. 8.19 or later is required
+  # for the `gitleaks git` command both use.
   - name: gitleaks
-    value: v8.30.1
+    value: 8.30.1
     derivedFrom: none
     locations:
       - file: .github/workflows/ci.yaml
         pattern: 'GITLEAKS_VERSION: "(\S+)"'
+      - file: .devcontainer/Containerfile
+        pattern: 'ARG GITLEAKS_VERSION=(\S+)'
+      - file: docs/developer-guide.md
+        pattern: '\| gitleaks \| (\S+) \|'
 
   # Pinned so rendered output cannot change without a change in this repository. Not tied to a
   # channel: v1.19.0 is simply the current release.
