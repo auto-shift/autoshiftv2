@@ -41,6 +41,7 @@ Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structur
 
 - `--version <version>`: Pin to specific operator version (CSV name, optional)
 - `--namespace-scoped`: Generate a namespace-scoped operator policy (default: cluster-scoped)
+- `--short-name <name>`: Abbreviation used in the policy name, `policy-<name>-operator-install`, in place of the component name. The directory and labels keep the component name. See [Policy name length](#policy-name-length)
 - `--add-to-autoshift`: Automatically add the component to autoshift values files
 - `--values-files <files>`: Comma-separated list of values files to update (e.g., 'hub,sbx')
 - `--show-integration`: Show manual integration instructions
@@ -67,6 +68,26 @@ Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structur
 ```bash
 ./scripts/generate-operator-policy.sh my-operator my-operator --channel stable --namespace my-operator --namespace-scoped
 ```
+
+#### Generate with an abbreviated policy name
+```bash
+./scripts/generate-operator-policy.sh node-feature-discovery nfd --channel stable --namespace openshift-nfd --short-name nfd
+```
+
+### Policy name length
+
+The generator names the policy `policy-<component>-operator-install`. It drops a trailing
+`-operator` from the component name there, because the suffix already says it:
+`nvidia-gpu-operator` produces `policy-nvidia-gpu-operator-install`.
+
+A policy name can be at most 40 characters. ACM replicates each policy to managed clusters as
+`<policy-namespace>.<policy-name>`, which must fit in 62 characters, and `make test` rejects longer
+names. That leaves 17 characters for the component, and the generator stops with the measured
+length when it does not fit.
+
+Pass `--short-name` with an abbreviation, as the existing `policy-acs-`, `policy-virt-`,
+`policy-nfd-` and `policy-rhtas-operator-install` policies do. The directory and the
+`autoshift.io/<component>` labels keep the full component name.
 
 ### Generated Structure
 
@@ -139,14 +160,14 @@ Missing required values are prompted interactively.
 
 ### Parameters
 
-- `<policy-name>` (positional): Kebab-case name for the policy (e.g., `my-config`, `dns-tolerations`)
+- `<policy-name>` (positional): Kebab-case name for the policy (e.g., `my-config`, `dns-tolerations`). At most 33 characters, because the generated policy is `policy-<policy-name>` and policy names are limited to 40 (see [Policy name length](#policy-name-length))
 
 ### Options
 
 - `--dir DIR`: Policy directory - existing or new (default: prompted)
 - `--target TARGET`: Placement target: `hub`, `spoke`, `both`, `all` (default: prompted)
 - `--label LABEL`: Label predicate key without `autoshift.io/` prefix (default: directory basename; ignored for `hub`/`all` targets)
-- `--dependency POLICY`: Policy dependency name, repeatable (e.g., `--dependency lvm-operator-install`)
+- `--dependency POLICY`: Policy this one depends on, repeatable. Takes the policy name with or without its `policy-` prefix, so `--dependency lvm-operator-install` and `--dependency policy-lvm-operator-install` are equivalent
 - `--add-to-autoshift`: Add enable label to AutoShift values files (only for `spoke`/`both` targets)
 - `--values-files FILES`: Comma-separated list of values files to update (e.g., `hub,sbx`). Default: all non-example files
 - `--help`: Display help message
@@ -193,7 +214,8 @@ top autoshift chart creates in the policy namespace, filtered by a label predica
 ### Behavior
 
 - **New directory**: Creates a full PolicyGenerator dir (`kustomization.yaml`,
-  `policy-generator-config.yaml`, `placement.yaml`, and a bare manifest).
+  `policy-generator-config.yaml`, `placement.yaml`, a bare manifest, and a `README.md` skeleton
+  with TODOs to complete).
 - **Existing directory** (must already be a PolicyGenerator dir): adds a bare manifest, a
   `placement-<policy>.yaml`, and appends a `policies[]` entry (with its own placement + any
   dependencies) to `policy-generator-config.yaml`.

@@ -150,6 +150,13 @@ Three rules cause most of the breakage:
 Hub templates do not support Go comments; `{{hub /* ... */ hub}}` is a parse error. Use `{{/* */}}`
 only in `object-templates-raw`, written as exactly `{{- /*` with one space.
 
+After you install Red Hat Advanced Cluster Management, `machines`, `machinesets`, and `applications`
+are ambiguous. The Cluster API and `app.k8s.io` serve resources with the same names, and `oc` can
+resolve the short form to the wrong one and report nothing. Always write
+`machines.machine.openshift.io`, `machinesets.machine.openshift.io`, and `applications.argoproj.io`
+in commands, and keep the explicit group in every `lookup`. See
+[short resource names](docs/developer-guide.md#short-resource-names-that-red-hat-advanced-cluster-management-shadows).
+
 Full pitfalls and function guidance: [developer guide](docs/developer-guide.md#hub-template-pitfalls).
 Runtime behavior the suite cannot catch, including `musthave` merge and create semantics and the
 version-dependent Sprig function set, is in [docs/policy-behavior.md](docs/policy-behavior.md). Read

@@ -152,7 +152,7 @@ documentation checks cannot run.
 | Go | As declared in `tools/go.mod` | The validation suite, and installing kustomize | [Install Go](https://go.dev/doc/install), and see the note below on `GOTOOLCHAIN` |
 | kustomize and PolicyGenerator | kustomize v5.8.1 | Rendering any PolicyGenerator policy | `make install-policy-generator` |
 | yq | Latest | Release tooling | `brew install yq` |
-| gitleaks | 8.24.3 | The pre-commit secret scan | [Releases](https://github.com/gitleaks/gitleaks/releases) |
+| gitleaks | 8.30.1 | The pre-commit secret scan | [Releases](https://github.com/gitleaks/gitleaks/releases) |
 | Vale | 3.17.1 | The prose check | `brew install vale`, then `vale sync` |
 | Zensical | Pinned in `docs/requirements.txt` | The documentation site build | `pip install -r docs/requirements.txt` |
 | OpenShift CLI | Latest | Working against a live cluster | [Download oc](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli) |
@@ -1088,6 +1088,47 @@ oc logs -n open-cluster-management-agent-addon deployment/config-policy-controll
 # 12. Check events in operator namespaces
 oc get events -n OPERATOR_NAMESPACE --sort-by='.lastTimestamp'
 ```
+
+### Short resource names that Red Hat Advanced Cluster Management shadows
+
+Installing Red Hat Advanced Cluster Management adds the Cluster API custom resource definitions and
+the `app.k8s.io` Application definition. Each serves a resource with the same plural name as one
+that OpenShift or OpenShift GitOps already serves:
+
+| Name typed | Resource usually meant | Also served after the hub installation |
+|---|---|---|
+| `machines` | `machines.machine.openshift.io` | `machines.cluster.x-k8s.io` |
+| `machinesets` | `machinesets.machine.openshift.io` | `machinesets.cluster.x-k8s.io` |
+| `applications` | `applications.argoproj.io` | `applications.app.k8s.io` |
+
+From that point the short name is ambiguous, and `oc` can resolve it to the other API. The result
+is a wrong answer rather than an error. On a cluster whose nodes the Machine API manages, the
+Cluster API `machinesets` resource is empty:
+
+```
+$ oc get machinesets -n openshift-machine-api
+No resources found in openshift-machine-api namespace.
+
+$ oc get machinesets.machine.openshift.io -n openshift-machine-api
+NAME                              DESIRED   CURRENT   READY   AVAILABLE   AGE
+rhoai-qk2v6-worker-us-east-2a     3         3         3       3           13h
+```
+
+A command that worked while you built the cluster stops working when AutoShift takes it over, and
+the `MachineSet` objects appear to have vanished while you debug a node policy. An
+`oc annotate` or `oc patch` that names the short form can likewise act on nothing and still exit
+cleanly. Use the fully qualified name in scripts, documentation, and commands typed by hand:
+
+```bash
+oc get machines.machine.openshift.io -n openshift-machine-api
+oc get machinesets.machine.openshift.io -n openshift-machine-api
+oc get applications.argoproj.io -n openshift-gitops
+```
+
+Policies are not affected, because a template `lookup` always names the group and version, as the
+node policies do with `lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" ""`.
+That explicitness is load-bearing rather than stylistic. When you base a new lookup or manifest on
+a command from a terminal session, carry the full group across with it.
 
 ### Finding noncompliant policies
 
