@@ -13,19 +13,47 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The gitleaks binary rather than gitleaks-action: the action needs a GITLEAKS_LICENSE secret for an
+  # organization repository, and a pull request from a fork gets no secrets, so it failed every
+  # outside contribution.
   secret-scan:
     runs-on: ubuntu-latest
+    env:
+      # renovate: datasource=github-releases depName=gitleaks/gitleaks
+      GITLEAKS_VERSION: "v8.30.1"
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v3
+      - name: Install gitleaks
+        run: |
+          v="${GITLEAKS_VERSION#v}"
+          base="https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}"
+          cd /tmp
+          curl -fsSLO "${base}/gitleaks_${v}_linux_x64.tar.gz"
+          curl -fsSL "${base}/gitleaks_${v}_checksums.txt" | grep " gitleaks_${v}_linux_x64.tar.gz$" | sha256sum -c -
+          tar xzf "gitleaks_${v}_linux_x64.tar.gz" gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      # Only the commits this event adds, as the action did. Older history holds findings that
+      # predate the scan and are not this change's to fix. A scheduled or manual run adds no
+      # commits, so it has nothing to scan.
+      - name: Scan the commits this event adds
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) range="${PR_BASE}..${PR_HEAD}" ;;
+            push)         range="${PUSH_BEFORE}..${GITHUB_SHA}" ;;
+            *)            echo "A ${EVENT} run adds no commits; nothing to scan."; exit 0 ;;
+          esac
+          gitleaks git --redact --no-banner --log-opts="${range}" .
 
   lint-and-test:
     runs-on: ubuntu-latest
