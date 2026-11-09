@@ -115,9 +115,22 @@ agent namespaces.
 **On the hub, `sourceNamespaces` holds AGENT names, not cluster names.** Red Hat is explicit that
 the namespace names must match the agent names.
 
-**The `AppProject` is `mustonlyhave`.** Argo CD ships a `default` project wildcarded to every
+**The `AppProject` is `mustonlyhave`.** Argo CD ships a `default` project that allows every
 destination, and `musthave` merges lists, so a scoped destination would be appended to the wildcard
 and the restriction would be decorative.
+
+**Hub templates for this hub's settings, spoke templates for its clusters and live objects.** The
+hub-side policies (`agent-hub`, its readiness check and its teardown) are placed by whichever hub
+manages the hub they land on. On a managed hub that is the hub above it, so a hub-template lookup
+there reads the wrong cluster. Hub templates therefore read only this hub's labels and config, and
+hand the settings down as JSON in a raw string. Everything about this hub's own clusters and live
+state is read by spoke templates, which run where the policy lands: the enrolled ManagedClusters,
+the live principal for its read-modify-write, the Route, and the CA, JWT and client secrets. The
+same policy is then correct on the self-managed hub and on a managed hub. It also keeps private key
+material out of the replicated Policy objects, where a hub-template Secret lookup would put it in
+plain text. The per-cluster objects carry `autoshift.io/agent-team` and `autoshift.io/agent-cluster`
+labels for discovery. `agent-spoke` needs none of this: a spoke's policies are placed by its own
+hub.
 
 **`fromConfigMap`, not `lookup`, for this cluster's config.** A missing rendered-config means the
 values are not ready, and `lookup` would let every default fall through and build objects with the
@@ -130,7 +143,8 @@ in place: teardown has to work when the config is already gone.
 ## Testing
 
 `_example.yaml` enables the `dev` team agent and sets `gitops-agent` on the hub, so the validation
-suite resolves both the team and the infra principal. It cannot model a managed hub, where infra
-attaches to `infra-gitops`, so exercise that case against a live hub of hubs. For a team, the
+suite resolves both the team and the infra principal. It cannot model a hub of hubs: infra
+attaching to `infra-gitops` on a managed hub, or a managed hub hosting a principal for its own
+spokes, so exercise both against a live hub of hubs. For a team, the
 labels `gitops-agent-enrolled` and `gitops-dev-team-<team>` must be set **together**: the former
 places the spoke policy, the latter decides which teams.

@@ -27,15 +27,20 @@ object-templates-raw: |
   {{hub- $hubCfg := (index ((lookup "v1" "ConfigMap" $polNs (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $hubTeams := (dig "gitops" "teams" dict $hubCfg) hub}}
   {{hub- $hubInfra := (dig "gitops" "infra" dict $hubCfg) hub}}
-  {{hub- $mcs := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
-  {{hub- range $_, $mc := ($mcs.items | default list) hub}}
-  {{hub- $mcName := (dig "metadata" "name" "" $mc) hub}}
-  {{hub- range $label, $val := (dig "metadata" "labels" dict $mc) hub}}
-  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
-  {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") hub}}
-  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
-  {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) (ternary $hubInfra (index $hubTeams $team | default dict) $isInfra)) hub}}
-  {{hub- $agentName := printf "%s-%s" $mcName $team hub}}
+  # This hub's principal namespaces, by team, handed to the spoke template below as JSON.
+  {{hub- $nsMap := dict "infra" (dig "agentNamespace" "openshift-gitops-infra-agent" $hubInfra) hub}}
+  {{hub- range $t, $ts := $hubTeams hub}}{{hub- $nsMap = set $nsMap $t (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $t) $ts) hub}}{{hub- end hub}}
+  # The departing clusters are THIS hub's own, so they are read by a spoke template, which runs on
+  # the hub this policy lands on; a hub template would read the hub that placed it.
+  {{- $nsMap := fromJson `{{hub $nsMap | toJson hub}}` }}
+  {{- range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) }}
+  {{- $mcName := dig "metadata" "name" "" $mc }}
+  {{- range $label, $val := (dig "metadata" "labels" dict $mc) }}
+  {{- $isInfra := eq $label "autoshift.io/gitops-infra" }}
+  {{- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") }}
+  {{- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra }}
+  {{- $agentNs := index $nsMap $team | default (printf "openshift-gitops-%s-agent" $team) }}
+  {{- $agentName := printf "%s-%s" $mcName $team }}
   # The agent-to-cluster mapping. Removing it is what actually stops the principal routing to that
   # agent, so it leads.
   - complianceType: mustnothave
@@ -43,8 +48,8 @@ object-templates-raw: |
       apiVersion: v1
       kind: Secret
       metadata:
-        name: {{hub printf "cluster-%s" $agentName hub}}
-        namespace: {{hub $agentNs hub}}
+        name: '{{ printf "cluster-%s" $agentName }}'
+        namespace: '{{ $agentNs }}'
   # The certificates, and then the secrets they issued into. Both are needed: deleting only the
   # secret leaves cert-manager to reissue it from the Certificate that is still there.
   - complianceType: mustnothave
@@ -52,29 +57,29 @@ object-templates-raw: |
       apiVersion: cert-manager.io/v1
       kind: Certificate
       metadata:
-        name: {{hub printf "%s-client" $agentName hub}}
-        namespace: {{hub $agentNs hub}}
+        name: '{{ printf "%s-client" $agentName }}'
+        namespace: '{{ $agentNs }}'
   - complianceType: mustnothave
     objectDefinition:
       apiVersion: cert-manager.io/v1
       kind: Certificate
       metadata:
-        name: {{hub printf "%s-proxy" $agentName hub}}
-        namespace: {{hub $agentNs hub}}
+        name: '{{ printf "%s-proxy" $agentName }}'
+        namespace: '{{ $agentNs }}'
   - complianceType: mustnothave
     objectDefinition:
       apiVersion: v1
       kind: Secret
       metadata:
-        name: {{hub printf "%s-client-tls" $agentName hub}}
-        namespace: {{hub $agentNs hub}}
+        name: '{{ printf "%s-client-tls" $agentName }}'
+        namespace: '{{ $agentNs }}'
   - complianceType: mustnothave
     objectDefinition:
       apiVersion: v1
       kind: Secret
       metadata:
-        name: {{hub printf "%s-proxy-tls" $agentName hub}}
-        namespace: {{hub $agentNs hub}}
+        name: '{{ printf "%s-proxy-tls" $agentName }}'
+        namespace: '{{ $agentNs }}'
   # The per-agent namespace, whose name is the agent name. In autonomous mode this holds the hub's
   # mirror of that cluster's applications, and in managed mode it holds the ones the hub owned for
   # it. Either way it belongs to a cluster that has left, so it goes with it.
@@ -83,10 +88,10 @@ object-templates-raw: |
       apiVersion: v1
       kind: Namespace
       metadata:
-        name: {{hub $agentName hub}}
-  {{hub- end hub}}
-  {{hub- end hub}}
-  {{hub- end hub}}
+        name: '{{ $agentName }}'
+  {{- end }}
+  {{- end }}
+  {{- end }}
   # THE WHOLE PRINCIPAL, when this hub's own label says so: gitops-agent for infra, matching the
   # label that runs it, and gitops-dev-team-<team> for a team. infra's principal is not tied to this
   # hub's own gitops-infra mode, so tearing down this hub's infra agent leaves a principal it hosts
