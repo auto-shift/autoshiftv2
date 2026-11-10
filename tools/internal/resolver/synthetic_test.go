@@ -178,8 +178,8 @@ func TestExtractExampleConfigs_MissingClustersDir_Partial(t *testing.T) {
 
 func TestGenerateSyntheticConfigMaps_Names(t *testing.T) {
 	cfg := &ExampleConfigs{
-		BareLabels: map[string]string{"cert-manager": "true"},
-		HubConfig:  map[string]interface{}{"registry": "registry.example.com"},
+		BareLabels:           map[string]string{"cert-manager": "true"},
+		HubConfig:            map[string]interface{}{"registry": "registry.example.com"},
 		ClusterInstallConfig: map[string]interface{}{"baseDomain": "example.com"},
 	}
 
@@ -189,13 +189,13 @@ func TestGenerateSyntheticConfigMaps_Names(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"cluster-set-config.hub":             false,
-		"cluster-set-config.managed":         false,
+		"cluster-set-config.hub":              false,
+		"cluster-set-config.managed":          false,
 		"managed-cluster-config.lint-cluster": false,
 		"lint-cluster.rendered-config":        false,
 	}
 	for _, cm := range cms {
-		name, _, _ := unstructured.NestedString(cm.Object,"metadata", "name")
+		name, _, _ := unstructured.NestedString(cm.Object, "metadata", "name")
 		if _, ok := want[name]; ok {
 			want[name] = true
 		} else {
@@ -218,9 +218,9 @@ func TestGenerateSyntheticConfigMaps_Namespace(t *testing.T) {
 		t.Fatalf("GenerateSyntheticConfigMaps: %v", err)
 	}
 	for _, cm := range cms {
-		ns, _, _ := unstructured.NestedString(cm.Object,"metadata", "namespace")
+		ns, _, _ := unstructured.NestedString(cm.Object, "metadata", "namespace")
 		if ns != "policies-autoshift" {
-			name, _, _ := unstructured.NestedString(cm.Object,"metadata", "name")
+			name, _, _ := unstructured.NestedString(cm.Object, "metadata", "name")
 			t.Errorf("CM %s has namespace %q, want policies-autoshift", name, ns)
 		}
 	}
@@ -238,9 +238,9 @@ func TestGenerateSyntheticConfigMaps_RenderedConfigContainsHubAndCluster(t *test
 
 	var renderedConfig string
 	for _, cm := range cms {
-		name, _, _ := unstructured.NestedString(cm.Object,"metadata", "name")
+		name, _, _ := unstructured.NestedString(cm.Object, "metadata", "name")
 		if name == "lint-cluster.rendered-config" {
-			renderedConfig, _, _ = unstructured.NestedString(cm.Object,"data", "config")
+			renderedConfig, _, _ = unstructured.NestedString(cm.Object, "data", "config")
 			break
 		}
 	}
@@ -257,6 +257,70 @@ func TestGenerateSyntheticConfigMaps_RenderedConfigContainsHubAndCluster(t *test
 	}
 	if parsed["baseDomain"] != "example.com" {
 		t.Errorf("rendered-config missing baseDomain from cluster install config, got: %v", parsed)
+	}
+}
+
+// renderedConfigFor returns the parsed data.config of <name>.rendered-config.
+func renderedConfigFor(t *testing.T, cms []unstructured.Unstructured, name string) map[string]interface{} {
+	t.Helper()
+	for _, cm := range cms {
+		n, _, _ := unstructured.NestedString(cm.Object, "metadata", "name")
+		if n != name+".rendered-config" {
+			continue
+		}
+		raw, _, _ := unstructured.NestedString(cm.Object, "data", "config")
+		var parsed map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			t.Fatalf("parse %s.rendered-config: %v", name, err)
+		}
+		return parsed
+	}
+	t.Fatalf("%s.rendered-config not found", name)
+	return nil
+}
+
+// A cluster's override of a nested hub key must land in that cluster's
+// rendered-config only. It must not write through to cfg.HubConfig, and so
+// must not reach the rendered-config of any other synthetic cluster. The
+// example files collide this way today: every cluster-install example sets
+// config.networking and the baremetal one sets config.ztwim, both of which the
+// hub example also sets.
+func TestGenerateSyntheticConfigMaps_ClusterOverrideDoesNotLeak(t *testing.T) {
+	cfg := &ExampleConfigs{
+		HubConfig: map[string]interface{}{
+			"networking": map[string]interface{}{"mtu": "1500", "proxy": "none"},
+		},
+		ClusterInstallConfig: map[string]interface{}{
+			"networking": map[string]interface{}{"mtu": "9000"},
+		},
+		ClusterInstallExtra: map[string]map[string]interface{}{
+			"aws":       {"aws": map[string]interface{}{"region": "us-east-2"}},
+			"baremetal": {"networking": map[string]interface{}{"proxy": "http://proxy:3128"}},
+		},
+	}
+
+	cms, err := GenerateSyntheticConfigMaps(cfg, "lint-cluster", "policies-autoshift")
+	if err != nil {
+		t.Fatalf("GenerateSyntheticConfigMaps: %v", err)
+	}
+
+	hubNet := cfg.HubConfig["networking"].(map[string]interface{})
+	if hubNet["mtu"] != "1500" || hubNet["proxy"] != "none" {
+		t.Errorf("cfg.HubConfig was mutated: networking = %v", hubNet)
+	}
+
+	want := map[string]map[string]interface{}{
+		"lint-cluster":           {"mtu": "9000", "proxy": "none"},
+		"lint-cluster-aws":       {"mtu": "1500", "proxy": "none"},
+		"lint-cluster-baremetal": {"mtu": "1500", "proxy": "http://proxy:3128"},
+	}
+	for name, wantNet := range want {
+		got, _ := renderedConfigFor(t, cms, name)["networking"].(map[string]interface{})
+		for k, v := range wantNet {
+			if got[k] != v {
+				t.Errorf("%s.rendered-config networking.%s = %v, want %v", name, k, got[k], v)
+			}
+		}
 	}
 }
 

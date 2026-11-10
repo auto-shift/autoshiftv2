@@ -1,0 +1,21 @@
+# The default AIDE configuration the File Integrity Operator generates for each FileIntegrity
+# instance, named after the instance (config.fileIntegrity.instances[].name, "autoshift" in the
+# example values).
+#
+# policy-file-integrity-instances reads this default and inserts one exclusion line, so without it
+# that policy emits nothing. The anchor line below is what it searches for, so this stub exercises
+# the insertion rather than only the existence check.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autoshift
+  namespace: openshift-file-integrity
+data:
+  aide.conf: |
+    @@define DBDIR /hostroot/etc/kubernetes
+    database=file:@@{DBDIR}/aide.db.gz
+    database_out=file:@@{DBDIR}/aide.db.gz.new
+    gzip_dbout=yes
+    !/hostroot/etc/machine-config-daemon/node-annotation.json*
+    !/hostroot/etc/kubernetes/static-pod-resources
+    /hostroot/etc/kubernetes p+i+n+u+g+s+b+m+c+acl+selinux+xattrs

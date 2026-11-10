@@ -1,0 +1,34 @@
+---
+# A managed hub whose infra Argo CD agent runs agent-managed, with its own rendered-config. Without it
+# policy-managed-autoshift-agent finds no target on the self-managed hub and renders nothing, so the
+# Application it writes through the principal would never be resolved. The name matches no synthetic
+# cluster profile, so no other policy resolves AS this cluster.
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: lint-managed-hub
+  labels:
+    autoshift.io/cluster-type: hub
+    autoshift.io/self-managed: 'false'
+    autoshift.io/autoshift-enable-install: 'true'
+    autoshift.io/gitops-infra: agent-managed
+spec:
+  hubAcceptsClient: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lint-managed-hub.rendered-config
+  # No rendered-config-map label: the install policies range over every ConfigMap carrying it, and
+  # this one is read by name only.
+  namespace: policies-autoshift
+data:
+  config: |
+    managedAutoshift:
+      - appName: 'mhub'
+        repoUrl: 'https://github.com/auto-shift/autoshiftv2.git'
+        targetRevision: 'main'
+        gitopsNamespace: 'openshift-gitops'
+        valuesFiles:
+          - 'values/global.yaml'
+          - 'values/clustersets/hub1.yaml'

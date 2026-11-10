@@ -1,0 +1,74 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: global-observability
+# Three-tier metrics rollup: workload clusters -> intermediate hubs -> global hub. The
+# MultiClusterObservability object, including MCOA capabilities, is owned by
+# policy-acm-observability. This chart adds the rollup secret and the PrometheusAgent
+# remote-writes that push each intermediate hub's metrics up to the global hub.
+# scrapeInterval, logLevel, and additionalRemoteWrites are read from
+# config.globalObservability.
+#
+# Placement is by label: global-observability enables the whole set, and self-managed splits the
+# tiers ('true' = global hub, 'false' = intermediate hub).
+#
+# Prerequisites on every participating hub: acm-observability: 'true' and coo: 'true'.
+#
+# NOTE ON complianceType: every manifest here patches a PrometheusAgent owned by MCOA.
+# musthave is required: mustonlyhave would strip the fields MCOA set. musthave never
+# removes, so deleting an additionalRemoteWrites entry leaves the old value in place.
+# Prune those by hand.
+placementBindingDefaults:
+  name: binding-policy-global-observability
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Coalesced rollup secret, built on the global hub from the observatorium Route and certs.
+  - name: policy-global-observability-secrets
+    placement:
+      placementPath: placement-secrets.yaml
+    manifests:
+      - path: manifests/rollup-secret.yaml
+    dependencies:
+      - name: policy-acm-observability
+  # 2) Readiness gate: wait for MCOA to create its own PrometheusAgent templates before patching
+  #    them. MCOA only replicates templates it created itself, so a policy-created one is ignored.
+  - name: policy-global-observability-prom-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-prometheus.yaml
+    manifests:
+      - path: test/prometheus-agent-exists.yaml
+    dependencies:
+      - name: policy-acm-observability
+    customMessage:
+      noncompliant: >-
+        MCOA has not created its PrometheusAgent templates yet, so the remote-write patch cannot be
+        applied. Check that acm-observability and coo are both enabled on this hub and that the
+        MultiClusterObservability CR is reconciling.
+  # 3) The remote-write patch itself, plus the secrets it mounts. Intermediate hubs only.
+  - name: policy-global-observability-prometheus
+    placement:
+      placementPath: placement-prometheus.yaml
+    manifests:
+      - path: manifests/prometheus-rollup-secret-repl.yaml
+      - path: manifests/prometheus-additional-secrets.yaml
+      - path: manifests/prometheus-prometheus.yaml
+    dependencies:
+      - name: policy-acm-observability
+      - name: policy-coo-operator-install
+      - name: policy-global-observability-prom-test

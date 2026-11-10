@@ -4,20 +4,49 @@
 # Hub Cluster Sets with Feature Flags. Blank will remove
 hubClusterSets:
   hubofhubs:
-    config: {}
+    config:
+      # Compliance Operator scans. Profiles are PINNED to a version: ocp4-stig tracks whatever
+      # DISA publishes next, so an unpinned name would silently change what is measured and, with
+      # autoApply on, change the cluster. Adopting a new release means adding an entry.
+      #
+      # autoApply is false: this scans and reports and changes nothing. Turning it on applies every
+      # remediation the scan produced except those in exclude, and several are MachineConfigs that
+      # reboot every node, in more than one round. Hardening is a deliberate choice, so layer
+      # hub-hardened.yaml on top rather than flipping this. See docs/compliance.md.
+      compliance:
+        scans:
+          - name: stig-v2r3
+            profiles:
+              - ocp4-stig-v2r3
+              - ocp4-stig-node-v2r3
+              - rhcos4-stig-v2r3
+            scanSetting: default
+            autoApply: false
+            # These four rewrite the default project template so every new project gets a
+            # deny-by-default NetworkPolicy and a ResourceQuota, and ship only that restrictive
+            # half. Deny-by-default blocks the kube-apiserver, breaking admission webhooks (Red Hat
+            # Advanced Cluster Security) and the cluster-manager namespaces; the quota rejects every
+            # pod that declares no resources. Use manualRemediations.projectTemplate instead.
+            exclude:
+              - ocp4-stig-v2r3-project-config-and-template-network-policy
+              - ocp4-stig-v2r3-project-config-and-template-network-policy-1
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
     labels:
       # OpenShift version for cluster deployment and image mirroring
-      openshift-version: '4.22.8'
+      openshift-version: '4.22.18'
       self-managed: 'true'
       ### OpenShift Gitops
       gitops: 'true' # is expected to be installed on all hub clusters
       gitops-subscription-name: openshift-gitops-operator
       gitops-disable-default-argocd: 'true'
-      gitops-channel: gitops-1.21
+      gitops-channel: gitops-1.22
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
-      # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
-      ### Advanced Cluster Manager
+      # gitops-namespace: 'openshift-gitops'  # Override; stamped from gitopsNamespace if unset
+      # Infra Argo CD principal. hub1 and hub2 report their infra-gitops here with gitops-infra.
+      gitops-agent: 'true'
+      ### Advanced Cluster Management
       acm-subscription-name: advanced-cluster-management
       acm-channel: release-2.17
       acm-source: redhat-operators
@@ -25,10 +54,9 @@ hubClusterSets:
       acm-availability-config: 'High'
       acm-observability: 'true'
       acm-enable-provisioning: 'true'
-      # acm-provisioning-storage-class: (optional)
-      # acm-provisioning-database-size: 10Gi
-      # acm-provisioning-filesystem-storage-size: 100Gi
-      # acm-provisioning-image-storage-size: 50Gi
+      acm-search-storage: 'true'
+      # acm-search-storage-class: 'ocs-storagecluster-ceph-rbd'
+      # acm-search-storage-size: '100Gi'
       ### Cluster Install (Hive — provisions hub1 and other spoke hubs)
       cluster-install: 'true'
       ### infra-nodes
@@ -103,7 +131,7 @@ hubClusterSets:
       ### OpenShift Pipelines
       pipelines: 'true'
       pipelines-subscription-name: openshift-pipelines-operator-rh
-      pipelines-channel: pipelines-1.23
+      pipelines-channel: pipelines-1.24
       pipelines-source: redhat-operators
       pipelines-source-namespace: openshift-marketplace
       ### Trusted Artifact Signer
@@ -137,6 +165,8 @@ hubClusterSets:
       logging-source-namespace: openshift-marketplace
       ### Cluster Observability Operator
       coo: 'true'
+      global-observability: 'true'
+      autoshift-console: 'true'
       coo-subscription-name: cluster-observability-operator
       coo-channel: stable
       coo-source: redhat-operators

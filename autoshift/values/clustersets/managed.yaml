@@ -2,6 +2,56 @@
 managedClusterSets:
   managed:
     config:
+      # Publishes this cluster's bundle endpoint, which is what makes it a usable federation peer.
+      # Without it the operator writes no federation block and peers have nothing to fetch from.
+      ztwim:
+        federation:
+          bundleEndpoint:
+            # https_spiffe, which is also the Operator's own default. A peer's bundle endpoint is
+            # authenticated by its SPIFFE SVID rather than by a certificate authority, so federation
+            # needs no publicly trusted ingress certificate, no shared internal authority, and
+            # nothing added to the SPIRE server's trust store -- which cannot be extended anyway,
+            # because SpireServer exposes no volumes or environment and the Operator reverts edits
+            # to the generated StatefulSet within seconds.
+            #
+            # https_web is the alternative, and needs the ingress wildcard on EVERY member to chain
+            # to an authority already in the SPIRE image's trust store. That rules out fleets with
+            # their own authority, and disconnected sites.
+            #
+            # The profile is IMMUTABLE once the resource exists. Changing it later therefore
+            # recreates the SpireServer, which policy-ztwim-config does through recreateOption. The
+            # trust domain and its certificate authority survive, because they live in the datastore
+            # rather than in the resource, so agents keep their SVIDs and do not re-attest.
+            profile: 'https_spiffe'
+            refreshHint: 300
+
+      # Compliance Operator scans. Profiles are PINNED to a version: ocp4-stig tracks whatever
+      # DISA publishes next, so an unpinned name would silently change what is measured and, with
+      # autoApply on, change the cluster. Adopting a new release means adding an entry.
+      #
+      # autoApply is false: this scans and reports and changes nothing. Turning it on applies every
+      # remediation the scan produced except those in exclude, and several are MachineConfigs that
+      # reboot every node, in more than one round. Hardening is a deliberate choice, so layer
+      # hub-hardened.yaml on top rather than flipping this. See docs/compliance.md.
+      compliance:
+        scans:
+          - name: stig-v2r3
+            profiles:
+              - ocp4-stig-v2r3
+              - ocp4-stig-node-v2r3
+              - rhcos4-stig-v2r3
+            scanSetting: default
+            autoApply: false
+            # These four rewrite the default project template so every new project gets a
+            # deny-by-default NetworkPolicy and a ResourceQuota, and ship only that restrictive
+            # half. Deny-by-default blocks the kube-apiserver, breaking admission webhooks (Red Hat
+            # Advanced Cluster Security) and the cluster-manager namespaces; the quota rejects every
+            # pod that declares no resources. Use manualRemediations.projectTemplate instead.
+            exclude:
+              - ocp4-stig-v2r3-project-config-and-template-network-policy
+              - ocp4-stig-v2r3-project-config-and-template-network-policy-1
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
       uwm:
         # storageClass: 'gp3-csi'            # Omit to use cluster default StorageClass
         prometheus:
@@ -15,28 +65,28 @@ managedClusterSets:
           storage: '10Gi'
     labels:
       # OpenShift version for cluster deployment and image mirroring
-      openshift-version: '4.22.8'
+      openshift-version: '4.22.18'
       ### tempo
       tempo: 'true'
       tempo-subscription-name: tempo-product
       tempo-channel: stable
       tempo-source: redhat-operators
       tempo-source-namespace: openshift-marketplace
-      # tempo-version: 'tempo-operator.v0.21.0-3'
+      # tempo-version: 'tempo-operator.v0.22.0-4'
       ### kiali
       kiali: 'true'
       kiali-subscription-name: kiali-ossm
       kiali-channel: stable
       kiali-source: redhat-operators
       kiali-source-namespace: openshift-marketplace
-      kiali-version: 'kiali-operator.v2.27.3'
+      kiali-version: 'kiali-operator.v2.33.1'
       ### servicemesh3
       servicemesh3operator: 'true'
       servicemesh3operator-subscription-name: servicemeshoperator3
       servicemesh3operator-channel: stable
       servicemesh3operator-source: redhat-operators
       servicemesh3operator-source-namespace: openshift-marketplace
-      servicemesh3operator-version: 'servicemeshoperator3.v3.4.1'
+      servicemesh3operator-version: 'servicemeshoperator3.v3.5.0'
       servicemesh3-ambient: 'true'
       ### OpenTelemetry (required by servicemesh3-ambient)
       opentelemetry: 'true'
@@ -51,7 +101,6 @@ managedClusterSets:
       master-system-reserved-cpu: '500m'
       master-kube-reserved-memory: '1536Mi'
       master-kube-reserved-cpu: '500m'
-      master-eviction-memory: '500Mi'
       ### Infrastructure Nodes
       infra-nodes: ''
       infra-nodes-numcpu: ''
@@ -76,14 +125,14 @@ managedClusterSets:
       ### Local Storage Operator
       local-storage: 'false'
       local-storage-subscription-name: local-storage-operator
-      # local-storage-version: 'local-storage-operator.v4.22.0-202608170914'
+      # local-storage-version: 'local-storage-operator.v4.22.0-202610241356'
       local-storage-channel: stable
       local-storage-source: redhat-operators
       local-storage-source-namespace: openshift-marketplace
       ### OpenShift Data Foundation
       odf: 'true'
       odf-subscription-name: odf-operator
-      # odf-version: 'odf-operator.v4.22.2-rhodf'
+      # odf-version: 'odf-operator.v4.22.7-rhodf'
       odf-multi-cloud-gateway: standalone
       odf-noobaa-pvpool: ''
       odf-noobaa-store-size: ''
@@ -100,7 +149,7 @@ managedClusterSets:
       ### Advanced Cluster Security
       acs: 'true'
       acs-subscription-name: rhacs-operator
-      # acs-version: 'rhacs-operator.v4.11.3'
+      # acs-version: 'rhacs-operator.v4.11.6'
       acs-channel: stable
       acs-source: redhat-operators
       acs-source-namespace: openshift-marketplace
@@ -119,7 +168,7 @@ managedClusterSets:
       ### OpenShift Pipelines
       pipelines: 'false'
       pipelines-subscription-name: openshift-pipelines-operator-rh
-      pipelines-channel: pipelines-1.23
+      pipelines-channel: pipelines-1.24
       pipelines-source: '' #redhat-operators
       pipelines-source-namespace: '' #openshift-marketplace
       ### Trusted Artifact Signer
@@ -135,19 +184,31 @@ managedClusterSets:
       quay-source: '' # redhat-operators
       quay-source-namespace: '' # openshift-marketplace
       ### Developer OpenShift Gitops
-      # GitOps operator (required by gitops-dev). The infra ArgoCD instance is hub-only, not created here.
+      # GitOps operator, required by gitops-dev and by the infra agent.
       gitops: 'true'
+      # Infra Argo CD agent. The principal on the hub owns this cluster's infra Applications.
+      gitops-infra: 'agent-managed'
       gitops-subscription-name: openshift-gitops-operator
-      gitops-channel: gitops-1.21
+      gitops-channel: gitops-1.22
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
       gitops-dev: 'true'
-      gitops-dev-team-test: 'hub' #hub or standalone
+      # hub | standalone | agent | agent-autonomous | agent-managed. The agent values run this
+      # team's Argo CD agent here, reporting to the team's principal on the hub. Bare 'agent' takes
+      # the team default from config.gitops.teams.<team>.agent.mode; the suffixed forms pin the mode
+      # for THIS cluster, so one team can run some clusters managed and others autonomous.
+      # gitops-dev-team-test: 'agent'
+      # MUST accompany any gitops-dev-team-<team>: 'agent*' label above. A placement selector cannot
+      # match a label prefix, so this boolean is what actually places the team agent's spoke policy;
+      # the per-team labels only decide WHICH teams. Set one without the other and the hub still
+      # builds everything (namespace, client certificate, mapping secret, source namespace entry)
+      # while no agent is ever deployed, and every policy reports Compliant.
+      gitops-agent-enrolled: 'false'
       # gitops-dev-team-{INSERT_TEAM_NAME}
       ### Loki
       loki: 'true'
       loki-subscription-name: loki-operator
-      # loki-version: 'loki-operator.v6.6.0'
+      # loki-version: 'loki-operator.v6.6.2'
       loki-channel: stable-6.6
       loki-source: redhat-operators
       loki-source-namespace: openshift-marketplace
@@ -157,14 +218,14 @@ managedClusterSets:
       ### OpenShift Logging
       logging: 'true'
       logging-subscription-name: cluster-logging
-      # logging-version: 'cluster-logging.v6.6.0'
+      # logging-version: 'cluster-logging.v6.6.2'
       logging-channel: stable-6.6
       logging-source: redhat-operators
       logging-source-namespace: openshift-marketplace
       ### Cluster Observability Operator
       coo: 'true'
       coo-subscription-name: cluster-observability-operator
-      # coo-version: 'cluster-observability-operator.v1.5.2'
+      # coo-version: 'cluster-observability-operator.v1.5.3'
       coo-channel: stable
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace

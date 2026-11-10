@@ -217,6 +217,12 @@ sequenceDiagram
      and creates the Application in hub1's **own** Argo CD, pointing at hub1 itself. Nothing is
      created on the hub-of-hubs. See
      [policies/stable/managed-autoshift](../policies/stable/managed-autoshift/README.md).
+   - *Per-hub through the Argo CD agent*: the same labels and `config.managedAutoshift`, with hub1
+     carrying `gitops-infra: 'agent-managed'` and the hub-of-hubs running the infra principal
+     (`gitops-agent: 'true'`). The hub-of-hubs then writes hub1's Application into the `hub1-infra`
+     namespace there, and hub1's infra agent pulls it down and syncs it. The Application is owned
+     on the hub-of-hubs, and its sync status shows there. See
+     [Argo CD agent](gitops-agent.md).
 
    Use one or the other. Both would give hub1 two AutoShift instances.
 5. hub1's AutoShift syncs its config ConfigMaps and deploys policies for **its spokes**.
