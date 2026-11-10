@@ -77,6 +77,79 @@ hubClusterSets:
             kind: 'ClusterIssuer'
             group: 'cert-manager.io'
           extraSANs: []
+        # Extra ClusterIssuers - policy-cert-manager-issuers, opt-in with the cert-manager-issuers
+        # label below. Any issuer type works (ACME, CA, Vault, Venafi, ...): each spec is passed
+        # through unchanged. Names must be unique and not autoshift-ca or autoshift-selfsigned.
+        # Inert unless that label is 'true', so the example below is safe to copy.
+        # policy-cert-manager-issuers-ready reports each issuer that is not Ready, which for ACME
+        # catches a bad or missing EAB key.
+        #
+        # SECRETS: issuers reference Secrets (ACME EAB HMAC keys, DNS provider API tokens, CA key
+        # pairs). Create them in the cert-manager namespace on each cluster, by External Secrets
+        # Operator or by hand, NEVER inline in this file. The spec only names them.
+        #
+        # Create via CLI:
+        #   oc -n cert-manager create secret generic zero-ssl-eabsecret \
+        #     --from-literal=secret='<EAB HMAC key>'
+        #   oc -n cert-manager create secret generic cloudflare-api-token-secret \
+        #     --from-literal=api-token='<Cloudflare API token>'
+        #
+        # Or as YAML manifests (apply to each cluster):
+        #   ---
+        #   apiVersion: v1
+        #   kind: Secret
+        #   metadata:
+        #     name: zero-ssl-eabsecret
+        #     namespace: cert-manager
+        #   type: Opaque
+        #   stringData:
+        #     secret: '<EAB HMAC key from zerossl.com/developer>'
+        #   ---
+        #   apiVersion: v1
+        #   kind: Secret
+        #   metadata:
+        #     name: cloudflare-api-token-secret
+        #     namespace: cert-manager
+        #   type: Opaque
+        #   stringData:
+        #     api-token: '<Cloudflare API token with Zone:DNS:Edit>'
+        #
+        # Or via External Secrets Operator: an ExternalSecret against your secret store (Vault,
+        # AWS Secrets Manager, ...).
+        #
+        # Example: ZeroSSL with Cloudflare DNS01 validation.
+        issuers:
+          - name: zerossl-production
+            spec:
+              acme:
+                server: https://acme.zerossl.com/v2/DV90
+                email: user@example.com
+                privateKeySecretRef:
+                  name: zerossl-prod
+                externalAccountBinding:
+                  keyID: '<EAB key ID from zerossl.com/developer>'
+                  keySecretRef:
+                    name: zero-ssl-eabsecret
+                    key: secret
+                  keyAlgorithm: HS256
+                solvers:
+                  - dns01:
+                      cloudflare:
+                        email: user@example.com
+                        apiTokenSecretRef:
+                          name: cloudflare-api-token-secret
+                          key: api-token
+                    selector:
+                      dnsZones:
+                        - example.com
+        # cert-manager controller arguments, applied by policy-cert-manager-issuers. AutoShift owns
+        # this list where that policy is placed: it is set to exactly these entries, and removed when
+        # none are given. DNS01 on private or split-horizon clusters usually needs public recursive
+        # DNS so challenge TXT records resolve. Leave the list empty for HTTP01-only issuers.
+        controller:
+          overrideArgs:
+            - '--dns01-recursive-nameservers=8.8.8.8:53,1.1.1.1:53'
+            - '--dns01-recursive-nameservers-only'
       # =======================================================================
       # Zero Trust Workload Identity Manager / SPIRE (DATA; the ENABLE flags are the
       # ztwim, ztwim-federation and ztwim-nested-role labels below). Every key is optional
@@ -2391,6 +2464,7 @@ hubClusterSets:
       cert-manager-source-namespace: openshift-marketplace
       # Enable flags (LABELS, drive placement). Issuer refs + SANs are DATA -> config.certManager (above).
       cert-manager-ca: 'true'          # 'false' skips the built-in autoshift-ca (bring fully-external issuers)
+      cert-manager-issuers: 'false'      # Opt-in ClusterIssuers + controller args from config.certManager.issuers/.controller
       # Opt-in cert-manager management of the cluster's serving certs (default OFF; safe — only applied once
       # the Certificate is Ready). API = additive namedCertificate (api.<domain>, SNI, low risk). Ingress =
       # replaces the *.apps wildcard (higher risk). Issuer/SANs per cert live in config.certManager.
