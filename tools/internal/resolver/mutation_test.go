@@ -188,14 +188,14 @@ func TestPipeline_MutationSweep(t *testing.T) {
 			expectEmptyDestination: true,
 		},
 		{
-			name: "nodeFeatureRules map entry enabled: false → that NodeFeatureRule not rendered",
+			name: "nodeFeatureRules map entry enabled: false → its rules not rendered, NodeFeatureRule mustnothave",
 			mutateConfigs: func(cfg *ExampleConfigs) {
 				rules := nfdRules(cfg).(map[string]interface{})
 				rules["amd-gpu"].(map[string]interface{})["enabled"] = false
 			},
 			expectAbsentInPolicy: "stable/node-feature-discovery",
-			expectAbsentString:   "name: 'amd-gpu'",
-			expectPresentString:  "name: 'nvidia-gpu'",
+			expectAbsentString:   "amd gpu present",
+			expectPresentString:  "complianceType: mustnothave",
 		},
 		{
 			name: "nodeFeatureRules in list form → still renders one NodeFeatureRule per entry",

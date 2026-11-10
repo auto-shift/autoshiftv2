@@ -142,8 +142,9 @@ config:
                   vendor: {op: 'In', value: ['10ee']}
 ```
 
-Switching a rule off stops the policy managing it but does not delete the NodeFeatureRule already on
-the cluster; delete it with `oc delete nodefeaturerule <name> -n openshift-nfd`.
+Switching a rule off with `enabled: false` deletes the NodeFeatureRule from the cluster: the policy
+renders it as `mustnothave`. Removing the entry from config altogether only stops the policy
+managing it, which is why `enabled: false` is the way to turn a clusterset rule off for one cluster.
 
 ### Accelerators other than NVIDIA
 

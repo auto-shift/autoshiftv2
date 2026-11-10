@@ -12,6 +12,8 @@
 #   - a map keyed by NodeFeatureRule name, {<name>: {rules, enabled}}. The rendered-config merge
 #     deep-merges maps but replaces lists whole, so only the map form lets a cluster add, override or
 #     switch off (enabled: false) a single rule from its clusterset without restating the others.
+#     A switched-off rule renders as mustnothave, so it is deleted from the cluster rather than
+#     left in place unmanaged.
 # Map keys render in sorted order. In both forms every rule needs rules, and the name must be a
 # valid Kubernetes object name; the policy fails and names the entry otherwise.
 #
@@ -48,10 +50,13 @@ object-templates-raw: |
             {{hub $worker | toYaml | autoindent hub}}
   {{hub- $rulesCfg := (index $nfd "nodeFeatureRules" | default list) hub}}
   {{hub- $rules := list hub}}
+  {{hub- $disabled := list hub}}
   {{hub- if kindIs "map" $rulesCfg hub}}
   {{hub- range $name, $r := $rulesCfg hub}}
   {{hub- $r = ($r | default dict) hub}}
-  {{hub- if not (and (hasKey $r "enabled") (eq (printf "%v" (index $r "enabled")) "false")) hub}}
+  {{hub- if and (hasKey $r "enabled") (eq (printf "%v" (index $r "enabled")) "false") hub}}
+  {{hub- $disabled = (append $disabled $name) hub}}
+  {{hub- else hub}}
   {{hub- $rules = (append $rules (merge (dict "name" $name) (omit $r "enabled" "name"))) hub}}
   {{hub- end hub}}
   {{hub- end hub}}
@@ -71,4 +76,14 @@ object-templates-raw: |
         namespace: openshift-nfd
       spec:
         rules: {{hub (index $rule "rules") | toRawJson hub}}
+  {{hub- end hub}}
+  {{hub- range $name := $disabled hub}}
+  {{hub- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" (printf "%v" $name)) hub}}{{hub fail (printf "config.nodeFeatureDiscovery.nodeFeatureRules[%v]: name must be a lowercase Kubernetes object name" $name) hub}}{{hub- end hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: nfd.k8s-sigs.io/v1alpha1
+      kind: NodeFeatureRule
+      metadata:
+        name: '{{hub $name hub}}'
+        namespace: openshift-nfd
   {{hub- end hub}}
