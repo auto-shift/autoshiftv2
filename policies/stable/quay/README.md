@@ -217,7 +217,7 @@ Every call needs a superuser OAuth token. The `access_token` returned when you c
 user works until it expires, about 150 minutes after it was issued. For anything later, create a
 long-lived token in the web console:
 
-1. Log in as a superuser and create or open the organization, for exacmple **autoshift**.
+1. Log in as a superuser and create or open the organization, for example **autoshift**.
 2. Select Robot Accounts, then Create Robot Account, for example release. The resulting account name is autoshift+release..
 3. Grant it Write on the repositories it publishes, or Admin on the organization if it must create repositories on first push..
 4. Open the robot account and select Credentials. The panel offers a Docker login command and a downloadable Kubernetes Secret.

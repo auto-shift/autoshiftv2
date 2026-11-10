@@ -262,7 +262,7 @@ workflow pins need the annotation.
 > | 1.19 | 3.1.9 | 3.18.4 | 5.7.0 | |
 >
 > Rows 1.20 through 1.22 come from the
-> [Red Hat OpenShift GitOps compatibility and support matrix](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.22/html/release_notes/gitops-release-notes),
+> [Red Hat OpenShift GitOps compatibility and support matrix](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/latest/html/release_notes/gitops-release-notes),
 > which carries the three most recent releases. Hub and managed cluster support for Red Hat
 > Advanced Cluster Management is in the
 > [2.17 support matrix](https://access.redhat.com/articles/7142376), published per version.
@@ -1184,7 +1184,7 @@ oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 
 ### Documentation
 - `scripts/README.md`
-- [OpenShift GitOps Documentation](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.22/html/understanding_openshift_gitops/index)
+- [OpenShift GitOps Documentation](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/latest/html/understanding_openshift_gitops/index)
 - [Red Hat Advanced Cluster Management Policy Framework](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes/)
 
 ### Training
