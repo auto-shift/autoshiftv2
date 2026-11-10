@@ -36,7 +36,7 @@ Nothing below is vendored. A fresh clone can run none of the gates until these a
 | Tool | Needed for | Get it |
 |---|---|---|
 | `helm`, `git`, `yq` | rendering, release tooling | `make validate` checks these three |
-| `go` | the validation suite | version comes from `tools/go.mod` |
+| `go` | the validation suite | version from `tools/go.mod`; needs `GOTOOLCHAIN=auto` to fetch it |
 | kustomize + PolicyGenerator | rendering any PolicyGenerator policy | `make install-policy-generator`, stages both into `.tools/` |
 | `gitleaks` | the pre-commit secret scan | the hook warns and continues when absent |
 | `vale`, `zensical` | the prose and docs build gates | in the devcontainer; run `vale sync` first, the rules are not in the repo |
@@ -57,11 +57,10 @@ make test                       # the validation suite, what CI's validate-polic
 make verify                     # make test + helm lint + prose lint + docs build
 ```
 
-`make test` is the one command after changing `policies/`, `autoshift/values/` or `tools/`; it wraps
-`cd tools && go test -tags integration ./...`, which is what CI's `validate-policies` job runs, and
-CI adds only `govulncheck`. The pre-commit hook runs it plus gitleaks and helm lint. `make verify`
-adds helm lint on every chart, Vale and the docs build, which report skipped without the
-devcontainer.
+`make test` is the one command after changing `policies/`, `autoshift/values/` or `tools/`. It is
+what CI's `validate-policies` job runs, and CI adds only `govulncheck`; the pre-commit hook adds
+gitleaks and helm lint. `make verify` adds helm lint on every chart, Vale and the docs build, which
+report skipped outside the devcontainer.
 
 - `helm template` release names must be 11 characters or fewer. The default `release-name` produces
   a 21-character policy namespace and trips the naming validator.
@@ -89,9 +88,8 @@ devcontainer.
   Compliant. Most existing policies still mask it. [Failing on missing input](docs/policy-behavior.md#failing-on-missing-input).
 - **Do not edit `tools/internal/resolver/e2e_test.go`** to make a policy pass. Fix the policy, or add
   a testdata stub.
-- **Never run an SVG optimizer over `docs/diagrams/`.** Each `.drawio.svg` carries its own editable
-  source in an attribute that optimizers strip. The picture survives, the source does not, and the
-  loss is invisible until someone tries to edit.
+- **Never run an SVG optimizer over `docs/diagrams/`.** It strips the editable source each
+  `.drawio.svg` carries, and the loss is invisible until someone tries to edit.
 
 ## Authoring a policy
 
@@ -104,8 +102,8 @@ Scaffold first, then customize. Do not hand-write a policy directory.
 
 Most policies are PolicyGenerator directories holding `policy-generator-config.yaml` (the policy
 graph), `kustomization.yaml`, `placement.yaml` authored in full, a `manifests/` directory, a `test/`
-directory of inform-only assertions, and a `README.md`. The annotated layout is in the
-[developer guide](docs/developer-guide.md).
+directory of inform-only assertions, and a `README.md`. The annotated layout and the full
+walkthrough are in the [developer guide](docs/developer-guide.md).
 
 Four Helm holdouts remain and keep the older chart shape: `cluster-config-maps`, `cluster-labels`,
 `openshift-gitops`, `policy-foundation`.
@@ -124,13 +122,13 @@ Conventions:
   bundled into an enforcing one. A root `remediationAction` overrides its children.
 - New policy directories need a `README.md`.
 
-The full walkthrough, from researching an operator to deploying it, is in the
-[developer guide](docs/developer-guide.md).
-
 ## Hub templates
 
-Hub templates (`{{hub ... hub}}`) resolve on the hub before distribution; regular `{{ ... }}`
-resolve on the managed cluster. Both must be escaped inside a Helm chart:
+Hub templates (`{{hub ... hub}}`) resolve on the hub that placed the policy, which for a managed hub
+is its parent hub; regular `{{ ... }}` resolve where the policy lands. Read the target's own
+clusters, Routes, Secrets and live objects with regular templates, and never read a Secret with a
+hub-template `lookup`: [where a hub template resolves](docs/developer-guide.md#where-a-hub-template-resolves).
+Both kinds must be escaped inside a Helm chart:
 
 ```yaml
 '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/some-label" | default "value" {{ "hub}}" }}'
@@ -150,20 +148,22 @@ Three rules cause most of the breakage:
 Hub templates do not support Go comments; `{{hub /* ... */ hub}}` is a parse error. Use `{{/* */}}`
 only in `object-templates-raw`, written as exactly `{{- /*` with one space.
 
-Full pitfalls and function guidance: [developer guide](docs/developer-guide.md#hub-template-pitfalls).
-Runtime behavior the suite cannot catch, including `musthave` merge and create semantics and the
-version-dependent Sprig function set, is in [docs/policy-behavior.md](docs/policy-behavior.md). Read
-that page before writing a policy that depends on overriding existing state.
+With Red Hat Advanced Cluster Management installed, `oc` can resolve `machines`, `machinesets` and
+`applications` to the wrong group and report nothing. Write the full names, such as
+`applications.argoproj.io`, and keep the group in every `lookup`:
+[short resource names](docs/developer-guide.md#short-resource-names-that-red-hat-advanced-cluster-management-shadows).
+
+Full pitfalls: [developer guide](docs/developer-guide.md#hub-template-pitfalls). Read
+[docs/policy-behavior.md](docs/policy-behavior.md), runtime behavior the suite cannot catch such as
+`musthave` merge semantics and the Sprig function set, before overriding existing state.
 
 ## Validation suite
 
 `make test` runs the end-to-end pipeline over every policy chart, the top-level chart against every
-values profile, a mutation sweep that proves those checks report a deliberate defect rather than only
-passing on clean input, a check that no `ConfigurationPolicy` applies nothing in every profile (one
-with nothing to apply reports Compliant, and there is no allowlist), policy-name length, agreement
-with `versions.yaml`, and the unit tests. Every policy chart resolves against five cluster profiles,
-the primary hub plus one per `autoshift/values/clusters/_example-cluster-install-*.yaml`; a new
-variant file adds a profile with no test-code change.
+values profile, a mutation sweep proving those checks catch a deliberate defect, a check that no
+`ConfigurationPolicy` applies nothing (one that does reports Compliant; no allowlist), policy-name
+length, `versions.yaml` agreement, and the unit tests. Policy charts resolve against the primary hub
+plus one profile per `autoshift/values/clusters/_example-cluster-install-*.yaml`.
 
 **The suite renders only what the example values declare.** A branch gated on a config key that no
 `_example*.yaml` sets never renders, so it is never checked. Declare the key rather than leaving it

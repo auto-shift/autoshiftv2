@@ -5,21 +5,55 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Red Hat catalogs change without a commit here: a channel is retired, a vendor stops publishing
+  # for the current OpenShift minor. The weekly run regenerates and dry-runs the release imageset so
+  # that surfaces before release day rather than in a customer's mirror.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
 
 jobs:
+  # The gitleaks binary rather than gitleaks-action: the action needs a GITLEAKS_LICENSE secret for an
+  # organization repository, and a pull request from a fork gets no secrets, so it failed every
+  # outside contribution.
   secret-scan:
     runs-on: ubuntu-latest
+    env:
+      # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
+      GITLEAKS_VERSION: "8.30.1"
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v3
+      - name: Install gitleaks
+        run: |
+          v="${GITLEAKS_VERSION}"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${v}"
+          cd /tmp
+          curl -fsSLO "${base}/gitleaks_${v}_linux_x64.tar.gz"
+          curl -fsSL "${base}/gitleaks_${v}_checksums.txt" | grep " gitleaks_${v}_linux_x64.tar.gz$" | sha256sum -c -
+          tar xzf "gitleaks_${v}_linux_x64.tar.gz" gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      # Only the commits this event adds, as the action did. Older history holds findings that
+      # predate the scan and are not this change's to fix. A scheduled or manual run adds no
+      # commits, so it has nothing to scan.
+      - name: Scan the commits this event adds
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) range="${PR_BASE}..${PR_HEAD}" ;;
+            push)         range="${PUSH_BEFORE}..${GITHUB_SHA}" ;;
+            *)            echo "A ${EVENT} run adds no commits; nothing to scan."; exit 0 ;;
+          esac
+          gitleaks git --redact --no-banner --log-opts="${range}" .
 
   lint-and-test:
     runs-on: ubuntu-latest
@@ -33,7 +67,7 @@ jobs:
           # Dependabot bumps the action (azure/setup-helm@v5) but never a `with:` input, so this
           # pin is Renovate's. versions.yaml holds the value and TestVersionPins enforces it.
           # renovate: datasource=github-releases depName=helm/helm
-          version: v3.19.4
+          version: v4.2.4
 
       - name: Dry-run packaging
         run: |
@@ -138,7 +172,7 @@ jobs:
           # Dependabot bumps the action (azure/setup-helm@v5) but never a `with:` input, so this
           # pin is Renovate's. versions.yaml holds the value and TestVersionPins enforces it.
           # renovate: datasource=github-releases depName=helm/helm
-          version: v3.19.4
+          version: v4.2.4
 
       - name: Run govulncheck
         working-directory: tools
@@ -173,6 +207,10 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: registry.access.redhat.com/ubi9/ubi:latest
+    # The release imageset needs registry.redhat.io to resolve dependencies and check channels.
+    # Pull requests from forks get no secrets, so they skip the mirror steps and say so.
+    env:
+      PULL_SECRET: ${{ secrets.PULL_SECRET }}
     steps:
       - name: Install git
         run: dnf -y install git
@@ -192,11 +230,30 @@ jobs:
           cache: true
           cache-dependency-path: tools/go.sum
 
+      - name: Setup Red Hat registry pull secret
+        if: ${{ env.PULL_SECRET != '' }}
+        run: |
+          mkdir -p ~/.docker
+          echo "$PULL_SECRET" > ~/.docker/config.json
+          chmod 600 ~/.docker/config.json
+
+      - name: Note the skipped imageset check
+        if: ${{ env.PULL_SECRET == '' }}
+        run: |
+          echo "::warning::No PULL_SECRET (fork pull request): the release imageset was not generated or verified"
+
       # Everything a real release does except push: sync values, stamp versions, generate the
       # policy list, install kustomize and PolicyGenerator, package the charts, render every
-      # PolicyGenerator directory into a Helm chart, and build the artifacts.
+      # PolicyGenerator directory into a Helm chart, and build the artifacts, including the
+      # imageset, which fails on a channel or package the catalog no longer has.
       - name: Run the release with the push skipped
-        run: make release DRY_RUN=true VERSION=0.0.0-ci
+        run: make release DRY_RUN=true VERSION=0.0.0-ci INCLUDE_MIRROR=${{ env.PULL_SECRET != '' }}
+
+      # Generating the imageset proves the values; this proves oc-mirror can resolve every catalog,
+      # package, channel and image in it, which is what a customer's mirror run does first.
+      - name: Dry-run oc-mirror against the release imageset
+        if: ${{ env.PULL_SECRET != '' }}
+        run: make verify-imageset DRY_RUN=true VERSION=0.0.0-ci
 
       # A step that silently produces nothing still exits 0, so assert the output rather than
       # trusting the exit status: every policy in policy-list.txt must have a packaged chart.

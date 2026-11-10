@@ -1,6 +1,11 @@
 object-templates-raw: |
+  {{hub $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $upgradeCfg := (index $config "openshift-upgrade" | default dict) hub}}
+  {{hub- $upgradeGraphUrl := (index $upgradeCfg "upgradeGraphUrl" | default "https://api.openshift.com/api/upgrades_info/v1/graph") hub}}
   {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
-  {{- $upstream := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-upstream" | default "https://api.openshift.com/api/upgrades_info/v1/graph" hub}}" }}
+  {{- $upstream := "{{hub $upgradeGraphUrl hub}}" }}
+  {{- $allowConditional := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-allow-conditional" | default "false" hub}}" }}
   {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
   {{- $current := "" }}
   {{- range $h := (index $status "history" | default list) }}
@@ -10,15 +15,25 @@ object-templates-raw: |
   {{- range $c := (index $status "conditions" | default list) }}
   {{-   if and (eq (index $c "type") "Progressing") (eq (index $c "status") "True") }}{{- $progressing = true }}{{- end }}
   {{- end }}
-  {{- /* Image is never authored in git — read it from the cluster's availableUpdates so musthave
-         overwrites a stale desiredUpdate.image. Version-only leaves the old digest and CVO refuses
-         to start. */ -}}
+  {{- /* Image is never authored in git. Read it from availableUpdates so musthave overwrites a
+         stale desiredUpdate.image. Version-only leaves the old digest and CVO refuses to start.
+         When openshift-upgrade-allow-conditional is true, a Recommended False target is taken from
+         conditionalUpdates instead. */ -}}
   {{- $image := "" }}
   {{- range $u := (index $status "availableUpdates" | default list) }}
   {{-   $cand := (index $u "image" | default "") }}
   {{-   if and (eq $image "") (eq (index $u "version") $target) (ne $cand "") }}
     {{- $image = $cand }}
   {{- end }}
+  {{- end }}
+  {{- if and (eq $allowConditional "true") (eq $image "") }}
+  {{-   range $u := (index $status "conditionalUpdates" | default list) }}
+  {{-     $rel := (index $u "release" | default dict) }}
+  {{-     $cand := (index $rel "image" | default "") }}
+  {{-     if and (eq $image "") (eq (printf "%v" (index $rel "version" | default "") | trim) $target) (ne $cand "") }}
+    {{- $image = $cand }}
+  {{-     end }}
+  {{-   end }}
   {{- end }}
   {{- if and (ne $target "") (or (eq $current "") (semverCompare (printf "> %s" $current) $target)) }}
   - complianceType: musthave

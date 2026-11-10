@@ -148,10 +148,10 @@ documentation checks cannot run.
 |------|---------|------------|-------------|
 | Git | 2.x or later | Everything | Pre-installed on most systems |
 | Helm | 3.x | Rendering charts, `make lint` | [Install Helm](https://helm.sh/docs/intro/install/) |
-| Go | As declared in `tools/go.mod` | The validation suite, and installing kustomize | [Install Go](https://go.dev/doc/install) |
+| Go | As declared in `tools/go.mod` | The validation suite, and installing kustomize | [Install Go](https://go.dev/doc/install), and see the note below on `GOTOOLCHAIN` |
 | kustomize and PolicyGenerator | kustomize v5.8.1 | Rendering any PolicyGenerator policy | `make install-policy-generator` |
 | yq | Latest | Release tooling | `brew install yq` |
-| gitleaks | 8.24.3 | The pre-commit secret scan | [Releases](https://github.com/gitleaks/gitleaks/releases) |
+| gitleaks | 8.30.1 | The pre-commit secret scan | [Releases](https://github.com/gitleaks/gitleaks/releases) |
 | Vale | 3.17.1 | The prose check | `brew install vale`, then `vale sync` |
 | Zensical | Pinned in `docs/requirements.txt` | The documentation site build | `pip install -r docs/requirements.txt` |
 | OpenShift CLI | Latest | Working against a live cluster | [Download oc](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli) |
@@ -162,6 +162,26 @@ and cluster access are needed to deploy one.
 
 `make validate` checks for Helm, yq, and Git only, so a passing result does not mean the validation
 suite can run. Confirm Go separately.
+
+#### Go and `GOTOOLCHAIN`
+
+`tools/go.mod` pins an exact Go version, and an installed Go older than that one refuses to build
+the suite rather than upgrading itself:
+
+```text
+go: go.mod requires go >= 1.26.9 (running go 1.26.8; GOTOOLCHAIN=local)
+```
+
+The message names the cause: `GOTOOLCHAIN=local` forbids Go from fetching another toolchain. Some
+distributions and corporate images set it. Go's default is `auto`, which downloads exactly the
+version `tools/go.mod` pins and leaves the system installation alone:
+
+```bash
+export GOTOOLCHAIN=auto
+```
+
+Set it in your shell profile, or run `go env -w GOTOOLCHAIN=auto` once. This affects
+`make install-policy-generator` as well, since that target shells out to `go install`.
 
 #### kustomize and the PolicyGenerator plugin
 
@@ -446,6 +466,36 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 ```
 
 ### Hub template pitfalls
+
+#### Where a hub template resolves
+
+A hub template resolves on the hub that placed the policy, not on the cluster the policy lands on.
+On a self-managed hub those are the same cluster. On a managed hub in a hub of hubs they are not.
+Its parent hub placed the policy, so a hub-template `lookup` reads the parent. The policy then
+reports Compliant while built from the wrong cluster's objects.
+
+Split each read by what it describes:
+
+| Read | Template |
+|---|---|
+| The target's own labels and rendered config (`.ManagedClusterLabels`, `fromConfigMap` in the policy namespace) | Hub template |
+| Anything that lives on the target: its `ManagedCluster` objects, Routes, Secrets, live custom resources | Regular template |
+
+Pass hub-side settings to the regular template as JSON in a raw string, so no value needs quoting:
+
+```yaml
+{{hub- $want := dict "team" $team "agentNs" $agentNs hub}}
+{{- $want := fromJson `{{hub $want | toJson hub}}` }}
+{{- $live := (lookup "argoproj.io/v1beta1" "ArgoCD" $want.agentNs "example") | default dict }}
+```
+
+Never read a Secret with a hub-template `lookup`. Red Hat Advanced Cluster Management writes the
+resolved value into the replicated Policy, in the managed cluster's namespace, in plain text. Hub `fromSecret` encrypts its result, but it
+decrypts only into a Secret's `data` field. A regular template reads the Secret on the cluster that
+holds it, so the value never travels.
+
+`policies/stable/gitops-agent/` follows this split for its hub-side policies, which also run on
+managed hubs. Its README explains the reasoning.
 
 #### Trim markers (`{{-` / `{{hub-`) — the indentation rule
 
@@ -777,7 +827,7 @@ labels:
 - **disconnected-mirror**: ImageDigestMirrorSet and ImageContentSourcePolicy (ICSP), CatalogSources (name = `{source}-{suffix}`), OperatorHub disable
 - **Operator policies**: source ternary reads `disconnected-mirror` + `mirror-catalog-suffix` labels
 
-**ClusterImageSet note:** The Assisted Installer does NOT use ImageDigestMirrorSet (IDMS) — the ClusterImageSet `releaseImage` must point directly to the mirror registry. AutoShift handles this automatically when `disconnected.mirrorRegistry.url` is set.
+**ClusterImageSet note:** The Assisted Installer does NOT use ImageDigestMirrorSet (IDMS) — the ClusterImageSet `releaseImage` must point directly to the mirror registry. AutoShift handles this automatically when `disconnected.mirrorRegistry.host` is set.
 
 ```bash
 # Generate ImageSet for disconnected environments
@@ -835,14 +885,14 @@ Without the subscription-name label, scripts cannot:
 # Correct - scripts will detect this operator
 gitops: 'true'
 gitops-subscription-name: openshift-gitops-operator
-gitops-channel: gitops-1.21
+gitops-channel: gitops-1.22
 gitops-source: redhat-operators
 gitops-source-namespace: openshift-marketplace
 
 # Incorrect - scripts will NOT detect this operator (subscription-name missing)
 gitops: 'true'
 # gitops-subscription-name: openshift-gitops-operator  # Commented out!
-gitops-channel: gitops-1.21
+gitops-channel: gitops-1.22
 ```
 
 ## 🧪 Testing and Validation
@@ -1061,6 +1111,47 @@ oc logs -n open-cluster-management-agent-addon deployment/config-policy-controll
 # 12. Check events in operator namespaces
 oc get events -n OPERATOR_NAMESPACE --sort-by='.lastTimestamp'
 ```
+
+### Short resource names that Red Hat Advanced Cluster Management shadows
+
+Installing Red Hat Advanced Cluster Management adds the Cluster API custom resource definitions and
+the `app.k8s.io` Application definition. Each serves a resource with the same plural name as one
+that OpenShift or OpenShift GitOps already serves:
+
+| Name typed | Resource usually meant | Also served after the hub installation |
+|---|---|---|
+| `machines` | `machines.machine.openshift.io` | `machines.cluster.x-k8s.io` |
+| `machinesets` | `machinesets.machine.openshift.io` | `machinesets.cluster.x-k8s.io` |
+| `applications` | `applications.argoproj.io` | `applications.app.k8s.io` |
+
+From that point the short name is ambiguous, and `oc` can resolve it to the other API. The result
+is a wrong answer rather than an error. On a cluster whose nodes the Machine API manages, the
+Cluster API `machinesets` resource is empty:
+
+```
+$ oc get machinesets -n openshift-machine-api
+No resources found in openshift-machine-api namespace.
+
+$ oc get machinesets.machine.openshift.io -n openshift-machine-api
+NAME                              DESIRED   CURRENT   READY   AVAILABLE   AGE
+rhoai-qk2v6-worker-us-east-2a     3         3         3       3           13h
+```
+
+A command that worked while you built the cluster stops working when AutoShift takes it over, and
+the `MachineSet` objects appear to have vanished while you debug a node policy. An
+`oc annotate` or `oc patch` that names the short form can likewise act on nothing and still exit
+cleanly. Use the fully qualified name in scripts, documentation, and commands typed by hand:
+
+```bash
+oc get machines.machine.openshift.io -n openshift-machine-api
+oc get machinesets.machine.openshift.io -n openshift-machine-api
+oc get applications.argoproj.io -n openshift-gitops
+```
+
+Policies are not affected, because a template `lookup` always names the group and version, as the
+node policies do with `lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" ""`.
+That explicitness is load-bearing rather than stylistic. When you base a new lookup or manifest on
+a command from a terminal session, carry the full group across with it.
 
 ### Finding noncompliant policies
 
