@@ -1,0 +1,58 @@
+# Reference the custom ScrapeConfigs from the multicluster observability add-on so MCOA
+# distributes them to managed clusters. Without this the ScrapeConfig exists on the hub and is
+# never deployed anywhere.
+#
+# Read-modify-write against the live ClusterManagementAddOn, then mustonlyhave, rather than a
+# musthave patch. installStrategy.placements[].configs is a list MCOA owns: a musthave patch
+# carrying only our entries does not match the existing "global" placement, so it appends a SECOND
+# placement of the same name; a naive mustonlyhave would evict MCOA's own eight configs and stop
+# default collection entirely. Reading the live object and writing it back whole is the only shape
+# that both preserves MCOA's entries and lets a removal take effect.
+#
+# Ownership is by name prefix: everything this policy creates is autoshift-custom-*, so any config
+# outside that prefix is MCOA's and is preserved verbatim. That is a stronger marker than the
+# remote-write case in global-observability, where entries carry no distinguishing name.
+#
+# Depends on policy-acm-custom-metrics: the product docs warn that referencing a ScrapeConfig
+# before it exists leaves the add-on in a Deploying state.
+#
+# Mind the API groups, they differ per resource and a reference with the wrong group is ignored
+# without any error: ScrapeConfig is monitoring.rhobs, PrometheusRule is monitoring.coreos.com.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $custom := (dig "acm" "observability" "customMetrics" dict $cfg) hub}}
+  {{hub- $ours := "autoshift-custom-" hub}}
+  {{hub- $refs := list hub}}
+  {{hub- range $tier := (list "platform" "userWorkload") hub}}
+  {{hub- $t := (dig $tier dict $custom) hub}}
+  {{hub- if or (dig "names" (list) $t) (dig "matches" (list) $t) (dig "recording_rules" (list) $t) hub}}
+  {{hub- $refs = append $refs (dict "group" "monitoring.rhobs" "resource" "scrapeconfigs" "name" (printf "%s%s-metrics" $ours (lower $tier)) "namespace" "open-cluster-management-observability") hub}}
+  {{hub- end hub}}
+  {{hub- if (dig "recording_rules" (list) $t) hub}}
+  {{hub- $refs = append $refs (dict "group" "monitoring.coreos.com" "resource" "prometheusrules" "name" (printf "%s%s-rules" $ours (lower $tier)) "namespace" "open-cluster-management-observability") hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $live := (lookup "addon.open-cluster-management.io/v1alpha1" "ClusterManagementAddOn" "" "multicluster-observability-addon") | default dict hub}}
+  {{hub- if and $refs $live hub}}
+  {{hub- $spec := (dig "spec" dict $live) hub}}
+  {{hub- $newPlacements := list hub}}
+  {{hub- range $p := (dig "installStrategy" "placements" (list) $spec) hub}}
+  {{hub- $configs := list hub}}
+  {{hub- range $c := (dig "configs" (list) $p) hub}}
+  {{hub- if not (hasPrefix $ours (dig "name" "" $c)) hub}}{{hub- $configs = append $configs $c hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $r := $refs hub}}{{hub- $configs = append $configs $r hub}}{{hub- end hub}}
+  {{hub- $_ := set $p "configs" $configs hub}}
+  {{hub- $newPlacements = append $newPlacements $p hub}}
+  {{hub- end hub}}
+  {{hub- $is := (dig "installStrategy" dict $spec) hub}}
+  {{hub- $_ := set $is "placements" $newPlacements hub}}
+  {{hub- $_ := set $spec "installStrategy" $is hub}}
+  {{hub- $obj := set $live "spec" $spec hub}}
+  {{hub- $_ := unset $obj "status" hub}}
+  {{hub- $_ := unset $obj.metadata "managedFields" hub}}
+  - complianceType: mustonlyhave
+    recreateOption: IfRequired
+    objectDefinition: {{hub $obj | toRawJson hub}}
+  {{hub- end hub}}

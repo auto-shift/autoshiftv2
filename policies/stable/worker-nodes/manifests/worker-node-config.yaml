@@ -12,7 +12,6 @@ object-templates-raw: |
   {{- $systemReservedCpu := "{{hub index .ManagedClusterLabels "autoshift.io/worker-system-reserved-cpu" | default "250m" hub}}" }}
   {{- $kubeReservedMemory := "{{hub index .ManagedClusterLabels "autoshift.io/worker-kube-reserved-memory" | default "512Mi" hub}}" }}
   {{- $kubeReservedCpu := "{{hub index .ManagedClusterLabels "autoshift.io/worker-kube-reserved-cpu" | default "250m" hub}}" }}
-  {{- $evictionMemory := "{{hub index .ManagedClusterLabels "autoshift.io/worker-eviction-memory" | default "500Mi" hub}}" }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: machineconfiguration.openshift.io/v1
@@ -32,5 +31,8 @@ object-templates-raw: |
           kubeReserved:
             memory: {{ $kubeReservedMemory }}
             cpu: {{ $kubeReservedCpu }}
-          evictionHard:
-            memory.available: {{ $evictionMemory }}
+          {{- /* evictionHard is deliberately NOT set here. It replaces the kubelet default set
+                 rather than merging into it, so a partial map silently drops the thresholds it
+                 omits and the node stops evicting on disk. The kubelet defaults already satisfy
+                 the NIST kubelet-eviction-thresholds-set-hard-* rules, and the kubelet-eviction
+                 manual remediation is the one place that overrides them. */}}

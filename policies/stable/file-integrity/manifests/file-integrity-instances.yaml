@@ -1,0 +1,40 @@
+# NIST file-integrity-exists. The File Integrity Operator runs AIDE in a privileged daemon set on
+# each selected node and reports files that change after the initial baseline.
+#
+# Ship ONE instance covering every node, not one per role. Schedulable control plane nodes carry
+# both node-role.kubernetes.io/master and node-role.kubernetes.io/worker, so a master instance and a
+# worker instance run AIDE twice on the same node: wasted resources and duplicated node status. The
+# 4.22 documentation is explicit that a single CR whose nodeSelector targets each node once is the
+# right shape. instances is a list so an unusual layout can still be split, but keep the selectors
+# disjoint if you do.
+#
+# The toleration is what lets the daemon set reach tainted control plane nodes. Renders nothing
+# until config.fileIntegrity.instances is set.
+#
+# spec.config points at the ConfigMap holding the AIDE configuration. It defaults to the one
+# manifests/aide-config.yaml builds from the operator's own default; setting name or namespace on
+# an instance overrides that.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $fi := (dig "fileIntegrity" dict $cfg) hub}}
+  {{hub- range $inst := (dig "instances" (list) $fi) hub}}
+  {{hub- $iconf := (mergeOverwrite (dict "name" "autoshift-aide-conf" "namespace" "openshift-file-integrity") (dig "config" dict $inst)) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: fileintegrity.openshift.io/v1alpha1
+      kind: FileIntegrity
+      metadata:
+        name: {{hub $inst.name hub}}
+        namespace: openshift-file-integrity
+      spec:
+        config:
+          {{hub $iconf | toYaml | autoindent hub}}
+        debug: {{hub (dig "debug" false $inst) hub}}
+        nodeSelector:
+          {{hub (dig "nodeSelector" dict $inst) | toYaml | autoindent hub}}
+        {{hub- if (dig "tolerations" (list) $inst) hub}}
+        tolerations:
+          {{hub (dig "tolerations" (list) $inst) | toYaml | autoindent hub}}
+        {{hub- end hub}}
+  {{hub- end hub}}

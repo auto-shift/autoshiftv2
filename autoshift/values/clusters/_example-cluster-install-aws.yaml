@@ -78,6 +78,45 @@ clusters:
         #   - policyController
         #   - searchCollector
 
+        # --- Day 1 disk partitioning ---
+        # Partitioning Red Hat CoreOS is install-time only: Ignition's disk stage runs once, on
+        # first boot, so there is no day two equivalent. startMiB on the first partition sizes the
+        # root filesystem, because root grows only as far as the next partition. Container images
+        # live in /var/lib/containers and stay on root unless /var is a partition of its own, so
+        # /var takes the rest of the disk with a sizeMiB of 0. Without it the images sit on a root
+        # capped at 25GiB and the node reports DiskPressure before the install finishes.
+        # diskPartitions:
+        #   device: '/dev/nvme0n1'
+        #   allowMultiple: true
+        #   roles:
+        #     - 'master'
+        #     - 'worker'
+        #   partitions:
+        #     - label: 'varlog'
+        #       mountPath: '/var/log'
+        #       startMiB: 25000
+        #       sizeMiB: 4000
+        #     - label: 'varlogaudit'
+        #       mountPath: '/var/log/audit'
+        #       startMiB: 29000
+        #       sizeMiB: 4000
+        #     - label: 'varlogkubeapi'
+        #       mountPath: '/var/log/kube-apiserver'
+        #       startMiB: 33000
+        #       sizeMiB: 4000
+        #     - label: 'varlogoauthapi'
+        #       mountPath: '/var/log/oauth-apiserver'
+        #       startMiB: 37000
+        #       sizeMiB: 2000
+        #     - label: 'varlogopenshiftapi'
+        #       mountPath: '/var/log/openshift-apiserver'
+        #       startMiB: 39000
+        #       sizeMiB: 2000
+        #     - label: 'var'
+        #       mountPath: '/var'
+        #       startMiB: 41000
+        #       sizeMiB: 0
+
       # =====================================================================
       # AWS — platform-specific config
       # =====================================================================
@@ -92,6 +131,8 @@ clusters:
         # sshPublicKey: 'ssh-ecdsa AAAAE2...'        # OR inline public key instead of sshKeyRef
         fips: true                                    # default: false (requires ECDSA or RSA keys)
         networkType: OVNKubernetes                    # default: OVNKubernetes
+        zones:                                        # default: every zone in the region
+          - 'us-east-1a'                              # each zone costs one NAT gateway + one Elastic IP
 
         # --- Control Plane ---
         controlPlane:
@@ -114,8 +155,9 @@ clusters:
         # --- Single-node OpenShift (SNO) ---
         # For a SNO cluster set controlPlane.replicas: 1 and workers.replicas: 0.
         # The single node runs both the control plane and all workloads, so size
-        # the controlPlane instanceType accordingly (m5.2xlarge minimum). SNO also
-        # provisions into a single AZ, using only one NAT gateway / Elastic IP.
+        # the controlPlane instanceType accordingly (m5.2xlarge minimum). SNO still
+        # spreads the network over every zone in the region unless zones is set;
+        # pin one zone to use a single NAT gateway and Elastic IP.
 
       # =====================================================================
       # Disconnected — optional, same as baremetal
