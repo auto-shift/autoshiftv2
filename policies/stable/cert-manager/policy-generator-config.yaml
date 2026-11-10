@@ -50,17 +50,31 @@ policies:
       - name: policy-cert-manager-operator-install
     manifests:
       - path: manifests/ca
-  # Opt-in (cert-manager-acme-issuer): ACME ClusterIssuer with supporting secrets and CertManager DNS01
-  # controller config. Pass-through spec (config.certManager.acmeIssuer.issuer.spec) — any ACME provider /
-  # solver combination works. Point config.certManager.{apiCert,ingressCert}.issuer.name at the new issuer.
-  - name: policy-cert-manager-acme-issuer
+  # Opt-in (cert-manager-issuers): ClusterIssuers from config.certManager.issuers (any issuer type; spec
+  # passed through), plus cert-manager controller args from config.certManager.controller.overrideArgs.
+  # Point config.certManager.{apiCert,ingressCert}.issuer.name at an issuer created here.
+  - name: policy-cert-manager-issuers
     placement:
-      placementPath: placement-cert-manager-acme-issuer.yaml
+      placementPath: placement-cert-manager-issuers.yaml
     consolidateManifests: false
+    # None: disabling the policy must not delete issuers that Certificates depend on.
+    pruneObjectBehavior: None
     dependencies:
       - name: policy-cert-manager-operator-install
     manifests:
-      - path: manifests/acme-issuer
+      - path: manifests/issuers
+    # A fail on the managed cluster reports the whole ConfigurationPolicy as JSON before its text.
+    # Strip that so the message reads as the reason. Messages without a fail pass through unchanged.
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
+  # inform: each issuer is Ready, which for ACME means the account registered (catches a bad EAB key).
+  # No dependency on policy-cert-manager-issuers: a broken issuer is exactly when this check matters.
+  - name: policy-cert-manager-issuers-ready
+    placement:
+      placementPath: placement-cert-manager-issuers.yaml
+    remediationAction: inform
+    manifests:
+      - path: test/issuers-ready.yaml
   # Opt-in (cert-manager-api-cert): cert-manager-managed API server serving cert. ADDITIVE namedCertificate
   # (SNI, api.<domain> only — never api-int). Only patches APIServer once the Certificate is Ready (gated in
   # the manifest). object-templates-raw -> consolidateManifests: false.
