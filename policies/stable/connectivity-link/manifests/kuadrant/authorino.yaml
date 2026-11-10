@@ -1,45 +1,61 @@
 # Cluster-wide Authorino. MaaS talks to Authorino to authorise API keys.
 #
-# listener.tls follows the certificate rather than being set once, because the
-# three pieces are circular: Authorino will not start without the certificate,
-# the certificate is issued by OpenShift's service-ca in response to an
-# annotation on the Authorino Service, and that Service does not exist until
-# Authorino starts. Asking for TLS up front therefore guarantees it never
-# comes up, and leaves no Service in the namespace to annotate:
+# The spec is a base (cluster-wide, one replica, OIDC server without TLS) with
+# config.connectivity-link.authorino from the cluster's rendered-config merged
+# over it, so replicas, logLevel, logMode, evaluatorCacheSize, tracing, volumes
+# and any other Authorino spec field can be set per clusterset or cluster. Maps
+# merge key by key and config wins. It is the same config.connectivity-link key
+# the version pin reads.
+#
+# listener.tls is the one field config cannot set. It follows the certificate
+# rather than being set once, because the three pieces are circular: Authorino
+# will not start without the certificate, the certificate is issued by
+# OpenShift's service-ca in response to an annotation on the Authorino Service,
+# and that Service does not exist until Authorino starts. Asking for TLS up front
+# therefore guarantees it never comes up, and leaves no Service in the namespace
+# to annotate:
 #
 #   Ready=False AuthorinoNotReady: listener secret name authorino-server-cert
 #   not found
 #
-# A managed-side lookup resolves this without a second policy. TLS is off
-# until the Secret exists and on once it does, so the sequence runs itself:
-# Authorino starts, the Service appears, policy-rhcl-authorino-cert annotates
-# it, service-ca issues the Secret, this policy re-evaluates and enables TLS.
+# A managed-side lookup resolves this without a second policy. TLS is off until
+# the Secret exists and on once it does, so the sequence runs itself: Authorino
+# starts, the Service appears, policy-rhcl-authorino-cert annotates it,
+# service-ca issues the Secret, this policy re-evaluates and enables TLS. Other
+# listener fields from config (ports, timeout) are kept; a configured
+# listener.tls is dropped.
 #
-# Note spec.listener.tls is a REQUIRED field, so it cannot simply be omitted
-# and left to the operator's default, and complianceType musthave merges —
-# removing the field from this file would not remove it from a cluster that
-# already has it set. Driving the value is the only thing that actually
-# converges.
-#
-# Two enforcing policies must not both own this field; they would fight over
-# it on every evaluation.
-apiVersion: operator.authorino.kuadrant.io/v1beta1
-kind: Authorino
-metadata:
-  name: authorino
-  namespace: kuadrant-system
-spec:
+# spec.listener.tls is a REQUIRED field, so it cannot simply be omitted and left
+# to the operator's default, and complianceType musthave merges, so removing the
+# field would not remove it from a cluster that already has it set. Driving the
+# value is the only thing that actually converges. Two enforcing policies must
+# not both own this field; they would fight over it on every evaluation.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $spec := (`
   clusterWide: true
   replicas: 1
-  listener:
-    tls:
-      # A quoted template piped through toLiteral, not a bare {{ if }}: this is
-      # a plain manifest that PolicyGenerator parses as YAML at build time, so
-      # a standalone template line is a parse error, and an unquoted one makes
-      # the value a string where the CRD wants a boolean.
-      enabled: '{{ (not (empty (lookup "v1" "Secret" "kuadrant-system" "authorino-server-cert"))) | ternary "true" "false" | toLiteral }}'
-      certSecretRef:
-        name: authorino-server-cert
   oidcServer:
     tls:
-      enabled: false
+      enabled: false` | fromYaml) hub}}
+  {{hub- $spec = (mergeOverwrite $spec (dig "connectivity-link" "authorino" (dict) $cfg)) hub}}
+  {{hub- $listener := (omit (dig "listener" (dict) $spec) "tls") hub}}
+  {{hub- $spec = (omit $spec "listener") hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.authorino.kuadrant.io/v1beta1
+      kind: Authorino
+      metadata:
+        name: authorino
+        namespace: kuadrant-system
+      spec:
+        {{hub $spec | toYaml | autoindent hub}}
+        listener:
+          {{hub- if $listener hub}}
+          {{hub $listener | toYaml | autoindent hub}}
+          {{hub- end hub}}
+          tls:
+            enabled: {{ not (empty (lookup "v1" "Secret" "kuadrant-system" "authorino-server-cert")) }}
+            certSecretRef:
+              name: authorino-server-cert

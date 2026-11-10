@@ -94,6 +94,29 @@ turns TLS on. Three details make this the only arrangement that converges:
 The certificate comes from service-ca, not from cert-manager, as in the Red Hat procedure for MaaS:
 the Envoy-to-Authorino connection is trusted through the cluster's internal CA bundle.
 
+## Configuration
+
+The `Authorino` and `Kuadrant` specs are read from `config.connectivity-link`, the same key the
+version pin uses, and merged over the policy's base. Maps merge key by key, the configured value
+wins, and a field removed from config returns to the base.
+
+```yaml
+hubClusterSets:
+  hub:
+    config:
+      connectivity-link:
+        authorino:            # base: clusterWide true, replicas 1, oidcServer TLS off
+          replicas: 2
+          logLevel: debug
+        kuadrant:             # base: observability.enable true
+          observability:
+            enable: true
+```
+
+`authorino.listener.tls` is the exception: it always follows the service-ca certificate, as
+described in the previous section, so a configured value is dropped. Other `listener` fields are
+kept.
+
 ## Operator memory, set on the Subscription
 
 On Connectivity Link 1.5 the `kuadrant-operator-controller-manager` is OOMKilled at its shipped
@@ -119,6 +142,22 @@ oc get deploy kuadrant-operator-controller-manager -n openshift-operators \
 Connectivity Link 1.5 includes the MCP Gateway Operator. The Kuadrant Operator deploys it through
 `KuadrantControlPlane`, with the other components, so no separate Operator is installed for it. The
 MCP catalog in Red Hat OpenShift AI needs it. On 1.4 it is not included.
+
+## Disconnected
+
+Connectivity Link supports disconnected installs
+([Install Connectivity Link, chapter 2](https://access.redhat.com/documentation/en-us/red_hat_connectivity_link/1.5/html-single/install_connectivity_link/index#con-rhcl-install-disconnected_rhcl-install-disconnected)).
+On 1.5 the Kuadrant Operator deploys the Authorino, Limitador, DNS and MCP Gateway components from
+images that are also the `rhcl-operator` bundle's related images, so mirroring `rhcl-operator` with
+oc-mirror brings all of them. Two things to cover in the mirror configuration:
+
+- The gateway's `wasm-shim` image is pulled from `registry.access.redhat.com/rhcl-1/`, not
+  `registry.redhat.io`. An `ImageDigestMirrorSet` that covers only `registry.redhat.io` misses it,
+  and the pod sits in `ImagePullBackOff`. The `config.disconnected.mirrors` example in the
+  [developer guide](../../../docs/developer-guide.md) lists both registries.
+- The Istio images behind the OpenShift Gateway API provider are not in the Connectivity Link
+  catalog. They come from the cluster's release image set, so they need to be in the platform
+  mirror.
 
 ## Verifying
 
