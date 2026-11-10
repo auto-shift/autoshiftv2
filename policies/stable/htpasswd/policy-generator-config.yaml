@@ -2,13 +2,22 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: PolicyGenerator
 metadata:
   name: htpasswd
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`
+# runs. They live here and in placement.yaml, never in manifests/, whose hub templates contain
+# `$vars` that substitution would clobber.
+#
+# Both policies share placement.yaml, which is why placementBindingDefaults.name is set.
 placementBindingDefaults:
   name: binding-policy-htpasswd
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
   remediationAction: ${REMEDIATION}
   severity: high
   consolidateManifests: false
+  # None: removing this policy must not touch the OAuth identity provider list or revoke
+  # cluster-admin from people using it. Removal is a deliberate act.
+  pruneObjectBehavior: None
   evaluationInterval:
     compliant: ${EVAL_COMPLIANT}
     noncompliant: ${EVAL_NONCOMPLIANT}
@@ -24,3 +33,14 @@ policies:
   - name: policy-htpasswd
     manifests:
       - path: manifests/htpasswd
+    # A fail on the managed cluster reports the whole ConfigurationPolicy as JSON before its text.
+    # Strip that so the message reads as the reason. Messages without a fail pass through unchanged.
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
+  # Separate inform policy: a root remediationAction overrides its children, so an assertion cannot
+  # be bundled inside an enforcing one. No dependency on policy-htpasswd: a missing Secret is exactly
+  # when this check matters, and a dependency would hold it Pending whenever policy-htpasswd failed.
+  - name: policy-htpasswd-ready
+    remediationAction: inform
+    manifests:
+      - path: test/htpasswd-ready.yaml

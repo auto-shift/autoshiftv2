@@ -559,8 +559,15 @@ hubClusterSets:
       # =======================================================================
       # HTPasswd Identity Provider - policy: htpasswd
       # =======================================================================
-      # One HTPasswd identity provider per providers[] entry. The OAuth CR is patched
-      # with musthave, so identity providers managed outside AutoShift are left in place.
+      # One HTPasswd identity provider per providers[] entry (at least one is required).
+      #
+      # OWNERSHIP: where this policy is placed, AutoShift owns EVERY HTPasswd identity
+      # provider on the cluster. Non-HTPasswd providers (LDAP, OIDC, ...) are left in
+      # place; an HTPasswd provider added by hand is removed, so declare it here instead.
+      # Renaming a provider or changing its secretName replaces the old entry.
+      #
+      # A provider is only added to OAuth once its Secret exists, and is removed again if
+      # the Secret is deleted. policy-htpasswd-ready reports a missing Secret by name.
       #
       # SECRETS: the htpasswd file for each provider is a Secret in openshift-config.
       # These MUST be pre-created on each spoke cluster — either manually or via
@@ -593,7 +600,9 @@ hubClusterSets:
         providers:
           - name: 'Cluster Admins'              # display name shown on the login page
             secretName: 'cluster-admins-htpass' # existing Secret in openshift-config
-        clusterAdmins:                          # granted a cluster-admin ClusterRoleBinding
+        # Members of the Group autoshift-cluster-admins, which is bound to cluster-admin.
+        # The list is authoritative: removing a name revokes that user's cluster-admin.
+        clusterAdmins:
           - admin
 
       # =======================================================================
