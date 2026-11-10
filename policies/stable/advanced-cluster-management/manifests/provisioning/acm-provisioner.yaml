@@ -1,9 +1,20 @@
+# metal3 Provisioning CR for CIM/bare-metal provisioning, with no provisioning network.
+#
+# config.acm.provisioning.provisioningIP (optional): Ironic's TLS certificate only gets an IP SAN
+# when provisioningIP is set. BMCs that use virtual media fetch the ISO from https://<ip>:6183, so
+# without it a BMC that verifies certificates rejects the certificate and the ISO never mounts, while
+# InsertMedia still returns 200. With provisioningNetwork Disabled, metal3 does NOT add this address
+# to any interface: it must be an address the node already has (on single-node hubs, the node IP).
+#
+# musthave: removing provisioningIP from config leaves the last value on the CR. Clear it by hand.
+# mustonlyhave is not an option, because the cluster-baremetal-operator manages other fields here.
+#
+# Reads rendered-config with fromConfigMap, so a missing ConfigMap fails rather than rendering the CR
+# without the address. A value that is not an IP address fails too, rather than leaving :6183 unbound.
 object-templates-raw: |
-  {{hub $policyNs := "${POLICY_NAMESPACE}" hub}}
-  {{hub- $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $rcData := (index $rcm "data" | default dict) hub}}
-  {{hub- $rcConfig := (index $rcData "config" | default "" | fromYaml | default dict) hub}}
-  {{hub- $provIP := (dig "acm" "provisioning" "provisioningIP" "" $rcConfig) hub}}
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- $provIP := (dig "acm" "provisioning" "provisioningIP" "" ($raw | fromYaml | default dict)) hub}}
+  {{hub- if and $provIP (not (or (regexMatch "^([0-9]{1,3}[.]){3}[0-9]{1,3}$" $provIP) (regexMatch "^[0-9a-fA-F:]*:[0-9a-fA-F:]*$" $provIP))) hub}}{{hub fail (printf "config.acm.provisioning.provisioningIP: %s is not an IPv4 or IPv6 address" $provIP) hub}}{{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: metal3.io/v1alpha1
@@ -13,10 +24,6 @@ object-templates-raw: |
       spec:
         provisioningNetwork: Disabled
         watchAllNamespaces: true
-  {{hub- if $provIP hub}}
-        # Ironic's TLS cert only gets an IP SAN when provisioningIP is set. BMCs fetch virtual-media
-        # ISOs from https://<ip>:6183, so without it a BMC that verifies certificates rejects the
-        # cert and the ISO never mounts. With provisioningNetwork Disabled, metal3 does NOT add this
-        # IP to any interface: it must be an address the node already has (on SNO, the node IP).
+        {{hub- if $provIP hub}}
         provisioningIP: '{{hub $provIP hub}}'
-  {{hub- end hub}}
+        {{hub- end hub}}
