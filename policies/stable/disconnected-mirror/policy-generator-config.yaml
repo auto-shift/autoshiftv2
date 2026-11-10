@@ -4,6 +4,7 @@ metadata:
   name: disconnected-mirror
 # Layout convention:
 #   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — inform-only assertions; never remediate
 # Each policy points at a single first-class ConfigurationPolicy FILE whose dense
 # object-templates-raw reads the per-cluster <cluster>.rendered-config ConfigMap on the hub.
 # All four policies share one hand-authored Placement (predicate autoshift.io/disconnected-mirror).
@@ -42,3 +43,14 @@ policies:
   - name: policy-disconnected-disable-catalogs
     manifests:
       - path: manifests/disable-default-catalogs.yaml
+  # Inform: mirrored catalogs are READY.
+  - name: policy-disconnected-mirror-test
+    remediationAction: inform
+    manifests:
+      - path: test/disconnected-mirror-test.yaml
+    customMessage:
+      noncompliant: >-
+        A mirrored operator catalog from config.disconnected.catalogs is not READY, so operator
+        Subscriptions that use it cannot resolve. Check its catalog pod in openshift-marketplace:
+        an index image that cannot be pulled or whose registry is not trusted stays in
+        TRANSIENT_FAILURE. This is expected briefly while catalog pods start.

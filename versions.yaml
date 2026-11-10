@@ -11,14 +11,15 @@
 # that appears in four places cannot drift in one of them. Change the value here and the test
 # names each file still holding the old one.
 #
-# Versions deliberately NOT pinned here: the OpenShift CLI follows a release channel, the Vale
-# rule package resolves on every `vale sync`, and `openshiftVersion` in the per-cluster examples
-# is sample data rather than a contract.
+# Versions deliberately NOT pinned here: the OpenShift CLI follows the stable channel of
+# inputs.openshift, which the scripts read from this file at run time; the Vale rule package
+# resolves on every `vale sync`; and `openshiftVersion` in the per-cluster examples is sample data
+# rather than a contract.
 
 inputs:
   openshift: '4.22'
   acm: '2.17'
-  gitops: '1.21'
+  gitops: '1.22'
 
 pins:
   - name: openshift-badge
@@ -27,6 +28,38 @@ pins:
     locations:
       - file: README.md
         pattern: 'badge/OpenShift-([0-9.]+)-red'
+
+  # The release the shipped profiles target. It is the upgrade target for any profile that enables
+  # openshift-upgrade and the one platform release the release imageset mirrors, so the profiles move
+  # together: bump it to a z-stream AutoShift has been run on.
+  - name: openshift-release
+    value: '4.22.18'
+    derivedFrom: openshift
+    locations:
+      - file: autoshift/values/clusters/_example.yaml
+        pattern: "openshift-version: '(\\S+)'"
+      - file: autoshift/values/clustersets/_example.yaml
+        pattern: "openshift-version: '(\\S+)'"
+      - file: autoshift/values/clustersets/hub-ambient.yaml
+        pattern: "openshift-version: '(\\S+)'"
+      - file: autoshift/values/clustersets/hub-baremetal-compact.yaml
+        pattern: "openshift-version: '(\\S+)'"
+      - file: autoshift/values/clustersets/hub-baremetal-sno.yaml
+        pattern: "openshift-version: '(\\S+)'"
+      - file: autoshift/values/clustersets/hub-minimal.yaml
+        pattern: "openshift-version: '(\\S+)'"
+      - file: autoshift/values/clustersets/hub.yaml
+        pattern: "openshift-version: '(\\S+)'"
+      - file: autoshift/values/clustersets/hub1.yaml
+        pattern: "openshift-version: '(\\S+)'"
+      - file: autoshift/values/clustersets/hub2.yaml
+        pattern: "openshift-version: '(\\S+)'"
+      - file: autoshift/values/clustersets/hubofhubs.yaml
+        pattern: "openshift-version: '(\\S+)'"
+      - file: autoshift/values/clustersets/managed.yaml
+        pattern: "openshift-version: '(\\S+)'"
+      - file: autoshift/values/clustersets/sbx.yaml
+        pattern: "openshift-version: '(\\S+)'"
 
   - name: acm-channel
     value: release-2.17
@@ -38,7 +71,7 @@ pins:
         pattern: '^  channel: (\S+)'
 
   - name: acm-version
-    value: advanced-cluster-management.v2.17.1
+    value: advanced-cluster-management.v2.17.3
     derivedFrom: acm
     locations:
       - file: autoshift/values/clustersets/_example.yaml
@@ -54,7 +87,7 @@ pins:
         pattern: '\| Red Hat Advanced Cluster Management \| ([0-9.]+) \|'
 
   - name: gitops-channel
-    value: gitops-1.21
+    value: gitops-1.22
     derivedFrom: gitops
     locations:
       - file: autoshift/values/clustersets/_example.yaml
@@ -63,14 +96,14 @@ pins:
         pattern: '^  channel: (\S+)'
 
   - name: gitops-version
-    value: openshift-gitops-operator.v1.21.4
+    value: openshift-gitops-operator.v1.22.2
     derivedFrom: gitops
     locations:
       - file: autoshift/values/clustersets/_example.yaml
         pattern: "gitops-version: '(\\S+)'"
 
   - name: gitops-badge
-    value: '1.21'
+    value: '1.22'
     derivedFrom: gitops
     locations:
       - file: README.md
@@ -78,30 +111,34 @@ pins:
       - file: README.md
         pattern: '\| Red Hat OpenShift GitOps \| ([0-9.]+) \|'
 
-  # Red Hat OpenShift GitOps 1.21 includes Argo CD 3.4.3, Helm 3.19.4 and kustomize 5.8.1.
+  # Red Hat OpenShift GitOps 1.22 includes Argo CD 3.5.3, Helm 4.2.4 and kustomize 5.8.1.
   # Rendering locally with a different Helm or kustomize than the repository server uses is how
-  # local output starts to diverge from the cluster.
+  # local output starts to diverge from the cluster. Helm 4 is a major bump: it removed the `-c`
+  # shorthand for `helm version --client`, which is what breaks the PolicyGenerator that Red Hat
+  # Advanced Cluster Management left behind in its subscription image.
   - name: argocd
-    value: 3.4.3
+    value: 3.5.3
     derivedFrom: gitops
     locations:
       - file: README.md
         pattern: '\| Argo CD ([0-9.]+), Helm'
 
-  # Red Hat Advanced Cluster Management 2.17 is released with multicluster engine 2.12.
+  # Red Hat Advanced Cluster Management 2.17 is released with multicluster engine 2.17: the two
+  # version lines were realigned at 2.17, where earlier releases paired 2.16 with 2.11 and so on.
+  # Read from a 2.17.3 hub, whose multicluster-engine subscription is on channel stable-2.17.
   - name: multicluster-engine
-    value: '2.12'
+    value: '2.17'
     derivedFrom: acm
     locations:
       - file: README.md
         pattern: '\| multicluster engine ([0-9.]+) \|'
 
   - name: helm
-    value: v3.19.4
+    value: v4.2.4
     derivedFrom: gitops
     locations:
       - file: .github/workflows/ci.yaml
-        pattern: '^          version: (v3\.\S+)'
+        pattern: '^          version: (v\S+)'
       - file: .gitlab-ci.yml
         pattern: 'HELM_VERSION: "(\S+)"'
       - file: .devcontainer/Containerfile
@@ -121,6 +158,20 @@ pins:
         pattern: '\| Kustomize \| (\S+) \|'
       - file: README.md
         pattern: 'Helm [0-9.]+, Kustomize ([0-9.]+) \|'
+
+  # The secret scan, in CI and in the devcontainer the pre-commit hook runs in. A currency pin:
+  # Renovate proposes each release through the annotations in both files. 8.19 or later is required
+  # for the `gitleaks git` command both use.
+  - name: gitleaks
+    value: 8.30.1
+    derivedFrom: none
+    locations:
+      - file: .github/workflows/ci.yaml
+        pattern: 'GITLEAKS_VERSION: "(\S+)"'
+      - file: .devcontainer/Containerfile
+        pattern: 'ARG GITLEAKS_VERSION=(\S+)'
+      - file: docs/developer-guide.md
+        pattern: '\| gitleaks \| (\S+) \|'
 
   # Pinned so rendered output cannot change without a change in this repository. Not tied to a
   # channel: v1.19.0 is simply the current release.
@@ -148,11 +199,14 @@ pins:
       - file: README.md
         pattern: '\| go-template-utils \| (\S+) \|'
 
-  # Floor set by go-template-utils, which requires go 1.25.0. The pin is the patched stdlib
-  # govulncheck requires (1.25 is out of support). Every workflow reads this through
-  # `go-version-file: tools/go.mod`, so the directive is the only place it is set.
+  # A CURRENCY pin, unlike most here: Go only builds the validation suite and installs tools, and
+  # nothing built with it runs on a cluster. CI gates on govulncheck against this exact release,
+  # so a Go security release turns CI red until the pin moves. Renovate proposes every release
+  # (renovate.json, "Go toolchain") across all three locations in one PR. The floor is
+  # go-template-utils, which requires go 1.25.0. Every workflow reads this through
+  # `go-version-file: tools/go.mod`, so the directive is the only place CI takes it from.
   - name: go
-    value: '1.26.9'
+    value: '1.27.3'
     derivedFrom: go-template-utils
     locations:
       - file: tools/go.mod

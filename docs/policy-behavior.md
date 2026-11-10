@@ -26,6 +26,29 @@ object list leaves both the old entry and the new one in place, and the policy s
 Compliant. This silently defeats configuration changes that look correct in git. When the desired
 state has to override an existing list entry, use `mustonlyhave`.
 
+**`mustonlyhave` does not reach metadata, so adopting an object inherits it.**
+"Must match exactly" applies to the fields the template gives. Where a policy
+names an object that already exists, it reconciles that object's spec and
+leaves metadata it was not told about alone — including `finalizers`.
+
+Measured on a live cluster: a hand-created ArgoCD `Application` carrying
+`resources-finalizer.argocd.argoproj.io` kept that finalizer after an
+enforcing `mustonlyhave` policy adopted it. The spec matched the template; the
+finalizer survived.
+
+This inverts an intuition worth naming, because it matters most where the
+stakes are highest:
+
+> "The object the policy manages is safer than the hand-made one" holds only
+> where the policy **creates** it. On adoption you inherit the existing
+> object's metadata — and the cluster that adopted is the one with history,
+> which is the one with state worth protecting.
+
+A migration that brings existing resources under policy management therefore
+does not clear whatever delete semantics, ownership or finalizers they already
+had. If those matter, check them explicitly after adoption rather than
+assuming the policy normalised them.
+
 **`musthave` combined with `enforce` creates objects that are absent.** A template guarded with a
 condition such as `(or (empty $lookup) ...)` does not skip the object when the lookup returns
 nothing. It creates an empty or partly populated resource instead. Guard the object out of the
@@ -106,14 +129,38 @@ guidance below as the target rather than a description of the current codebase.
   returns nil, and `| default dict` then turns that into silence.
 - **A missing key is still silent.** `fromConfigMap` reads the key with the found flag discarded, so
   a ConfigMap that exists without the key returns an empty string. Check a required key explicitly
-  rather than assuming the read failed loudly.
+  with `fail`, rather than assuming the read failed loudly:
+
+  ```yaml
+  {{hub $ca := (fromConfigMap $ns $name $key) hub}}
+  {{hub if not $ca hub}}
+  {{hub fail (printf "caRef: ConfigMap %s/%s has no key %s" $ns $name $key) hub}}
+  {{hub end hub}}
+  ```
+
+- **`fail` is available from Red Hat Advanced Cluster Management 2.14, but its message comes last.**
+  The policy reports `template-error; failed to resolve the template`, then the whole
+  `ConfigurationPolicy` as JSON, then your text. The compliance message is cut at 4096 bytes, so in a
+  template much larger than about 4 KB your text would be lost. On 2.13 and earlier the call fails as
+  an undefined function, which is still loud but does not carry your text.
+- **Strip the dump with `customMessage` when the `fail` runs on the managed cluster.** This pattern
+  leaves only your text, and it applies before the 4096-byte cut, so it works on a template of any
+  size. A message that does not contain a `fail` passes through unchanged:
+
+  ```yaml
+  customMessage:
+    noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
+  ```
+
+  It has no effect on a `fail` inside a hub template, whose error is reported before the
+  `ConfigurationPolicy` evaluates. Keep hub-side checks in a small template so the text survives, or
+  move the check to the managed cluster.
 - **Failures do not cascade.** Each policy resolves on its own, so one failing to resolve is a fact
   about that policy. When the rendered config is genuinely missing, every policy reporting it is the
   accurate signal, not noise.
 - **Prefer failing at render time where the chart can see the problem.** The Helm chart holds both
   the labels and the configuration, so a member label set without its required configuration key can
-  fail `helm template` and never reach a cluster. Runtime has no `fail` function: neither Sprig's
-  function set nor the resolver's own helpers provide one.
+  fail `helm template` and never reach a cluster, with a readable message and no truncation.
 - **An empty result is not always an error.** An inform policy that reports findings, such as
   `policy-quota-guard`, is legitimately empty when there is nothing to report. The rule is to fail
   on missing input, not on empty output.

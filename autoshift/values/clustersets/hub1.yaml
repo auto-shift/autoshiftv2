@@ -2,6 +2,20 @@
 hubClusterSets:
   hub1:
     config:
+      # AutoShift deployed ONTO this managed hub. The managed-autoshift policy creates an Argo CD
+      # Application in this cluster's OWN Argo CD pointing at itself, which is the per-hub shape.
+      # This hub then runs its own AutoShift, configuring only ITS spokes; it cannot target
+      # itself, because only the hub-of-hubs' Red Hat Advanced Cluster Management manages it.
+      managedAutoshift:
+        - appName: 'hub1'             # 11 characters or fewer, and never 'autoshift'
+          repoUrl: 'https://github.com/auto-shift/autoshiftv2.git'
+          targetRevision: 'main'
+          gitopsNamespace: 'openshift-gitops'
+          argoProject: 'default'
+          argoServer: 'https://kubernetes.default.svc'
+          valuesFiles:
+            - 'values/global.yaml'
+            - 'values/clustersets/managed.yaml'
       # Compliance Operator scans. Profiles are PINNED to a version: ocp4-stig tracks whatever
       # DISA publishes next, so an unpinned name would silently change what is measured and, with
       # autoApply on, change the cluster. Adopting a new release means adding an entry.
@@ -31,16 +45,25 @@ hubClusterSets:
               - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
     labels:
       # OpenShift version for cluster deployment and image mirroring
-      openshift-version: '4.22.8'
+      openshift-version: '4.22.18'
       self-managed: 'false'
+      # Lets the managed-autoshift policy place here. With cluster-type hub (injected by this entry
+      # living under hubClusterSets), gitops and self-managed false, this is the full predicate set.
+      autoshift-enable-install: 'true'
       ### OpenShift Gitops
       gitops: 'true' # is expected to be installed on all hub clusters
       gitops-subscription-name: openshift-gitops-operator
       gitops-disable-default-argocd: 'true'
-      gitops-channel: gitops-1.21
+      gitops-channel: gitops-1.22
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
       # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
+      # Infra Argo CD agent. This managed hub's infra-gitops reports to the infra principal on the
+      # hub above, which also delivers this hub's AutoShift Application (policy-managed-autoshift-agent).
+      gitops-infra: 'agent-managed'
+      # Infra Argo CD principal for THIS hub's own spokes, which enroll through the gitops-infra
+      # label in its nested AutoShift's values (clustersets/managed.yaml).
+      gitops-agent: 'true'
       ### AutoShift Console Plugin
       autoshift-console: 'true'
       ### Advanced Cluster Management
@@ -114,7 +137,7 @@ hubClusterSets:
       ### OpenShift Pipelines
       pipelines: 'true'
       pipelines-subscription-name: openshift-pipelines-operator-rh
-      pipelines-channel: pipelines-1.23
+      pipelines-channel: pipelines-1.24
       pipelines-source: redhat-operators
       pipelines-source-namespace: openshift-marketplace
       ### Trusted Artifact Signer
@@ -131,6 +154,15 @@ hubClusterSets:
       quay-source-namespace: openshift-marketplace
       ### Developer OpenShift Gitops
       gitops-dev: 'true'
+      # A managed hub is still a managed cluster from the layer above, so it can run a team's Argo CD
+      # agent reporting to that team's principal on the hub-of-hubs. To opt in, set this to 'true'
+      # with the per-team label below; this one places the spoke policy, the per-team label decides
+      # which teams and in which mode.
+      gitops-agent-enrolled: 'false'
+      # agent-managed: the HUB owns this team's Application resources for this cluster and the
+      # agent pulls them down, rather than the spoke owning them and mirroring up. Per-cluster, so
+      # another of team test's clusters could still run autonomous.
+      # gitops-dev-team-test: 'agent-managed'
       ### Loki
       loki: 'true'
       loki-subscription-name: loki-operator
