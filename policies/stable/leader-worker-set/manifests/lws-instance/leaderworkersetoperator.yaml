@@ -2,21 +2,37 @@
 #
 # Installing the operator is not enough. The subscription brings up
 # openshift-lws-operator, which does nothing until a LeaderWorkerSetOperator CR
-# tells it to deploy the controller — the same two-step shape as
+# tells it to deploy the controller, the same two-step shape as
 # nvidia-gpu-operator needing a ClusterPolicy and connectivity-link needing a
-# Kuadrant CR.
-#
-# Without this the operator is Succeeded, the policy installing it is Compliant,
-# and no LeaderWorkerSet workload can ever be scheduled, with nothing reporting
-# a problem.
+# Kuadrant CR. Without this the operator is Succeeded, the policy installing it
+# is Compliant, and no LeaderWorkerSet workload can ever be scheduled, with
+# nothing reporting a problem.
 #
 # Named "cluster" because this is a singleton operator CR, which is the
 # convention for operator.openshift.io and what the CSV's own example uses.
-apiVersion: operator.openshift.io/v1
-kind: LeaderWorkerSetOperator
-metadata:
-  name: cluster
-spec:
+#
+# The spec is a base of the operator's defaults with config.leader-worker-set.operator
+# from the cluster's rendered-config merged over it, so any spec field can be
+# set (logLevel, operatorLogLevel, managementState, unsupportedConfigOverrides).
+# Maps merge key by key and config wins. Every base key is always written, so
+# removing a value from config returns that field to its default.
+#
+# musthave rather than mustonlyhave: the operator.openshift.io OperatorSpec has
+# fields an operator may write itself (observedConfig), which mustonlyhave would
+# strip on every evaluation.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $spec := (`
   managementState: Managed
   logLevel: Normal
-  operatorLogLevel: Normal
+  operatorLogLevel: Normal` | fromYaml) hub}}
+  {{hub- $spec = (mergeOverwrite $spec (dig "leader-worker-set" "operator" (dict) $cfg)) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.openshift.io/v1
+      kind: LeaderWorkerSetOperator
+      metadata:
+        name: cluster
+      spec:
+        {{hub $spec | toYaml | autoindent hub}}

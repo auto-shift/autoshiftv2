@@ -48,6 +48,23 @@ does.
 `openshift-lws-operator`. It depends on `policy-lws-instance` rather than on the install, so a
 missing controller is reported against the custom resource rather than the subscription.
 
+## Configuration
+
+The custom resource's spec is read from `config.leader-worker-set.operator` in the cluster's
+rendered-config, merged over a base of `managementState: Managed` and both log levels `Normal`. Any
+spec field is accepted; maps merge key by key, the configured value wins, and a field removed from
+config returns to its default.
+
+```yaml
+hubClusterSets:
+  hub:
+    config:
+      leader-worker-set:
+        operator:
+          logLevel: Debug            # the controller: Normal, Debug, Trace, TraceAll
+          operatorLogLevel: Normal   # the Operator itself
+```
+
 ## Install mode
 
 `leader-worker-set` v1.0.1 declares `OwnNamespace=True` and `AllNamespaces=False`. The shared
