@@ -1,7 +1,22 @@
-apiVersion: metal3.io/v1alpha1
-kind: Provisioning
-metadata:
-  name: provisioning-configuration
-spec:
-  provisioningNetwork: Disabled
-  watchAllNamespaces: true
+object-templates-raw: |
+  {{hub $policyNs := "${POLICY_NAMESPACE}" hub}}
+  {{hub- $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcData := (index $rcm "data" | default dict) hub}}
+  {{hub- $rcConfig := (index $rcData "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $provIP := (dig "acm" "provisioning" "provisioningIP" "" $rcConfig) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: metal3.io/v1alpha1
+      kind: Provisioning
+      metadata:
+        name: provisioning-configuration
+      spec:
+        provisioningNetwork: Disabled
+        watchAllNamespaces: true
+  {{hub- if $provIP hub}}
+        # Ironic's TLS cert only gets an IP SAN when provisioningIP is set. BMCs fetch virtual-media
+        # ISOs from https://<ip>:6183, so without it a BMC that verifies certificates rejects the
+        # cert and the ISO never mounts. With provisioningNetwork Disabled, metal3 does NOT add this
+        # IP to any interface: it must be an address the node already has (on SNO, the node IP).
+        provisioningIP: '{{hub $provIP hub}}'
+  {{hub- end hub}}
