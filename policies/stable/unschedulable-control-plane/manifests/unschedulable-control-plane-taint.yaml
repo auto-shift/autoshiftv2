@@ -1,21 +1,97 @@
+# Taints the control-plane nodes in config.unschedulableControlPlane.nodes with
+# autoshift.io/unschedulable-control-plane:NoSchedule, so they run only control plane components and the
+# DaemonSets that tolerate every taint (networking, CSI, machine config).
+#
+# Config (rendered-config, under unschedulableControlPlane):
+#   nodes[]   Node names to taint (required, at least one). Each must be an existing control-plane node.
+#
+# A custom taint key, because on a compact cluster with mastersSchedulable: true the scheduler operator
+# removes the standard node-role.kubernetes.io/control-plane:NoSchedule taint, and the two would fight.
+#
+# ADDING the taint is musthave, which merges one entry into spec.taints and leaves every other taint
+# alone. Taints are also written by the node lifecycle controller (node.kubernetes.io/unreachable and
+# so on), so the steady state never rewrites the list.
+#
+# REMOVING it: a node that carries the taint but is no longer in config gets its taint list rebuilt
+# without it, from the live Node, with the rest of its spec carried over, under mustonlyhave. That is
+# the only way to drop one entry from a list. It runs only for nodes being released, so the window in
+# which it could race the node lifecycle controller is limited to a config change. mustnothave is never
+# used: under enforce it would delete the Node.
+#
+# Fails, rather than rendering nothing or creating anything, when nodes is missing or empty, when an
+# entry is empty or repeated, when a named Node does not exist (musthave would otherwise CREATE a bare
+# Node object with that name), when a named Node is not a control-plane node, or when the cluster has no
+# non-control-plane node and every control-plane node would be tainted, which would leave nothing for
+# application workloads.
 object-templates-raw: |
-  {{hub- $node_list := list hub}}
-  {{hub- range $label, $labelvalue := .ManagedClusterLabels hub}}
-    {{hub- if $label | hasPrefix "autoshift.io/unschedulable-control-plane-node" hub}}
-      {{hub- $node_list = append $node_list $labelvalue hub}}
-    {{hub- end hub}}
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- $nodes := (dig "unschedulableControlPlane" "nodes" (list) ($raw | fromYaml | default dict)) hub}}
+  {{hub- if not $nodes hub}}{{hub fail "unschedulable-control-plane: config.unschedulableControlPlane.nodes is missing or empty in the rendered-config ConfigMap" hub}}{{hub- end hub}}
+  {{hub- $seen := dict hub}}
+  {{hub- range $n := $nodes hub}}
+  {{hub- if not $n hub}}{{hub fail "unschedulable-control-plane: config.unschedulableControlPlane.nodes contains an empty name" hub}}{{hub- end hub}}
+  {{hub- if hasKey $seen $n hub}}{{hub fail (printf "unschedulable-control-plane: node %s appears more than once in config.unschedulableControlPlane.nodes" $n) hub}}{{hub- end hub}}
+  {{hub- $_ := set $seen $n true hub}}
   {{hub- end hub}}
-
-  {{- range (list
-    {{hub range $node_list hub}} {{hub . | quote hub}} {{hub end hub}}) }}
+  {{- $want := fromJson `{{hub dict "nodes" $nodes | toJson hub}}` }}
+  {{- $key := "autoshift.io/unschedulable-control-plane" }}
+  {{- $all := ((lookup "v1" "Node" "" "").items | default list) }}
+  {{- $byName := dict }}
+  {{- $cpCount := 0 }}
+  {{- $otherCount := 0 }}
+  {{- range $node := $all }}
+  {{- $_ := set $byName $node.metadata.name $node }}
+  {{- $labels := (dig "metadata" "labels" dict $node) }}
+  {{- if or (hasKey $labels "node-role.kubernetes.io/control-plane") (hasKey $labels "node-role.kubernetes.io/master") }}
+  {{- $cpCount = add1 $cpCount }}
+  {{- else }}
+  {{- $otherCount = add1 $otherCount }}
+  {{- end }}
+  {{- end }}
+  {{- if and (eq $otherCount 0) (ge (len $want.nodes) $cpCount) }}{{- fail "unschedulable-control-plane: this cluster has no non-control-plane node, and tainting every control-plane node would leave nothing for application workloads" }}{{- end }}
+  {{- range $n := $want.nodes }}
+  {{- $node := (index $byName $n) }}
+  {{- if not $node }}{{- fail (printf "unschedulable-control-plane: node %s does not exist on this cluster" $n) }}{{- end }}
+  {{- $labels := (dig "metadata" "labels" dict $node) }}
+  {{- if not (or (hasKey $labels "node-role.kubernetes.io/control-plane") (hasKey $labels "node-role.kubernetes.io/master")) }}{{- fail (printf "unschedulable-control-plane: node %s is not a control-plane node" $n) }}{{- end }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
       kind: Node
       metadata:
-        name: {{ . }}
+        name: {{ $n | toJson }}
       spec:
         taints:
           - key: autoshift.io/unschedulable-control-plane
             effect: NoSchedule
+  {{- end }}
+  {{- range $node := $all }}
+  {{- if not (has $node.metadata.name $want.nodes) }}
+  {{- $taints := (dig "spec" "taints" (list) $node) }}
+  {{- $kept := list }}
+  {{- $found := false }}
+  {{- range $t := $taints }}
+  {{- if eq (dig "key" "" $t) $key }}
+  {{- $found = true }}
+  {{- else }}
+  {{- $kept = append $kept $t }}
+  {{- end }}
+  {{- end }}
+  {{- if $found }}
+  {{- $spec := (dig "spec" dict $node) }}
+  {{- if $kept }}
+  {{- $spec = set $spec "taints" $kept }}
+  {{- else }}
+  {{- $spec = unset $spec "taints" }}
+  {{- end }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ $node.metadata.name | toJson }}
+      spec:
+        {{ $spec | toYaml | autoindent }}
+  {{- end }}
+  {{- end }}
   {{- end }}

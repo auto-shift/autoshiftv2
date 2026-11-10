@@ -20,7 +20,7 @@ policyDefaults:
     compliant: ${EVAL_COMPLIANT}
     noncompliant: ${EVAL_NONCOMPLIANT}
   standards:
-    - ${POLICY_STANDARD}
+    - NIST SP 800-53
   categories:
     - CM Configuration Management
   controls:
@@ -33,3 +33,7 @@ policies:
   - name: policy-unschedulable-control-plane
     manifests:
       - path: manifests/unschedulable-control-plane-taint.yaml
+    # A fail on the managed cluster reports the whole ConfigurationPolicy as JSON before its text.
+    # Strip that so the message reads as the reason. Messages without a fail pass through unchanged.
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
