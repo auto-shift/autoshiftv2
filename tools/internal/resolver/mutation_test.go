@@ -138,6 +138,9 @@ func TestPipeline_MutationSweep(t *testing.T) {
 		// policy (because the config that drives it was removed).
 		expectAbsentInPolicy string
 		expectAbsentString   string
+		// expectPresentString must appear in the same policy after the mutation, for a config
+		// change that should still render (an alternate form of the same setting).
+		expectPresentString string
 
 		// Resolution error: the policy should have ResolveOK=false (hub template
 		// resolution error), which surfaces the missing/broken config condition.
@@ -183,6 +186,47 @@ func TestPipeline_MutationSweep(t *testing.T) {
 			},
 			expectAbsentInPolicy:   "stable/nmstate",
 			expectEmptyDestination: true,
+		},
+		{
+			name: "nodeFeatureRules map entry enabled: false → that NodeFeatureRule not rendered",
+			mutateConfigs: func(cfg *ExampleConfigs) {
+				rules := nfdRules(cfg).(map[string]interface{})
+				rules["amd-gpu"].(map[string]interface{})["enabled"] = false
+			},
+			expectAbsentInPolicy: "stable/node-feature-discovery",
+			expectAbsentString:   "name: 'amd-gpu'",
+			expectPresentString:  "name: 'nvidia-gpu'",
+		},
+		{
+			name: "nodeFeatureRules in list form → still renders one NodeFeatureRule per entry",
+			mutateConfigs: func(cfg *ExampleConfigs) {
+				rules := nfdRules(cfg).(map[string]interface{})
+				nvidia := rules["nvidia-gpu"].(map[string]interface{})
+				nfdConfig(cfg)["nodeFeatureRules"] = []interface{}{
+					map[string]interface{}{"name": "nvidia-gpu-list", "rules": nvidia["rules"]},
+				}
+			},
+			expectAbsentInPolicy: "stable/node-feature-discovery",
+			expectAbsentString:   "name: 'amd-gpu'",
+			expectPresentString:  "name: 'nvidia-gpu-list'",
+		},
+		{
+			name: "nodeFeatureRules map entry without rules → policy resolution error",
+			mutateConfigs: func(cfg *ExampleConfigs) {
+				rules := nfdRules(cfg).(map[string]interface{})
+				rules["no-rules"] = map[string]interface{}{"enabled": true}
+			},
+			expectAbsentInPolicy:  "stable/node-feature-discovery",
+			expectResolutionError: true,
+		},
+		{
+			name: "nodeFeatureRules name that is not a Kubernetes object name → policy resolution error",
+			mutateConfigs: func(cfg *ExampleConfigs) {
+				rules := nfdRules(cfg).(map[string]interface{})
+				rules["Bad_Name"] = rules["nvidia-gpu"]
+			},
+			expectAbsentInPolicy:  "stable/node-feature-discovery",
+			expectResolutionError: true,
 		},
 		{
 			name: "remove disconnected catalogs → no CatalogSource rendered",
@@ -280,6 +324,15 @@ func TestPipeline_MutationSweep(t *testing.T) {
 					}
 				}
 
+				if tc.expectPresentString != "" {
+					if !strings.Contains(res.ResolvedYAML, tc.expectPresentString) {
+						t.Errorf("%q missing from %s after mutation — the alternate config form did not render",
+							tc.expectPresentString, tc.expectAbsentInPolicy)
+					} else {
+						t.Logf("PASS: %q correctly present in %s after mutation", tc.expectPresentString, tc.expectAbsentInPolicy)
+					}
+				}
+
 				if tc.expectEmptyDestination {
 					found := false
 					for _, line := range strings.Split(res.ResolvedYAML, "\n") {
@@ -316,6 +369,17 @@ func TestPipeline_MutationSweep(t *testing.T) {
 			}
 		})
 	}
+}
+
+// nfdConfig returns the config.nodeFeatureDiscovery map inside HubConfig.
+func nfdConfig(cfg *ExampleConfigs) map[string]interface{} {
+	nfd, _ := cfg.HubConfig["nodeFeatureDiscovery"].(map[string]interface{})
+	return nfd
+}
+
+// nfdRules returns config.nodeFeatureDiscovery.nodeFeatureRules, in whichever form it is.
+func nfdRules(cfg *ExampleConfigs) interface{} {
+	return nfdConfig(cfg)["nodeFeatureRules"]
 }
 
 // hubNetworking is a helper that extracts (or creates) the networking map
