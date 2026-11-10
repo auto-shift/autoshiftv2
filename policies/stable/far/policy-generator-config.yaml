@@ -47,7 +47,23 @@ policies:
         {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}.
         Verify far.sharedSecretNamespace/sourceSecretName/sharedSecretName (or per-template overrides)
         and confirm the source Secret exists on the managed cluster.
+  # Self-managed hub / local-cluster only: no hubTemplateOptions (blocks replication there).
   - name: policy-far-remediation-templates
+    placement:
+      placementPath: placement-remediation-hub.yaml
+    dependencies:
+      - name: policy-far-secrets
+    manifests:
+      - path: manifests/far-templates-spoke/far-template.yaml
+    customMessage:
+      noncompliant: >-
+        {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}
+  # All other far=true clusters (spokes + remote hubs): hub BMH lookup via hubTemplateOptions.
+  - name: policy-far-remediation-templates-managed
+    placement:
+      placementPath: placement-remediation-managed.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-far-secrets
     manifests:
@@ -55,8 +71,8 @@ policies:
     customMessage:
       noncompliant: >-
         {{- $msg := (regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim) -}}
-        {{- if regexMatch "autoNodeIPsFromBMH=true but no BMC IPs were detected from BareMetalHost objects" $msg -}}
-        {{ $msg }} autoNodeIPsFromBMH is supported only when BareMetalHost objects exist and expose spec.bmc.address values that policy can read. Otherwise, set templates[].nodeIPs explicitly or set autoNodeIPsFromBMH=false.
+        {{- if regexMatch "autoNodeIPsFromBMH=true but no BMC IPs" $msg -}}
+        {{ $msg }} autoNodeIPsFromBMH looks up BareMetalHosts on the hub in the managed-cluster namespace first, then falls back to openshift-machine-api on the managed cluster. Both require readable spec.bmc.address values. Otherwise, set nodeparameters.--ip explicitly or set autoNodeIPsFromBMH=false.
         {{- else -}}
         {{ $msg }}
         {{- end -}}

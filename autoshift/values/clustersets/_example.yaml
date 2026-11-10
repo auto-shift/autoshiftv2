@@ -744,28 +744,44 @@ hubClusterSets:
         sourceSecretName: bmc-shared-creds
         sharedSecretName: bmc-shared-creds
         templates:
-          - name: far-template
+          # Redfish: per-node BMC hosts in nodeparameters.--ip
+          - name: far-template-redfish
+            agent: fence_redfish
             retrycount: 15 # integer (unquoted)
             retryinterval: '5s'
             timeout: '60s'
-            action: reboot
-            systemsUri: '/redfish/v1/Systems/1'
-            sslInsecure: true
-            # Manual node -> BMC host mapping (default mode)
-            nodeIPs:
-              worker-0: '10.0.0.11'
-              worker-1: '10.0.0.12'
-            # Optional per-node ports when endpoint is not default 443
-            # nodePorts:
-            #   worker-0: '8443'
+            sharedparameters:
+              '--action': reboot
+              '--ssl-insecure': ''
+              '--systems-uri': '/redfish/v1/Systems/1'
+            nodeparameters:
+              '--ip':
+                worker-0: '10.0.0.11'
+                worker-1: '10.0.0.12'
+              # Optional per-node ports when endpoint is not default 443
+              # '--ipport':
+              #   worker-0: '8443'
             # Optional per-node credential override map
             # nodeSecretNames:
             #   worker-0: bmc-worker-0-creds
             # sourceNodeSecrets:
             #   worker-0: eso-worker-0-creds
-          # Optional auto mode: derive nodeIPs from BareMetalHost objects
-          # - name: far-template-auto
-          #   autoNodeIPsFromBMH: true
+            # Optional: omit nodeparameters.--ip and set autoNodeIPsFromBMH: true
+            # to fill --ip from BareMetalHost data. See policies/stable/far/README.md.
+          # Cisco UCS: shared UCS Manager IP, per-node plugs
+          - name: far-template-cisco-ucs
+            agent: fence_cisco_ucs
+            retrycount: 15
+            retryinterval: '5s'
+            timeout: '60s'
+            sharedparameters:
+              '--action': reboot
+              '--ip': ucs-manager.example.com
+              '--ssl-insecure': ''
+            nodeparameters:
+              '--plug':
+                worker-0: 'org-root/ls-worker-0'
+                worker-1: 'org-root/ls-worker-1'
       # gitlab-runner:
       #   versions:
       #     - 'gitlab-runner-operator.vX.Y.Z'

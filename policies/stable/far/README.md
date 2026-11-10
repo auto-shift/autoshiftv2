@@ -1,45 +1,26 @@
 # far AutoShift Policy
 
 ## Overview
-Installs the fence-agents-remediation operator by using AutoShift's ACM **PolicyGenerator** pattern. The
-directory is a Kustomize source: `policy-generator-config.yaml` wraps the bare manifests under
-`manifests/` into an ACM `Policy`, and pairs it with the hand-authored `placement.yaml`.
 
-## Layout
-```
-far/
-  kustomization.yaml            # entrypoint: generators: [policy-generator-config.yaml]
-  policy-generator-config.yaml  # the PolicyGenerator (policy graph, remediation, eval interval)
-  placement.yaml                # Placement predicate (autoshift.io/far) + tolerations
-  manifests/
-    operator-install/
-      kustomization.yaml        # renders the shared components/operator-install chart (Namespace +
-                                #   OperatorPolicy); per-operator ACM lookups are visible here
-```
-The operator-install renders the shared `components/operator-install` chart — edit the visible ACM
-lookups in `manifests/operator-install/kustomization.yaml` to tune the subscription/version. Add
-further CRs as new `policies[]` entries in `policy-generator-config.yaml` pointing at their own dirs.
+Installs the fence-agents-remediation operator and creates `FenceAgentsRemediationTemplate`
+resources so Red Hat OpenShift can fence nodes with any Fence Agents Remediation (FAR)
+supported agent. Configuration lives under `config.far` in AutoShift values files.
+Credentials stay in a Secret you create on the cluster; values files never hold BMC passwords.
 
-## Test Locally
-```bash
-# Render the policy exactly as the CMP/CI does (needs: make install-policy-generator)
-KUSTOMIZE_PLUGIN_HOME=$PWD/.tools/kustomize-plugin .tools/kustomize build \
-  --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone \
-  policies/stable/far
+Enable the policy with `far: 'true'` on the clusterset or cluster that should run FAR.
 
-# Full validation (helm render + hub/spoke template resolution + label contract)
-cd tools && go test -tags integration -count=1 ./internal/resolver/...
-```
-The `${POLICY_NAMESPACE}`, `${REMEDIATION}`, `${EVAL_COMPLIANT}`, `${EVAL_NONCOMPLIANT}` tokens are
-substituted per-deployment by the repo-server CMP before `kustomize build` runs; leave them as-is.
+## Before you start
 
-## Enable on Clusters
-Labels are defined in values files only — never directly on managed clusters. The cluster-labels
-policy propagates them, and this policy's `placement.yaml` selects clusters with
-`autoshift.io/far: 'true'`.
+| You need | Where | Notes |
+|---|---|---|
+| Agent credentials | A Secret on each target cluster | Referenced by `sharedSecretNamespace` / `sourceSecretName`; the policy copies it into `openshift-workload-availability` |
+| Agent parameters | `config.far.templates[].sharedparameters` and `nodeparameters` | Passed through to the FAR template; shape depends on the agent |
+| `far: 'true'` label | Clusterset or per-cluster values | Labels are defined in values only; never set `autoshift.io/*` on a `ManagedCluster` by hand |
+
+## Enable on clusters
 
 ```yaml
-# In autoshift/values/clustersets/hub.yaml (or another clusterset / per-cluster file)
+# autoshift/values/clustersets/hub.yaml (or managed / per-cluster overrides)
 hubClusterSets:
   hub:
     labels:
@@ -50,85 +31,153 @@ hubClusterSets:
       far-source-namespace: 'openshift-marketplace'
       # far-version: 'fence-agents-remediation.v1.x.x'  # Optional: pin to a specific CSV
 ```
-`generate-operator-policy.sh --add-to-autoshift` adds these for you (and to `_example*.yaml`, which
-the label-contract CI requires for every consumed `autoshift.io/*` key).
 
-The ApplicationSet auto-discovers new directories under `policies/stable/*` (and `certified`/
-`community`) — no manual registration required.
+## Configure FAR
 
-## Version Control
-- **Automatic upgrades** within the channel by default.
-- **Pin a version** with the `far-version` label — a pinned version sets a manual
-  install plan (`startingCSV` + `versions`), so upgrades become explicit.
+Put the FAR block under `config` for the same clusterset or cluster. A full example lives in
+`autoshift/values/clustersets/_example.yaml`.
+
+### 1. Create the credential Secret
+
+Create a Secret that holds the agent username and password on each cluster that runs FAR. The
+policy reads it on the managed cluster and writes a FAR-shaped Secret into
+`openshift-workload-availability`.
+
 ```bash
-# Find available CSV versions
-oc get packagemanifests fence-agents-remediation -o jsonpath='{.status.channels[*].currentCSV}'
+oc create secret generic bmc-shared-creds -n eso-shared \
+  --from-literal=username='<bmc-user>' \
+  --from-literal=password='<bmc-password>'
 ```
 
-## Adding Configuration (operator CRs)
-After the operator installs, add its Custom Resources as **bare manifests** — do NOT hand-write a
-ConfigurationPolicy wrapper; PolicyGenerator generates it.
+Point `config.far` at that Secret:
 
-1. Explore the CRDs the operator installed:
-   ```bash
-   oc get pods -n openshift-workload-availability
-   oc get crds | grep far
-   oc explain <CustomResourceName>
-   ```
-2. For a **static** CR, drop a bare manifest into `manifests/`:
-   ```yaml
-   # manifests/far-config.yaml
-   apiVersion: <operator apiVersion>
-   kind: <CustomResource>
-   metadata:
-     name: far-config
-     namespace: openshift-workload-availability
-   spec:
-     setting: value
-   ```
-3. For a CR that needs **hub templates / loops / conditionals**, use a bare `object-templates-raw`
-   manifest instead (PG still wraps it into one ConfigurationPolicy; `complianceType` lives inside):
-   ```yaml
-   # manifests/far-config.yaml
-   object-templates-raw: |
-     - complianceType: musthave
-       objectDefinition:
-         apiVersion: <operator apiVersion>
-         kind: <CustomResource>
-         metadata:
-           name: far-config
-           namespace: openshift-workload-availability
-         spec:
-           setting: '{{hub index .ManagedClusterLabels "autoshift.io/far-setting" | default "default-value" hub}}'
-   ```
-4. If the config must be its **own** Policy (separate remediation, a dependency, or a different
-   predicate), add a `policies[]` entry in `policy-generator-config.yaml` (with `dependencies:` on
-   `policy-far-operator-install`) and point it at the new manifest with its own
-   `placement.placementPath`. `generate-policy.sh --dir policies/stable/far` scaffolds this.
+```yaml
+config:
+  far:
+    sharedSecretNamespace: eso-shared
+    sourceSecretName: bmc-shared-creds
+    sharedSecretName: bmc-shared-creds
+```
 
-Document any new `autoshift.io/far-*` label in `autoshift/values/clustersets/_example.yaml`
-or the label-contract CI (`go test -tags integration`) fails with `Missing`.
+Use External Secrets Operator or another out-of-band process if the Secret must not be created by
+hand. Do not put credentials in values files.
 
-### Readiness / status checks
-A status assertion (e.g. CSV `phase: Succeeded`) can only be observed, so give it its own
-`policies[]` entry with `remediationAction: inform` — never fold an inform check into an enforce
-manifest (ACM's root action would clobber it).
+### 2. Define remediation templates
 
-## Reference Examples
-- **Simple operator**: `policies/stable/cert-manager/` — bare Namespace + OperatorPolicy (this shape)
-- **Multiple related policies / placements**: `policies/stable/advanced-cluster-security/`
-- **Multiple config types**: `policies/stable/metallb/`
-- **Storage cluster config**: `policies/stable/openshift-data-foundation/`
+Each entry under `templates` becomes one `FenceAgentsRemediationTemplate` in
+`openshift-workload-availability`. Structured fields cover the shared FAR knobs. Agent-specific
+flags go in `sharedparameters` and `nodeparameters` and are passed through unchanged.
 
-## Troubleshooting
-- **Policy not applied**: `oc get managedcluster <cluster> --show-labels`; check the Placement
-  (`oc get placement -n policies-autoshift`) and `oc describe policy policy-far-operator-install`.
-- **Operator install issues**: `oc get subscription,installplan -n openshift-workload-availability`;
-  `oc get catalogsource -n openshift-marketplace`.
-- **Render issues**: run the `kustomize build` above; hub templates use bare `{{hub … hub}}`
-  delimiters (no Helm `{{ "{{hub" }}` escaping in PolicyGenerator manifests).
+```yaml
+config:
+  far:
+    sharedSecretNamespace: eso-shared
+    sourceSecretName: bmc-shared-creds
+    sharedSecretName: bmc-shared-creds
+    templates:
+      # Redfish: per-node BMC hosts in nodeparameters.--ip
+      - name: far-template-redfish
+        agent: fence_redfish
+        remediationStrategy: OutOfServiceTaint
+        retrycount: 15
+        retryinterval: '5s'
+        timeout: '60s'
+        sharedparameters:
+          '--action': reboot
+          '--ssl-insecure': ''
+          '--systems-uri': '/redfish/v1/Systems/1'
+        nodeparameters:
+          '--ip':
+            worker-0: '10.0.0.11'
+            worker-1: '10.0.0.12'
+      # Cisco UCS: shared UCS Manager IP, per-node plugs
+      - name: far-template-cisco-ucs
+        agent: fence_cisco_ucs
+        remediationStrategy: OutOfServiceTaint
+        retrycount: 15
+        retryinterval: '5s'
+        timeout: '60s'
+        sharedparameters:
+          '--action': reboot
+          '--ip': ucs-manager.example.com
+          '--ssl-insecure': ''
+        nodeparameters:
+          '--plug':
+            worker-0: 'org-root/ls-worker-0'
+            worker-1: 'org-root/ls-worker-1'
+```
 
-## Resources
-- [Operator Documentation](https://operatorhub.io/operator/fence-agents-remediation)
-- [AutoShift Developer Guide](../../../docs/developer-guide.md)
-- [ACM PolicyGenerator](https://github.com/open-cluster-management-io/policy-generator-plugin)
+Use one template entry per agent configuration you need on the cluster. Agent flags in
+`sharedparameters` and `nodeparameters` are passed through unchanged.
+
+| Field | Purpose |
+|---|---|
+| `agent` | Fence agent binary name (default `fence_redfish`) |
+| `sharedparameters` | Cluster-wide agent flags |
+| `nodeparameters` | Per-node agent flags; nested maps use Kubernetes `Node` names as keys |
+| `nodeSecretNames` | Per-node target Secret name in `openshift-workload-availability` |
+| `sourceNodeSecrets` | Per-node source Secret name in `sharedSecretNamespace` |
+| `autoNodeIPsFromBMH` | Optional Redfish helper: fill `nodeparameters.--ip` from BareMetalHost data when `--ip` is unset |
+
+#### Per-node credentials
+
+When some nodes use different credentials, create a Secret per node in
+`sharedSecretNamespace`, then map those nodes under the template. Nodes omitted from the maps
+continue to use the shared Secret.
+
+```bash
+oc create secret generic eso-worker-0-creds -n eso-shared \
+  --from-literal=username='<bmc-user-worker-0>' \
+  --from-literal=password='<bmc-password-worker-0>'
+```
+
+```yaml
+templates:
+  - name: shutdown-template
+    sharedparameters:
+      '--action': reboot
+      '--ssl-insecure': ''
+      '--systems-uri': '/redfish/v1/Systems/1'
+    nodeparameters:
+      '--ip':
+        worker-0: '10.0.0.11'
+        worker-1: '10.0.0.12'
+    # worker-0 uses its own credentials; worker-1 keeps the shared Secret
+    nodeSecretNames:
+      worker-0: bmc-worker-0-creds
+    sourceNodeSecrets:
+      worker-0: eso-worker-0-creds
+```
+
+### 3. Optional: auto-fill Redfish `--ip` from BareMetalHost
+
+Set `autoNodeIPsFromBMH: true` when using an agent that needs per-node BMC hosts in
+`nodeparameters.--ip` and you want those values derived from `metal3.io/v1alpha1`
+BareMetalHost data. The helper runs only when `nodeparameters.--ip` is not already set.
+When present, the Assisted Installer hostname annotation
+`bmac.agent-install.openshift.io/hostname` is preferred over the BareMetalHost name.
+
+```yaml
+templates:
+  - name: shutdown-template
+    agent: fence_redfish
+    autoNodeIPsFromBMH: true
+    sharedparameters:
+      '--action': reboot
+      '--ssl-insecure': ''
+      '--systems-uri': '/redfish/v1/Systems/1'
+```
+
+On managed clusters, AutoShift reads BareMetalHosts from the hub in that cluster's namespace
+first, then falls back to `openshift-machine-api` on the managed cluster. On the self-managed
+hub, set `nodeparameters.--ip` explicitly.
+
+Before enabling auto mode on a hub-provisioned bare-metal cluster, confirm the BareMetalHost
+exists on the hub:
+
+```bash
+oc get baremetalhost -n <cluster-name>
+oc get baremetalhost -n <cluster-name> -o jsonpath='{.items[*].spec.bmc.address}{"\n"}'
+```
+
+If that list is empty, or `spec.bmc.address` is missing, set `nodeparameters.--ip` instead.
