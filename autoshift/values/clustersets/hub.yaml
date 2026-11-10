@@ -2,6 +2,36 @@
 hubClusterSets:
   hub:
     config:
+      # Shared PostgreSQL datastore for SPIRE instead of the per-replica SQLite file. Requires
+      # cloudnative-pg: 'true' below. This is the prerequisite for running more than one SPIRE
+      # server: replicas share one datastore, and the bundle held there is the union of each
+      # server's CA, so an agent validates an SVID issued by any of them.
+      ztwim:
+        federation:
+          bundleEndpoint:
+            # https_spiffe, which is also the Operator's own default. A peer's bundle endpoint is
+            # authenticated by its SPIFFE SVID rather than by a certificate authority, so federation
+            # needs no publicly trusted ingress certificate, no shared internal authority, and
+            # nothing added to the SPIRE server's trust store -- which cannot be extended anyway,
+            # because SpireServer exposes no volumes or environment and the Operator reverts edits
+            # to the generated StatefulSet within seconds.
+            #
+            # https_web is the alternative, and needs the ingress wildcard on EVERY member to chain
+            # to an authority already in the SPIRE image's trust store. That rules out fleets with
+            # their own authority, and disconnected sites.
+            #
+            # The profile is IMMUTABLE once the resource exists. Changing it later therefore
+            # recreates the SpireServer, which policy-ztwim-config does through recreateOption. The
+            # trust domain and its certificate authority survive, because they live in the datastore
+            # rather than in the resource, so agents keep their SVIDs and do not re-attest.
+            profile: 'https_spiffe'
+            refreshHint: 300
+        datastore:
+          databaseType: 'postgres'
+          cnpg:
+            instances: 2
+            size: '10Gi'
+
       # Manual remediations - STIG findings the Compliance Operator ships no fix for, because each
       # needs a site decision. Enabled by the manual-remediations label below; every entry renders
       # nothing until its key is set. See docs/compliance.md.
@@ -142,6 +172,13 @@ hubClusterSets:
               - 'g, openshift-dev-leads, role:admin'
               - 'g, openshift-developers, role:readonly'
           test:
+            # Argo CD agent principal for this team, in openshift-gitops-test-agent, with its own
+            # certificate authority intermediate under autoshift-ca. Clusters join by setting
+            # gitops-dev-team-test: 'agent'.
+            agent:
+              enabled: true
+              caIssuer: 'autoshift-ca'
+              logLevel: 'info'
             gitops_rbac_policies:
               - 'g, openshift-systems, role:admin'
       # Advanced Cluster Security Day-2 settings (non-default; defaults cover scanner/collector/auth).
@@ -156,22 +193,36 @@ hubClusterSets:
             disabled: false
     labels:
       # OpenShift version for cluster deployment and image mirroring
-      openshift-version: '4.22.8'
+      openshift-version: '4.22.18'
       self-managed: 'true'
+      ### Zero Trust Workload Identity Manager (SPIRE)
+      ztwim: 'true'
+      ztwim-federation-mesh: 'demo'
+      # Nesting is OFF so this cluster federates instead. The two are mutually exclusive in practice:
+      # nesting puts the operator in CREATE_ONLY_MODE, which stops it writing the federation block
+      # into the generated server.conf, so a nested cluster publishes a bundle endpoint Route with
+      # nothing listening behind it. Set to 'hub' to sign spoke intermediates instead of federating.
+      ztwim-nested-role: ''
       ### OpenShift Gitops
       gitops: 'true' # is expected to be installed on all hub clusters
       gitops-subscription-name: openshift-gitops-operator
       gitops-disable-default-argocd: 'true'
-      gitops-channel: gitops-1.21
-      # gitops-version: 'openshift-gitops-operator.v1.21.4'
+      gitops-channel: gitops-1.22
+      # gitops-version: 'openshift-gitops-operator.v1.22.2'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
-      # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
+      # gitops-namespace: 'openshift-gitops'  # Override; stamped from gitopsNamespace if unset
+      # Argo CD agent. gitops-agent runs AutoShift's infra principal on this hub; spokes enroll with
+      # gitops-infra (see clustersets/managed.yaml).
+      # This hub runs team Argo CD agent principals. Which teams get one is decided by
+      # config.gitops.teams.<team>.agent.enabled; this only places the policy.
+      gitops-agent-teams: 'false'
+      gitops-agent: 'true'
       ### AutoShift Console Plugin
       autoshift-console: 'true' # AutoShift section in the Fleet management perspective
       ### Advanced Cluster Management
       acm-subscription-name: advanced-cluster-management
-      # acm-version: 'advanced-cluster-management.v2.17.1'
+      # acm-version: 'advanced-cluster-management.v2.17.3'
       acm-channel: release-2.17
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
@@ -216,21 +267,21 @@ hubClusterSets:
       tempo-channel: stable
       tempo-source: redhat-operators
       tempo-source-namespace: openshift-marketplace
-      # tempo-version: 'tempo-operator.v0.21.0-3'
+      # tempo-version: 'tempo-operator.v0.22.0-4'
       ### Kiali
       kiali: 'true'
       kiali-subscription-name: kiali-ossm
       kiali-channel: stable
       kiali-source: redhat-operators
       kiali-source-namespace: openshift-marketplace
-      # kiali-version: 'kiali-operator.v2.27.3'
+      # kiali-version: 'kiali-operator.v2.33.1'
       ### Servicemesh3 Operator
       servicemesh3operator: 'true'
       servicemesh3operator-subscription-name: servicemeshoperator3
       servicemesh3operator-channel: stable
       servicemesh3operator-source: redhat-operators
       servicemesh3operator-source-namespace: openshift-marketplace
-      # servicemesh3operator-version: 'servicemeshoperator3.v3.4.1'
+      # servicemesh3operator-version: 'servicemeshoperator3.v3.5.0'
       ### Servicemesh3 Ambient
       servicemesh3-ambient: 'true'
       ### OpenTelemetry
@@ -248,7 +299,7 @@ hubClusterSets:
       ### MetalLB
       metallb: 'false'
       metallb-subscription-name: metallb-operator
-      # metallb-version: 'metallb-operator.v4.22.0-202608251608'
+      # metallb-version: 'metallb-operator.v4.22.0-202610241138'
       metallb-source: redhat-operators
       metallb-source-namespace: openshift-marketplace
       metallb-channel: stable
@@ -275,7 +326,7 @@ hubClusterSets:
       aap-noobaa-s3-storage: 'true'
       ### AAP Custom Cert Bundle Injection
       aap-custom-cabundle: 'true'
-      #aap-version: 'aap-operator.v2.7.0-0.1787240540'
+      #aap-version: 'aap-operator.v2.7.0-0.1793214862'
       ### Master Node Kubelet Configuration
       master-nodes: 'true'
       master-max-pods: '250'
@@ -341,14 +392,14 @@ hubClusterSets:
       ### Local Storage Operator
       local-storage: 'false'
       local-storage-subscription-name: local-storage-operator
-      # local-storage-version: 'local-storage-operator.v4.22.0-202608251608'
+      # local-storage-version: 'local-storage-operator.v4.22.0-202610241356'
       local-storage-channel: stable
       local-storage-source: redhat-operators
       local-storage-source-namespace: openshift-marketplace
       ### OpenShift Data Foundation
       odf: 'true'
       odf-subscription-name: odf-operator
-      # odf-version: 'odf-operator.v4.22.2-rhodf'
+      # odf-version: 'odf-operator.v4.22.7-rhodf'
       odf-multi-cloud-gateway: standard
       odf-noobaa-pvpool: ''
       odf-noobaa-store-size: ''
@@ -377,48 +428,48 @@ hubClusterSets:
       ### Kubernetes NMState Operator
       nmstate: 'false'
       nmstate-subscription-name: kubernetes-nmstate-operator
-      # nmstate-version: 'kubernetes-nmstate-operator.4.22.0-202608260901'
+      # nmstate-version: 'kubernetes-nmstate-operator.4.22.0-202610241757'
       # See _example.yaml for full nmstate label reference
       ### Advanced Cluster Security
       acs: 'true'
       acs-default-policies: 'true'          # baseline SecurityPolicy resources (was config.acs.defaultPolicies)
       acs-subscription-name: rhacs-operator
-      # acs-version: 'rhacs-operator.v4.11.3'
+      # acs-version: 'rhacs-operator.v4.11.6'
       acs-channel: stable
       acs-source: redhat-operators
       acs-source-namespace: openshift-marketplace
       ### Developer Spaces
       dev-spaces: 'true'
       dev-spaces-subscription-name: devspaces
-      # dev-spaces-version: 'devspacesoperator.v3.30.0'
+      # dev-spaces-version: 'devspacesoperator.v3.31.1'
       dev-spaces-channel: stable
       dev-spaces-source: redhat-operators
       dev-spaces-source-namespace: openshift-marketplace
       ### Developer Hub
       dev-hub: 'true'
       dev-hub-subscription-name: rhdh
-      # dev-hub-version: 'rhdh-operator.v1.10.4'
+      # dev-hub-version: 'rhdh-operator.v1.10.6'
       dev-hub-channel: fast-1.10
       dev-hub-source: redhat-operators
       dev-hub-source-namespace: openshift-marketplace
       ### OpenShift Pipelines
       pipelines: 'true'
       pipelines-subscription-name: openshift-pipelines-operator-rh
-      # pipelines-version: 'openshift-pipelines-operator-rh.v1.23.2'
-      pipelines-channel: pipelines-1.23
+      # pipelines-version: 'openshift-pipelines-operator-rh.v1.24.3'
+      pipelines-channel: pipelines-1.24
       pipelines-source: redhat-operators
       pipelines-source-namespace: openshift-marketplace
       ### Trusted Artifact Signer
       tas: 'true'
       tas-subscription-name: rhtas-operator
-      # tas-version: 'rhtas-operator.v1.4.3'
+      # tas-version: 'rhtas-operator.v1.5.0'
       tas-channel:  stable
       tas-source: redhat-operators
       tas-source-namespace: openshift-marketplace
       ### Quay
       quay: 'true'
       quay-subscription-name: quay-operator
-      # quay-version: 'quay-operator.v3.18.0'
+      # quay-version: 'quay-operator.v3.18.2'
       quay-channel: stable-3.18
       quay-source: redhat-operators
       quay-source-namespace: openshift-marketplace
@@ -430,7 +481,7 @@ hubClusterSets:
       ### Loki
       loki: 'true'
       loki-subscription-name: loki-operator
-      # loki-version: 'loki-operator.v6.6.0'
+      # loki-version: 'loki-operator.v6.6.2'
       loki-channel: stable-6.6
       loki-source: redhat-operators
       loki-source-namespace: openshift-marketplace
@@ -440,14 +491,14 @@ hubClusterSets:
       ### OpenShift Logging
       logging: 'true'
       logging-subscription-name: cluster-logging
-      # logging-version: 'cluster-logging.v6.6.0'
+      # logging-version: 'cluster-logging.v6.6.2'
       logging-channel: stable-6.6
       logging-source: redhat-operators
       logging-source-namespace: openshift-marketplace
       ### Cluster Observability Operator
       coo: 'true'
       coo-subscription-name: cluster-observability-operator
-      # coo-version: 'cluster-observability-operator.v1.5.2'
+      # coo-version: 'cluster-observability-operator.v1.5.3'
       coo-channel: stable
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
@@ -486,14 +537,14 @@ hubClusterSets:
       mtv-channel: release-v2.12
       mtv-source: redhat-operators
       mtv-source-namespace: openshift-marketplace
-      # mtv-version: 'mtv-operator.v2.12.7'
+      # mtv-version: 'mtv-operator.v2.12.10'
       ### node-feature-discovery
       node-feature-discovery: 'false'
       node-feature-discovery-subscription-name: nfd
       node-feature-discovery-channel: stable
       node-feature-discovery-source: redhat-operators
       node-feature-discovery-source-namespace: openshift-marketplace
-      # node-feature-discovery-version: 'nfd.4.22.0-202608251608'
+      # node-feature-discovery-version: 'nfd.4.22.0-202610231407'
       ### gitlab
       gitlab: 'false'
       gitlab-subscription-name: gitlab-operator-kubernetes
@@ -540,7 +591,7 @@ hubClusterSets:
       jfrog-node-replicas: '2'
       artifactory-db-backups: 'true'
       ### cloudnative-pg
-      cloudnative-pg: 'false'
+      cloudnative-pg: 'true'
       cloudnative-pg-subscription-name: cloudnative-pg
       cloudnative-pg-channel: stable-v1
       cloudnative-pg-source: certified-operators

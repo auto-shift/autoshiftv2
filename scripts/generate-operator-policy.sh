@@ -41,6 +41,12 @@ NAMESPACE_SCOPED=false
 ADD_TO_AUTOSHIFT=false
 SHOW_INTEGRATION=false
 VALUES_FILES=""  # Empty means all values files
+SHORT_NAME=""  # Optional abbreviation used in the policy name instead of the component name
+
+# Longest Policy name the validation suite accepts (tools/internal/resolver/policy_name_test.go).
+# With a 20-character policy namespace it reaches ACM's 62-character limit for the replicated
+# policy name on a managed cluster.
+MAX_POLICY_NAME_LEN=40
 
 usage() {
     echo "Usage: $0 <component-name> <subscription-name> --channel <channel> --namespace <namespace> [options]"
@@ -58,6 +64,10 @@ usage() {
     echo "  --source-namespace NS     Source namespace (default: $DEFAULT_SOURCE_NAMESPACE)"
     echo "  --version VERSION         Pin to specific operator version (CSV name, optional)"
     echo "  --namespace-scoped        Add targetNamespaces for namespace-scoped operators"
+    echo "  --short-name NAME         Abbreviation used in the policy name, policy-NAME-operator-install,"
+    echo "                            in place of the component name (e.g., acs, virt, nfd, rhtas). The"
+    echo "                            directory and labels keep the component name. Needed when the policy"
+    echo "                            name would exceed $MAX_POLICY_NAME_LEN characters"
     echo "  --add-to-autoshift        Add labels to AutoShift values files (default: all files)"
     echo "  --values-files FILES      Comma-separated list of values files to update; bare name (e.g., 'hub,sbx')
                             looks in autoshift/values/clustersets/; or pass a relative path
@@ -69,6 +79,7 @@ usage() {
     echo "  $0 cert-manager cert-manager-operator --channel stable --namespace cert-manager"
     echo "  $0 metallb metallb-operator --channel stable --namespace metallb-system --source community-operators --version metallb-operator.v0.14.8"
     echo "  $0 compliance compliance-operator --channel stable --namespace openshift-compliance --namespace-scoped"
+    echo "  $0 node-feature-discovery nfd --channel stable --namespace openshift-nfd --short-name nfd"
     echo "  $0 sealed-secrets sealed-secrets-operator --channel stable --namespace sealed-secrets --add-to-autoshift"
     echo "  $0 cert-manager cert-manager-operator --channel stable --namespace cert-manager --version cert-manager.v1.14.4 --add-to-autoshift"
 }
@@ -99,6 +110,10 @@ while [[ $# -gt 0 ]]; do
         --namespace-scoped)
             NAMESPACE_SCOPED=true
             shift
+            ;;
+        --short-name)
+            SHORT_NAME="$2"
+            shift 2
             ;;
         --add-to-autoshift)
             ADD_TO_AUTOSHIFT=true
@@ -160,6 +175,31 @@ fi
 if [[ ! "$COMPONENT_NAME" =~ ^[a-z0-9-]+$ ]]; then
     echo -e "${RED}Error: Component name must be lowercase alphanumeric with hyphens only${NC}"
     echo "Examples: cert-manager, metallb, sealed-secrets"
+    exit 1
+fi
+
+# The component as it appears in the policy (and placement) name. Defaults to the component name
+# without a trailing "-operator", which the "-operator-install" suffix would otherwise repeat.
+if [[ -n "$SHORT_NAME" ]]; then
+    if [[ ! "$SHORT_NAME" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+        echo -e "${RED}Error: --short-name must be lowercase alphanumeric with hyphens only${NC}"
+        echo "Examples: acs, virt, nfd, rhtas"
+        exit 1
+    fi
+    POLICY_COMPONENT="$SHORT_NAME"
+else
+    POLICY_COMPONENT="${COMPONENT_NAME%-operator}"
+fi
+POLICY_NAME="policy-${POLICY_COMPONENT}-operator-install"
+
+if (( ${#POLICY_NAME} > MAX_POLICY_NAME_LEN )); then
+    max_component=$(( MAX_POLICY_NAME_LEN - ${#POLICY_NAME} + ${#POLICY_COMPONENT} ))
+    echo -e "${RED}Error: Policy name '$POLICY_NAME' is ${#POLICY_NAME} characters; the limit is $MAX_POLICY_NAME_LEN${NC}"
+    echo "ACM replicates each policy to managed clusters as <policy-namespace>.<policy-name>, which must"
+    echo "fit in 62 characters, and the validation suite (make test) rejects longer names."
+    echo "Pass --short-name with an abbreviation of at most $max_component characters. The directory and"
+    echo "labels keep the name '$COMPONENT_NAME'; only the policy name changes. Existing policies abbreviate"
+    echo "the same way: policy-acs-, policy-virt-, policy-nfd- and policy-rhtas-operator-install."
     exit 1
 fi
 
@@ -234,6 +274,7 @@ substitute_template() {
         -e "s/{{CHANNEL}}/$CHANNEL/g" \
         -e "s/{{VERSION}}/$VERSION/g" \
         -e "s/{{COMPONENT_CAMEL}}/$COMPONENT_CAMEL/g" \
+        -e "s/{{POLICY_COMPONENT}}/$POLICY_COMPONENT/g" \
         -e "s/{{LABEL_PREFIX}}/$COMPONENT_NAME/g" \
         "$template_file" > "$output_file"
 }
@@ -273,6 +314,9 @@ validate_generated_policy() {
 generate_policy() {
     echo -e "${GREEN}🚀 Generating AutoShift PolicyGenerator policy for $COMPONENT_NAME...${NC}"
     echo ""
+    if [[ "$POLICY_COMPONENT" != "$COMPONENT_NAME" ]]; then
+        log_step "Policy name: $POLICY_NAME (directory and labels stay '$COMPONENT_NAME')"
+    fi
 
     # Create directory structure
     log_step "Creating directory structure"
