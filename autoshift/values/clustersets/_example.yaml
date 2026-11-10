@@ -437,6 +437,26 @@ hubClusterSets:
               kind: FenceAgentsRemediationTemplate
               name: fenceagentsremediationtemplate-default
               namespace: openshift-workload-availability
+      far:
+        # Shared secret defaults (source on managed cluster -> copied target in FAR namespace)
+        sharedSecretNamespace: eso-shared
+        sourceSecretName: bmc-shared-creds
+        sharedSecretName: bmc-shared-creds
+        templates:
+          # Redfish: per-node BMC hosts in nodeparameters.--ip
+          - name: fenceagentsremediationtemplate-default
+            agent: fence_redfish
+            retrycount: 15 # integer (unquoted)
+            retryinterval: '5s'
+            timeout: '60s'
+            sharedparameters:
+              '--action': reboot
+              '--ssl-insecure': ''
+              '--systems-uri': '/redfish/v1/Systems/1'
+            nodeparameters:
+              '--ip':
+                worker-0: '10.0.0.11'
+                worker-1: '10.0.0.12'
 
       # =======================================================================
       # File integrity - policy: file-integrity
@@ -2312,7 +2332,7 @@ hubClusterSets:
       far-source: redhat-operators
       far-source-namespace: openshift-marketplace
       far-version: 'fence-agents-remediation.v0.8.1'
-      
+
       # =======================================================================
       # Node Health Check Operator
       # =======================================================================
