@@ -1271,6 +1271,21 @@ hubClusterSets:
       #         deviceTypes: [disk]
       #         deviceMechanicalProperties: [NonRotational]
       # =======================================================================
+      # NVIDIA GPU Operator. Requires the nvidia-gpu-operator label.
+      # =======================================================================
+      # Same key as the version pin (config.nvidia-gpu-operator.versions). clusterPolicy is merged
+      # over the policy's base ClusterPolicy spec: maps merge key by key and these values win,
+      # lists replace the default whole. Name only what you change. Every field must exist in the
+      # ClusterPolicy CRD of the installed channel; the API server rejects the whole object on
+      # the first unknown field.
+      nvidia-gpu-operator:
+        clusterPolicy:
+          mig:
+            strategy: single
+          dcgmExporter:
+            serviceMonitor:
+              enabled: true
+      # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
       # =======================================================================
       workloadPartitioning:
@@ -2443,6 +2458,18 @@ hubClusterSets:
       node-feature-discovery-source: redhat-operators
       node-feature-discovery-source-namespace: openshift-marketplace
       node-feature-discovery-version: 'nfd.4.22.0-202610231407'
+
+      # =======================================================================
+      # NVIDIA GPU Operator (certified-operators; support is from NVIDIA)
+      # =======================================================================
+      # Selects GPU nodes on NFD's vendor label (feature.node.kubernetes.io/pci-10de.present), so
+      # enable node-feature-discovery as well. ClusterPolicy settings: config.nvidia-gpu-operator.
+      nvidia-gpu-operator: 'false'
+      nvidia-gpu-operator-subscription-name: gpu-operator-certified
+      nvidia-gpu-operator-channel: v25.3
+      nvidia-gpu-operator-source: certified-operators
+      nvidia-gpu-operator-source-namespace: openshift-marketplace
+      nvidia-gpu-operator-version: ''
 
       # =======================================================================
       # SR-IOV Network Operator

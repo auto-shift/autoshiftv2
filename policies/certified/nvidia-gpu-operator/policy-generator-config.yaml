@@ -1,0 +1,67 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: nvidia-gpu-operator
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# The operator-install policy points at manifests/operator-install/, a nested kustomization that
+# renders the shared components/operator-install chart. Add further CRs as new policies[] entries
+# pointing at their own manifests/<dir> (a wildcarded dir picks up drop-in files automatically).
+# Keep placement.yaml OUT of manifests/ (a Placement inside a wildcarded dir would be wrapped in).
+# Several policies share placement.yaml, so the shared PlacementBinding
+# needs an explicit name.
+placementBindingDefaults:
+  name: binding-policy-nvidia-gpu
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # Consolidate the raw Namespace into one generated ConfigurationPolicy; the first-class
+  # OperatorPolicy stays its own policy-template. Net: one Policy, two policy-templates.
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Placement authored by us (placement.yaml at the dir root, full fidelity); PG includes it and
+  # generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-nvidia-gpu-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # The CRD only exists once the operator CSV has installed it, hence the
+  # dependency: a ConfigurationPolicy for an unknown kind reports Compliant
+  # while doing nothing.
+  - name: policy-nvidia-gpu-cluster-policy
+    consolidateManifests: false
+    dependencies:
+      - name: policy-nvidia-gpu-operator-install
+    manifests:
+      - path: manifests/cluster-policy
+  # inform: the stack takes ~15 minutes to build and load the driver; this is
+  # how you see it finish, or see which component failed.
+  - name: policy-nvidia-gpu-ready
+    remediationAction: inform
+    consolidateManifests: false
+    dependencies:
+      - name: policy-nvidia-gpu-cluster-policy
+    customMessage:
+      noncompliant: >-
+        The NVIDIA ClusterPolicy gpu-cluster-policy is not Ready. The driver build takes about 15
+        minutes on a new GPU node. After that, check the ClusterPolicy status, which names the
+        component that is not ready, and the pods in nvidia-gpu-operator. Common causes are a
+        driver that cannot build for the node's kernel, an image the cluster cannot pull (mirror
+        nvcr.io on a disconnected cluster), and a config.nvidia-gpu-operator.clusterPolicy field
+        the installed ClusterPolicy CRD does not define.
+    manifests:
+      - path: test/gpu-stack-ready.yaml

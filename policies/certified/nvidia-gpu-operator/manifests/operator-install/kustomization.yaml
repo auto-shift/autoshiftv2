@@ -1,0 +1,46 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Renders the shared components/operator-install chart, which owns the OperatorPolicy structure and
+# creates the namespace (with the cluster-monitoring label). The per-operator ACM lookups below are the
+# visible, greppable inputs — every autoshift.io/nvidia-gpu-operator-* label this operator consumes is here.
+# ${REMEDIATION} is substituted by the CMP before kustomize runs.
+helmGlobals:
+  chartHome: ../../../../../components/
+helmCharts:
+  - name: operator-install
+    releaseName: nvidia-gpu-operator
+    valuesInline:
+      name: nvidia-gpu-operator
+      namespace: nvidia-gpu-operator
+      remediation: ${REMEDIATION}
+      policyNamespace: ${POLICY_NAMESPACE}
+      # OwnNamespace install mode. The GPU operator's CSV declares
+      # AllNamespaces=false and OwnNamespace=true, so the chart's default
+      # (empty -> AllNamespaces, cluster-scoped) produces an OperatorGroup OLM
+      # refuses, and the CSV never leaves Failed:
+      #   UnsupportedOperatorGroup: AllNamespaces InstallModeType not
+      #   supported, cannot configure to watch all namespaces
+      # The policy still reports only "the ClusterServiceVersion required by
+      # the policy was not found", so the cause is a CSV describe away rather
+      # than visible in the policy status.
+      targetNamespaces:
+        - nvidia-gpu-operator
+      subscription:
+        name: '{{hub index .ManagedClusterLabels "autoshift.io/nvidia-gpu-operator-subscription-name" | default "gpu-operator-certified" hub}}'
+        channel: '{{hub index .ManagedClusterLabels "autoshift.io/nvidia-gpu-operator-channel" | default "v25.3" hub}}'
+        source: '{{hub $base := (index .ManagedClusterLabels "autoshift.io/nvidia-gpu-operator-source" | default "certified-operators") hub}}{{hub ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}'
+        sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/nvidia-gpu-operator-source-namespace" | default "openshift-marketplace" hub}}'
+        # Version resolution (config lives in the rendered-config ConfigMap on the hub):
+        #   config mode (config.nvidia-gpu-operator.versions set): versions = that list; startingCSV = config.nvidia-gpu-operator.startingCSV
+        #     (explicit — the list says what's ALLOWED, not where to START; default "" = let OLM pick).
+        #   label mode (no config): versions = [nvidia-gpu-operator-version label]; startingCSV = that same version.
+        # $vers is computed here and reused by `versions` below.
+        startingCSV: |-
+          {{hub- $cfg := (index (index (index ((lookup "v1" "ConfigMap" "${POLICY_NAMESPACE}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "nvidia-gpu-operator" | default dict) hub}}
+          {{hub- $cfgVers := (dig "versions" (list) $cfg) hub}}
+          {{hub- $isCfg := (not (empty $cfgVers)) hub}}
+          {{hub- $labelVer := (index .ManagedClusterLabels "autoshift.io/nvidia-gpu-operator-version" | default "") hub}}
+          {{hub- $vers := (ternary $cfgVers (ternary (list) (list $labelVer) (empty $labelVer)) $isCfg) hub}}
+          {{hub- (ternary (dig "startingCSV" "" $cfg) $labelVer $isCfg) hub}}
+      # versions reuses $vers set in startingCSV above (same policy, resolves after it).
+      versions: '{{hub $vers | toRawJson | toLiteral hub}}'
