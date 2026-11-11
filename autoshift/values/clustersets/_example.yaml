@@ -1271,19 +1271,72 @@ hubClusterSets:
       #         deviceTypes: [disk]
       #         deviceMechanicalProperties: [NonRotational]
       # =======================================================================
+      # OpenShift Lightspeed. Requires the openshift-lightspeed label.
+      # =======================================================================
+      # Same key as the version pin (config.openshift-lightspeed.versions). provider and model are
+      # required: there is no default LLM. The credential is a Secret in openshift-lightspeed,
+      # created out of band and never in git, with the key apitoken:
+      #   oc create secret generic llm-credentials -n openshift-lightspeed \
+      #     --from-literal=apitoken=<key>
+      openshift-lightspeed:
+        # Fields as in the OLSConfig CRD's llm.providers entry, plus name (default llm), secretName
+        # (default llm-credentials) and ingressHost/path (instead of url, for a model behind a
+        # Route on this cluster: https://<ingressHost>.<ingress domain><path>, path default /v1).
+        # This example is a self-hosted vLLM endpoint on the same cluster. A SaaS provider:
+        #   provider: {type: openai, url: 'https://api.openai.com/v1', secretName: openai-key}
+        provider:
+          type: rhoai_vllm
+          ingressHost: 'models'
+          path: '/v1'
+          secretName: 'llm-credentials'
+        # The model id the provider serves.
+        model: 'granite-3-8b-instruct'
+        # Optional. More MCP servers the assistant may call (Technology Preview in Lightspeed;
+        # renders the MCPServer feature gate). Each entry has url, or ingressHost (plus path,
+        # default /mcp). timeout defaults to 60 seconds; the CRD's own default is 5. Not
+        # 'openshift', the built-in server's name.
+        mcpServers:
+          # Behind a Route on this cluster, called with the signed-in user's own token.
+          - name: 'docs'
+            ingressHost: 'mcp'
+            path: '/mcp'
+            timeout: 60
+            headers:
+              - name: 'Authorization'
+                valueFrom:
+                  type: 'kubernetes'
+          # An in-cluster Service called directly.
+          - name: 'internal-tools'
+            url: 'http://mcp-server.tools.svc.cluster.local:8000/mcp'
+        # Optional, true or false; unset leaves the operator default, enabled.
+        toolResultInspection: true
+        # Optional, 0.1 to 0.5: the share of the model's context window for tool results.
+        toolBudgetRatio: 0.5
+        # Optional. Any other OLSConfig spec field, merged last; lists replace.
+        olsConfig:
+          ols:
+            logLevel: INFO
+      # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
       # =======================================================================
+      # Simple mode. For full mode (a performanceProfile spec passed through), see
+      # clusters/_example-cluster-install-baremetal.yaml. The profile is always named
+      # workload-partitioning.
       workloadPartitioning:
         reservedCpus: '0-3'
         isolatedCpus: '4-31'
         nodeSelector:
           node-role.kubernetes.io/worker: ''
+        # machineConfigPoolSelector is optional: when unset it is derived from the
+        # nodeSelector role, here pools.operator.machineconfiguration.openshift.io/worker.
         numaTopology: 'restricted'
+        realTimeKernel: false
         hugepages:
           defaultSize: '1G'
           pages:
             - size: '1G'
               count: 4
+              node: 0
       # =======================================================================
       # NMState Networking (clusterset defaults for network interfaces)
       # Example: bond with two ports, VLAN on top, static route, DNS
@@ -2443,6 +2496,16 @@ hubClusterSets:
       node-feature-discovery-source: redhat-operators
       node-feature-discovery-source-namespace: openshift-marketplace
       node-feature-discovery-version: 'nfd.4.22.0-202610231407'
+
+      # =======================================================================
+      # OpenShift Lightspeed. Settings: config.openshift-lightspeed.
+      # =======================================================================
+      openshift-lightspeed: 'false'
+      openshift-lightspeed-subscription-name: lightspeed-operator
+      openshift-lightspeed-channel: stable
+      openshift-lightspeed-source: redhat-operators
+      openshift-lightspeed-source-namespace: openshift-marketplace
+      openshift-lightspeed-version: ''
 
       # =======================================================================
       # SR-IOV Network Operator
