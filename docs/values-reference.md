@@ -499,7 +499,78 @@ objects until you remove the old instance:
    one there for that interval.
 
 
-### Master nodes
+### Unschedulable Control Plane
+
+Taints the control-plane nodes listed in `config.unschedulableControlPlane.nodes` with `autoshift.io/unschedulable-control-plane:NoSchedule` so they run only control plane components (etcd, API server, controllers, scheduler). Designed for compact clusters where most masters should remain schedulable but one or more should be marked unschedulable.
+
+**Why a custom taint key?** On compact clusters, the OpenShift scheduler operator has `mastersSchedulable: true` and actively removes the standard `node-role.kubernetes.io/control-plane:NoSchedule` taint. Using the standard key would create a reconciliation loop between ACM and the scheduler operator. The custom key `autoshift.io/unschedulable-control-plane` avoids this conflict entirely.
+
+**Impact on workloads:**
+- **Application workloads**: No changes needed. Pods without a toleration for the custom taint simply will not schedule on the dedicated node.
+- **System DaemonSets** (OVN-Kubernetes, CSI plugins, machine-config-daemon, etc.): Unaffected. These use `operator: Exists` tolerations that tolerate all taints.
+- **Control plane components** (etcd, API server, scheduler, controllers): Unaffected. These run as static pods with all-taint tolerations.
+
+| Variable | Type | Default | Notes |
+|---|---|---|---|
+| `unschedulable-control-plane` (label) | bool | `false` | Enables the policy |
+| `config.unschedulableControlPlane.nodes` | list | | Required when enabled. Node names to taint, for example `master-4.my-cluster.example.com`. Each must be an existing control-plane node |
+
+Node names live in config rather than labels: a label value is limited to 63 characters, which a node
+hostname can exceed. Node names are usually specific to one cluster, so set the list in
+`clusters/<name>.yaml`.
+
+**Behavior:**
+- A node named in the list must exist and carry `node-role.kubernetes.io/control-plane` or
+  `node-role.kubernetes.io/master`; otherwise the policy fails with a message naming it. It never creates
+  a Node.
+- Removing a node from the list removes the taint from that node. Other taints on the node are kept.
+- On a cluster with no non-control-plane node, the policy refuses to taint every control-plane node,
+  because that would leave nowhere to schedule application workloads.
+
+**Example: 5-node compact cluster with 1 unschedulable control plane node**
+
+Install the cluster as a compact 5-node topology (`controlPlaneAgents: 5`, `workerAgents: 0`) so all masters are schedulable. Then use this policy to taint the node that should be dedicated:
+
+```yaml
+# autoshift/values/clusters/my-cluster.yaml
+clusters:
+  my-cluster:
+    labels:
+      unschedulable-control-plane: 'true'
+    config:
+      unschedulableControlPlane:
+        nodes:
+          - 'master-4.my-cluster.example.com'
+```
+
+To also run ODF on the 4 schedulable nodes, combine with `storage-nodes` (baremetal) to label them explicitly:
+
+```yaml
+clusters:
+  my-cluster:
+    labels:
+      # Dedicated control plane
+      unschedulable-control-plane: 'true'
+      # Storage nodes (exclude the dedicated CP node)
+      storage-nodes: '4'
+      storage-nodes-provider: 'baremetal'
+      storage-nodes-node-1: 'master-0.my-cluster.example.com'
+      storage-nodes-node-2: 'master-1.my-cluster.example.com'
+      storage-nodes-node-3: 'master-2.my-cluster.example.com'
+      storage-nodes-node-4: 'master-3.my-cluster.example.com'
+      # Local storage + ODF
+      local-storage: 'true'
+      odf: 'true'
+      odf-resource-profile: 'lean'
+    config:
+      unschedulableControlPlane:
+        nodes:
+          - 'master-4.my-cluster.example.com'
+```
+
+ODF auto-enables `flexibleScaling` for 4 nodes (not a multiple of 3) and distributes OSDs across all 4 hosts.
+
+### Master Nodes
 
 Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. You may have to increase the number of pods per node in these resource constrained environments.
 

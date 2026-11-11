@@ -1292,6 +1292,21 @@ hubClusterSets:
               count: 4
               node: 0
       # =======================================================================
+      # Unschedulable Control Plane - policy: unschedulable-control-plane
+      # =======================================================================
+      # Control-plane nodes to taint autoshift.io/unschedulable-control-plane:NoSchedule, so they
+      # run only control plane components. For compact clusters where most control-plane nodes stay
+      # schedulable and one or more are dedicated to the control plane. Enable with the
+      # unschedulable-control-plane label. Node names are usually per cluster, so set this in
+      # clusters/<name>.yaml rather than a clusterset.
+      #
+      # Each entry must be an existing control-plane node; the policy fails otherwise. A node removed
+      # from the list has the taint removed. On a cluster with no non-control-plane node, the policy
+      # refuses to taint every control-plane node.
+      unschedulableControlPlane:
+        nodes:
+          - 'master-0.test-cluster.test.example.com'
+      # =======================================================================
       # NMState Networking (clusterset defaults for network interfaces)
       # Example: bond with two ports, VLAN on top, static route, DNS
       # Per-cluster overrides go in clusters/<name>.yaml config section
@@ -2054,6 +2069,16 @@ hubClusterSets:
       aap-storage-type: 'file'
       aap-file_storage_size: 10Gi
       aap-file_storage_storage_class: 'ocs-storagecluster-cephfs'
+
+      # =======================================================================
+      # Unschedulable Control Plane (Compact clusters)
+      # =======================================================================
+      # Taints the control-plane nodes in config.unschedulableControlPlane.nodes with NoSchedule
+      # so they run only control plane components. Uses a custom taint key
+      # (autoshift.io/unschedulable-control-plane) to avoid conflicting with the OpenShift
+      # scheduler operator on compact clusters. System DaemonSets (networking, CSI, etc.)
+      # tolerate all taints and are unaffected.
+      unschedulable-control-plane: 'false'         # Enable; node list is config.unschedulableControlPlane.nodes
 
       # =======================================================================
       # Master Node Kubelet Configuration (SNO / Compact clusters)

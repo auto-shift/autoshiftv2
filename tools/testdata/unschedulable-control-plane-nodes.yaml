@@ -1,0 +1,25 @@
+---
+# A second control-plane node for the unschedulable-control-plane policy. It carries the
+# autoshift.io/unschedulable-control-plane taint but is not in config.unschedulableControlPlane.nodes,
+# so the policy renders the cleanup path that removes that taint and keeps the other one.
+apiVersion: v1
+kind: Node
+metadata:
+  labels:
+    kubernetes.io/hostname: master-1.test-cluster.test.example.com
+    kubernetes.io/os: linux
+    node-role.kubernetes.io/control-plane: ""
+    node-role.kubernetes.io/master: ""
+  name: master-1.test-cluster.test.example.com
+spec:
+  providerID: aws:///us-east-2b/i-0fake000000000011
+  taints:
+    - key: autoshift.io/unschedulable-control-plane
+      effect: NoSchedule
+    - key: example.com/keep-me
+      effect: PreferNoSchedule
+status:
+  conditions:
+  - reason: KubeletReady
+    status: "True"
+    type: Ready
