@@ -35,7 +35,12 @@ object-templates-raw: |
   {{- else if (dig "metadata" "name" "" $worker_ms) }}
     {{- $worker_zone = trimPrefix (printf "%s-worker-" $infrastructure_id) (dig "metadata" "name" "" $worker_ms) }}
   {{- end }}
-  {{- range $zone := ternary (ternary (list $worker_zone) (list) (ne $worker_zone "")) $zones_from_labels (eq 0 (len $zones_from_labels)) }}
+  {{- $zones := ternary (ternary (list $worker_zone) (list) (ne $worker_zone "")) $zones_from_labels (eq 0 (len $zones_from_labels)) }}
+  {{- /* No zone to check means nothing to render, and an empty ConfigurationPolicy reports
+         Compliant, which would unblock every policy that depends on this readiness check.
+         Fail instead, naming what is missing. */ -}}
+  {{- if eq 0 (len $zones) }}{{ fail "storage-nodes readiness: no autoshift.io/storage-nodes-zone-N label and no worker MachineSet to take the zone from" }}{{- end }}
+  {{- range $zone := $zones }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: machine.openshift.io/v1beta1
