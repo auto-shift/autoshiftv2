@@ -270,7 +270,7 @@ func (r *Resolver) ResolvePolicy(rawYAML string, ctx HubContext) ResolvePolicyRe
 			"labels":      mapOrEmpty(metadata, "labels"),
 		}
 
-		result, err := r.inner.ResolveTemplate(jsonBytes, docCtx, &templates.ResolveOptions{})
+		result, err := r.inner.ResolveTemplate(jsonBytes, docCtx, hubResolveOptions(obj, policyNamespace, ctx.ManagedClusterName))
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", policyName, err))
 			resolved = append(resolved, doc) // pass through the original
@@ -291,6 +291,27 @@ func (r *Resolver) ResolvePolicy(rawYAML string, ctx HubContext) ResolvePolicyRe
 	return ResolvePolicyResult{
 		Resolved: joinYAMLDocuments(resolved),
 		Errors:   errs,
+	}
+}
+
+// hubResolveOptions applies the lookup restriction the ACM policy propagator applies on the hub.
+// A Policy without spec.hubTemplateOptions.serviceAccountName may only look up objects in its own
+// namespace and the target's own ManagedCluster; any other lookup fails with "the namespace
+// argument is restricted to" or "lookup of cluster-scoped resource ... is not allowed". A Policy
+// with a service account is limited only by that account's RBAC, which this suite does not model.
+func hubResolveOptions(policy map[string]interface{}, policyNamespace, clusterName string) *templates.ResolveOptions {
+	if sa, _ := nestedString(policy, "spec", "hubTemplateOptions", "serviceAccountName"); sa != "" {
+		return &templates.ResolveOptions{}
+	}
+	return &templates.ResolveOptions{
+		LookupNamespace: policyNamespace,
+		ClusterScopedAllowList: []templates.ClusterScopedObjectIdentifier{
+			{
+				Group: "cluster.open-cluster-management.io",
+				Kind:  "ManagedCluster",
+				Name:  clusterName,
+			},
+		},
 	}
 }
 

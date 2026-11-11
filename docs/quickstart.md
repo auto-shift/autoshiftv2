@@ -304,8 +304,8 @@ oc get applications.argoproj.io -n openshift-gitops | grep autoshift
 # Check ACM policies
 oc get policies -A
 
-# View policy compliance
-oc get policies -n open-cluster-policies
+# View policy compliance (the namespace is policies-<Application name>)
+oc get policies -n policies-$APP_NAME
 ```
 
 that is it. Welcome to OpenShift Platform Plus and all of its many capabilities!
@@ -513,10 +513,10 @@ oc get pods -n open-cluster-management
 oc get managedcluster local-cluster --show-labels
 
 # Check placement
-oc get placement -n open-cluster-policies
+oc get placement -n policies-$APP_NAME
 
 # Check policy status
-oc describe policy <policy-name> -n open-cluster-policies
+oc describe policy <policy-name> -n policies-$APP_NAME
 ```
 
 ### ArgoCD application not syncing
