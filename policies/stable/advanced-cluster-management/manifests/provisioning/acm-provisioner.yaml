@@ -10,11 +10,32 @@
 # mustonlyhave is not an option, because the cluster-baremetal-operator manages other fields here.
 #
 # Reads rendered-config with fromConfigMap, so a missing ConfigMap fails rather than rendering the CR
-# without the address. A value that is not an IP address fails too, rather than leaving :6183 unbound.
+# without the address, and so does a ConfigMap with no config key (fromConfigMap returns "" for that).
+# A value that is not an IP address fails too, rather than leaving :6183 unbound. The address check is
+# a typo guard, not a full RFC 4291 parser: IPv4 octets 0-255; IPv6 hex groups of up to four digits,
+# at most one "::", eight groups without "::" and fewer with it, and an IPv4 address allowed as the
+# last 32 bits (::ffff:192.168.1.10), which counts as two groups. Go regexp has no lookahead, so the
+# IPv6 rules are separate conditions.
 object-templates-raw: |
   {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
-  {{hub- $provIP := (dig "acm" "provisioning" "provisioningIP" "" ($raw | fromYaml | default dict)) hub}}
-  {{hub- if and $provIP (not (or (regexMatch "^([0-9]{1,3}[.]){3}[0-9]{1,3}$" $provIP) (regexMatch "^[0-9a-fA-F:]*:[0-9a-fA-F:]*$" $provIP))) hub}}{{hub fail (printf "config.acm.provisioning.provisioningIP: %s is not an IPv4 or IPv6 address" $provIP) hub}}{{hub- end hub}}
+  {{hub- if not $raw hub}}{{hub fail (printf "acm-provisioning: ConfigMap %s/%s.rendered-config has no config key" .PolicyMetadata.namespace .ManagedClusterName) hub}}{{hub- end hub}}
+  {{hub- $provIP := (printf "%v" (dig "acm" "provisioning" "provisioningIP" "" ($raw | fromYaml | default dict))) hub}}
+  {{hub- if $provIP hub}}
+  {{hub- $octet := "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])" hub}}
+  {{hub- $v4 := (printf "(%s[.]){3}%s" $octet $octet) hub}}
+  {{hub- $valid := (regexMatch (printf "^%s$" $v4) $provIP) hub}}
+  {{hub- if not $valid hub}}
+  {{hub- $hex := (regexReplaceAll (printf ":%s$" $v4) $provIP ":0:0") hub}}
+  {{hub- $colons := (sub (len (splitList ":" $hex)) 1) hub}}
+  {{hub- $valid = (and (regexMatch "^[0-9a-fA-F:]+$" $hex) (not (regexMatch "[0-9a-fA-F]{5}" $hex)) (not (regexMatch ":::" $hex)) (not (regexMatch "::.*::" $hex)) (not (regexMatch "^:[^:]" $hex)) (not (regexMatch "[^:]:$" $hex))) hub}}
+  {{hub- if contains "::" $hex hub}}
+  {{hub- $valid = (and $valid (ge $colons 2) (le $colons 7)) hub}}
+  {{hub- else hub}}
+  {{hub- $valid = (and $valid (eq $colons 7)) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if not $valid hub}}{{hub fail (printf "config.acm.provisioning.provisioningIP: %s is not an IPv4 or IPv6 address" $provIP) hub}}{{hub- end hub}}
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: metal3.io/v1alpha1
