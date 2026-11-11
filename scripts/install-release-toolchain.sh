@@ -22,16 +22,22 @@ dnf -y install \
   https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
 dnf -y install yq
 
+# The OpenShift CLI and oc-mirror come from the channel of the OpenShift minor the profiles target,
+# read from versions.yaml. The bare `stable` channel tracks the newest major, which can ship no
+# oc-mirror at all.
+OCP_MINOR=$(yq '.inputs.openshift' "$(dirname "$0")/../versions.yaml")
+OCP_CLIENTS="https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable-${OCP_MINOR}"
+
 curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar xz -C /tmp
 install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
 helm version
 
 # oc backs the mirror artifact generation.
-curl -fsSL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz -C /tmp
+curl -fsSL "${OCP_CLIENTS}/openshift-client-linux.tar.gz" | tar xz -C /tmp
 install -m 0755 /tmp/oc /tmp/kubectl /usr/local/bin/
 oc version --client
 
 # oc-mirror backs `make verify-imageset`, a dry run that proves the published imageset resolves.
-curl -fsSL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.rhel9.tar.gz | tar xz -C /tmp
+curl -fsSL "${OCP_CLIENTS}/oc-mirror.rhel9.tar.gz" | tar xz -C /tmp
 install -m 0755 /tmp/oc-mirror /usr/local/bin/
 oc-mirror version --output=yaml | head -3

@@ -11,9 +11,10 @@
 # that appears in four places cannot drift in one of them. Change the value here and the test
 # names each file still holding the old one.
 #
-# Versions deliberately NOT pinned here: the OpenShift CLI follows a release channel, the Vale
-# rule package resolves on every `vale sync`, and `openshiftVersion` in the per-cluster examples
-# is sample data rather than a contract.
+# Versions deliberately NOT pinned here: the OpenShift CLI follows the stable channel of
+# inputs.openshift, which the scripts read from this file at run time; the Vale rule package
+# resolves on every `vale sync`; and `openshiftVersion` in the per-cluster examples is sample data
+# rather than a contract.
 
 inputs:
   openshift: '4.22'
@@ -158,6 +159,20 @@ pins:
       - file: README.md
         pattern: 'Helm [0-9.]+, Kustomize ([0-9.]+) \|'
 
+  # The secret scan, in CI and in the devcontainer the pre-commit hook runs in. A currency pin:
+  # Renovate proposes each release through the annotations in both files. 8.19 or later is required
+  # for the `gitleaks git` command both use.
+  - name: gitleaks
+    value: 8.30.1
+    derivedFrom: none
+    locations:
+      - file: .github/workflows/ci.yaml
+        pattern: 'GITLEAKS_VERSION: "(\S+)"'
+      - file: .devcontainer/Containerfile
+        pattern: 'ARG GITLEAKS_VERSION=(\S+)'
+      - file: docs/developer-guide.md
+        pattern: '\| gitleaks \| (\S+) \|'
+
   # Pinned so rendered output cannot change without a change in this repository. Not tied to a
   # channel: v1.19.0 is simply the current release.
   - name: policy-generator
@@ -191,7 +206,7 @@ pins:
   # go-template-utils, which requires go 1.25.0. Every workflow reads this through
   # `go-version-file: tools/go.mod`, so the directive is the only place CI takes it from.
   - name: go
-    value: '1.27.3'
+    value: '1.27.4'
     derivedFrom: go-template-utils
     locations:
       - file: tools/go.mod
