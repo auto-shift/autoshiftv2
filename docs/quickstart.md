@@ -67,7 +67,8 @@ If your clone of AutoShiftv2 requires credentials or you want to add credentials
 > `multicluster-operators-hub-subscription`, which came up sooner; if you are following older notes, that is the change.
 
 > [!NOTE]
-> Both bootstrap charts run a short-lived Job that waits for CRDs. The charts resolve its CLI image
+> Both bootstrap charts run a short-lived Job that waits for CRDs; the ACM one also waits for the
+> operator's validating webhook to serve before it creates the MultiClusterHub. The charts resolve its CLI image
 > from the cluster's own `openshift/cli` ImageStream at install time. That entry is a digest against
 > the release payload, so an ImageDigestMirrorSet rewrites it in a disconnected deployment and it
 > needs no internal image registry. This matters on bare metal and wherever the registry
