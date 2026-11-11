@@ -1,0 +1,27 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-gitops-agent-spoke-removed
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Exists, NOT In ['true'], deliberately. This has to stay placed while a cluster is being taken
+  # out of team agents, and the operator doing that will often flip gitops-agent-enrolled to 'false'
+  # in the same change that sets a team to 'uninstall'. Selecting only 'true' would un-place the
+  # removal policy before it had removed anything, leaving the agent running forever.
+  # Two predicates are ORed: team agents, then infra.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops-agent-enrolled'
+              operator: Exists
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops-infra'
+              operator: Exists
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

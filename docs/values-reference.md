@@ -304,8 +304,10 @@ config:
 > Hub Clusters Only
 
 Deploys a nested AutoShift onto each managed hub. The policy runs on that hub and creates an Argo CD
-Application in the hub's own GitOps instance, so the hub goes on to configure its own spokes. Nothing
-is created on the hub above it. See
+Application in the hub's own GitOps instance, so the hub goes on to configure its own spokes. A hub
+whose infra agent runs managed (`gitops-infra: 'agent-managed'`) gets the same Application from the
+hub above instead, written into its `<cluster>-infra` namespace there and delivered by the infra
+principal. See
 [policies/stable/managed-autoshift](../policies/stable/managed-autoshift/README.md) and
 [Hub of hubs](hub-of-hubs.md).
 
@@ -322,7 +324,7 @@ is created on the hub above it. See
 | `targetRevision` | string | `main` | Git branch or tag |
 | `ociRepo` | string | | Registry namespace, for example `quay.io/autoshift`, **without** the `oci://` scheme. Setting it selects OCI mode instead of git. Policy charts are read from `<ociRepo>/policies` |
 | `ociVersion` | string | | Chart version. Required whenever `ociRepo` is set |
-| `gitopsNamespace` | string | `openshift-gitops` | Namespace on the managed hub for the Application and repository Secrets |
+| `gitopsNamespace` | string | the managed hub's `gitops-namespace` label, else `openshift-gitops` | Namespace on the managed hub for the Application and repository Secrets. It must be where that hub's infra Argo CD runs |
 | `argoProject` | string | `default` | Argo CD project |
 | `argoServer` | string | `https://kubernetes.default.svc` | Destination server, the managed hub itself |
 | `valuesFiles` | list | `["values.<clusterName>.yaml"]` | Values files passed to the chart |
@@ -371,6 +373,10 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-cluster-ca-bundle`      | bool      | `false`                   | Inject cluster trusted CA bundle into ArgoCD repo server |
 | `gitops-namespace`              | string    | (`gitopsNamespace`)       | Per-cluster override of the ArgoCD namespace, e.g. in hub-of-hubs setups |
 | `gitops-disable-default-argocd` | bool      | `true`                    | Controls `DISABLE_DEFAULT_ARGOCD_INSTANCE` on the operator Subscription |
+| `gitops-infra`                  | string    | `hub` on a hub, else `push` | The shape of infra Argo CD on this cluster: `hub`, `push`, `standalone`, `agent`, `agent-autonomous`, `agent-managed`, or `uninstall` to tear down its agent. See [Argo CD agent](gitops-agent.md) |
+| `gitops-agent`                  | bool      | `false`                   | Hub label. Run AutoShift's infra Argo CD Agent principal on this hub. Settings are in `config.gitops.infra.agent`. Independent of this hub's own `gitops-infra` mode. `uninstall` tears the principal down |
+| `gitops-agent-teams`            | bool      | `false`                   | Hub label. Run a principal here for each team with `config.gitops.teams.<team>.agent.enabled` in this hub's config, whether or not this hub carries that team's `gitops-dev-team-<team>` label |
+| `gitops-agent-enrolled`         | bool      | `false`                   | Cluster label. Place the spoke agent policy here, for clusters whose `gitops-dev-team-<team>` label carries an agent mode |
 
 **Config block** (`config.gitops`):
 
@@ -380,7 +386,15 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `defaultInstance` | bool | `false` | Keep the operator default Argo CD instance in `openshift-gitops`. Drives `gitops-disable-default-argocd` |
 | `policyGenerator` | bool | (deployment flag) | Install the PolicyGenerator plugin sidecar in the infra repo server. Git and source hubs must set `true`. Read only from the self-managed hub cluster set |
 | `teams` | map | | Developer Argo CD instances, one entry per team. See [Developer OpenShift gitops](#developer-openshift-gitops) |
-| `infra` | map | | Tuning for the infra Argo CD instance. See the table below |
+| `infra` | map | | Tuning for the infra Argo CD instance, plus `infra.agent`. See the tables below |
+
+**Config block** (`config.gitops.infra.agent`):
+
+Settings for AutoShift's own infra agent, which the `gitops-agent` label switches on. It takes the
+same keys as `config.gitops.teams.<team>.agent` except `enabled`, which the label replaces. Two
+defaults differ, because infra Applications configure the cluster itself: `destinationNamespaces`
+defaults to `*` and `clusterResources` to every group and kind. The principal namespace is
+`config.gitops.infra.agentNamespace`, default `openshift-gitops-infra-agent`.
 
 **Config block** (`config.gitops.infra`):
 
@@ -390,6 +404,7 @@ bootstrap and Day 2 agree. Set a field here to override it for one cluster or cl
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `name` | string | `infra-gitops` | Name of the infra Argo CD instance. Every policy that targets the instance by name reads it: the instance itself, its cluster-admin binding, the console link, and the infra agent that attaches to it on a hub. On the self-managed hub the bootstrap chart creates the instance as its `gitops.argoName`, so keep the two equal there. The namespace is the cluster's `gitops-namespace` label |
 | `rbac_policies` | list | admin for `system:cluster-admins`, `cluster-admins` and `openshift-systems` | The complete Argo CD RBAC policy. Setting it replaces the default list rather than appending. A `g` line assigns a subject to a role and accepts a user or a group, but OpenShift login identifies users by an opaque Dex `sub` claim rather than a username, so name OpenShift Groups here. `defaultPolicy` is empty, so an empty list leaves no access apart from the built-in admin account |
 | `disableAdmin` | bool | `false` | Disable the Argo CD built-in admin account |
 | `server.limits` | map | cpu `500m`, memory `256Mi` | Argo CD server resource limits |
@@ -462,6 +477,26 @@ hubClusterSets:
     labels:
       gitops-disable-default-argocd: 'false'
 ```
+
+#### Changing the infra Argo CD name or namespace on a running cluster
+
+Per cluster, the namespace is the `gitops-namespace` label and the name is
+`config.gitops.infra.name`. Changing either builds a new instance and leaves the old one running,
+because nothing is removed automatically. Two AutoShift Applications then reconcile the same
+objects until you remove the old instance:
+
+1. Change the label, the name, or both, and wait until the new instance is up and
+   `policy-gitops-systems-argocd` reports Compliant.
+2. Delete the old top-level AutoShift `Application` in the old namespace. Check it has no
+   `resources-finalizer.argocd.argoproj.io` first, or its resources are deleted with it.
+3. Delete the old `ApplicationSet` with `--cascade=orphan`. Otherwise it keeps restoring the
+   finalizer on the `Application` objects it generated.
+4. Remove the finalizer from each remaining `Application` in the old namespace, then delete them.
+   The new instance adopts their resources.
+5. Delete the old `ArgoCD` and its `cluster-admin-<old-name>-argocd-application-controller`
+   binding. When the name and namespace change together, also look for an instance with the NEW
+   name in the OLD namespace: the name can reach the policy before the label does, and it builds
+   one there for that interval.
 
 
 ### Master nodes
@@ -747,6 +782,14 @@ no interactive administrator until you either configure OpenID Connect and list 
 |---------------------------------------|-------------------|---------------------------|-------|
 | `gitops-dev`                          | bool              |                           | If not set Developer OpenShift GitOps instances will not be managed |
 | `gitops-dev-team-{INSERT_TEAM_NAME}`  | string        |                           | Team that can deploy onto cluster from dev team gitops. Must match a team in the `gitops-dev` helm chart values file |
+
+**Config block** (`config.gitops.teams.<team>.projects`):
+
+AppProjects for the team, keyed by name. Each entry is the `AppProject` spec as written, created
+where the team's Argo CD reads it and enforced exactly. With an agent, `default` is derived from the
+agent settings and an entry named `default` replaces it. See
+[Argo CD agent: Projects](gitops-agent.md#projects), which also covers labeling the namespaces a
+team deploys into.
 
 ### Loki
 
