@@ -1,0 +1,42 @@
+# cluster-admin for the users in config.htpasswd.clusterAdmins, through one Group.
+#
+# Config (rendered-config, under htpasswd):
+#   clusterAdmins[]   usernames to make cluster administrators (optional; empty means none)
+#
+# The users are members of the Group autoshift-cluster-admins, and one ClusterRoleBinding grants
+# that Group cluster-admin. The Group is mustonlyhave, so its users list is authoritative: removing a
+# name from config removes that user from the Group, and with it their cluster-admin. A per-user
+# ClusterRoleBinding would instead be left behind when the name was removed.
+#
+# AutoShift owns this Group outright. A user added to it by hand is removed on the next evaluation.
+#
+# The Group and binding are written even when clusterAdmins is empty, so that emptying the list
+# revokes every grant rather than leaving the last one in place.
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- $cfg := (index ($raw | fromYaml | default dict) "htpasswd" | default dict) hub}}
+  {{hub- $admins := (dig "clusterAdmins" (list) $cfg) hub}}
+  {{hub- range $a := $admins hub}}
+  {{hub- if not $a hub}}{{hub fail "htpasswd: config.htpasswd.clusterAdmins contains an empty username" hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: user.openshift.io/v1
+      kind: Group
+      metadata:
+        name: autoshift-cluster-admins
+      users: {{hub $admins | toJson hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: autoshift-cluster-admins
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: cluster-admin
+      subjects:
+        - apiGroup: rbac.authorization.k8s.io
+          kind: Group
+          name: autoshift-cluster-admins
