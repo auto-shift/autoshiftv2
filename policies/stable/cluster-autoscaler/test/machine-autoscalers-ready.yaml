@@ -1,0 +1,52 @@
+# Does every class configured in config.clusterAutoscaler.machineSets have a MachineSet to scale?
+#
+# A class that matches no MachineSet renders no MachineAutoscaler, so the main policy is Compliant
+# while that class is never autoscaled. This check classifies the MachineSets the same way as
+# manifests/cluster-autoscaler.yaml and fails, naming the class, when a configured class matches
+# none. For each MachineSet that does match, it asserts the MachineAutoscaler exists with the
+# configured range. With no machineSets configured it asserts only the ClusterAutoscaler, so the
+# check is never empty.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $hubSets := (dig "clusterAutoscaler" "machineSets" (dict) $cfg) hub}}
+  {{- $sets := fromJson `{{hub $hubSets | toJson hub}}` }}
+  {{- $matched := dict }}
+  {{- $items := list }}
+  {{- range $ms := (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items }}
+  {{- $nodeLabels := (dig "spec" "template" "spec" "metadata" "labels" dict $ms) }}
+  {{- $role := (dig "spec" "template" "metadata" "labels" "machine.openshift.io/cluster-api-machine-role" "" $ms) }}
+  {{- $class := "" }}
+  {{- if hasKey $nodeLabels "cluster.ocs.openshift.io/openshift-storage" }}{{- $class = "storage" }}
+  {{- else if or (hasKey $nodeLabels "node-role.kubernetes.io/gpu") (hasKey $nodeLabels "cluster-api/accelerator") }}{{- $class = "gpu" }}
+  {{- else if eq $role "infra" }}{{- $class = "infra" }}
+  {{- else if eq $role "worker" }}{{- $class = "worker" }}
+  {{- end }}
+  {{- if and (ne $class "storage") (hasKey $sets $class) }}
+  {{- $_ := set $matched $class true }}
+  {{- $items = append $items (dict "name" $ms.metadata.name "class" $class) }}
+  {{- end }}
+  {{- end }}
+  {{- range $class, $r := $sets }}
+  {{- if not (hasKey $matched $class) }}
+  {{- fail (printf "config.clusterAutoscaler.machineSets.%s is set, but no MachineSet in openshift-machine-api is classified as %s, so nothing of that class is autoscaled" $class $class) }}
+  {{- end }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: autoscaling.openshift.io/v1
+      kind: ClusterAutoscaler
+      metadata:
+        name: default
+  {{- range $i := $items }}
+  {{- $r := index $sets $i.class }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: autoscaling.openshift.io/v1beta1
+      kind: MachineAutoscaler
+      metadata:
+        name: {{ $i.name }}
+        namespace: openshift-machine-api
+      spec:
+        minReplicas: {{ $r.minReplicas }}
+        maxReplicas: {{ $r.maxReplicas }}
+  {{- end }}
