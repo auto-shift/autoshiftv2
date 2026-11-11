@@ -9,75 +9,86 @@ object-templates-raw: |
   {{hub- $defaultTargetSecret := (dig "sharedSecretName" "" $far) hub}}
   {{hub- $clusterName := .ManagedClusterName hub}}
   {{hub- range $t := $templates hub}}
-    {{hub- $tplName := (dig "name" "" $t) hub}}
-    {{hub- $agent := (dig "agent" "fence_redfish" $t) hub}}
-    {{hub- $strategy := (dig "remediationStrategy" "OutOfServiceTaint" $t) hub}}
-    {{hub- $retrycountRaw := (dig "retrycount" 5 $t) hub}}
-    {{hub- $retrycount := (int $retrycountRaw) hub}}
-    {{hub- $retryinterval := (dig "retryinterval" "5s" $t) hub}}
-    {{hub- $timeout := (dig "timeout" "300s" $t) hub}}
-    {{hub- $secret := (dig "sharedSecretName" $defaultTargetSecret $t) hub}}
-    {{hub- if empty $secret hub}}
-      {{hub- $secret = (printf "%s-secret" $tplName) hub}}
-    {{hub- end hub}}
-    {{hub- $sharedparameters := (dig "sharedparameters" (dict) $t) hub}}
-    {{hub- $nodeparameters := (dig "nodeparameters" (dict) $t) hub}}
-    {{hub- $autoNodeIPsFromBMH := (dig "autoNodeIPsFromBMH" false $t) hub}}
-    {{hub- $nodeSecretNames := (dig "nodeSecretNames" (dict) $t) hub}}
-    {{hub- if empty $tplName hub}}
-      {{ fail "far.templates[].name is required and cannot be empty" }}
-    {{hub- end hub}}
-    {{hub- if and (kindIs "string" $retrycountRaw) (not (regexMatch "^[0-9]+$" $retrycountRaw)) hub}}
-      {{ fail (printf "far.templates[%s].retrycount must be an integer value, for example: retrycount: 15" $tplName) }}
-    {{hub- end hub}}
-    {{hub- if and (not $autoNodeIPsFromBMH) (empty $sharedparameters) (empty $nodeparameters) hub}}
-      {{ fail (printf "far.templates[%s] requires sharedparameters and/or nodeparameters, or set autoNodeIPsFromBMH=true to fill nodeparameters.--ip from BareMetalHost data" $tplName) }}
-    {{hub- end hub}}
-    {{hub- $fillAutoIP := and $autoNodeIPsFromBMH (not (hasKey $nodeparameters "--ip")) hub}}
-    {{hub- if $fillAutoIP hub}}
-      {{hub- $hubAutoIPs := dict hub}}
-      {{hub- $hubBmhs := (lookup "metal3.io/v1alpha1" "BareMetalHost" $clusterName "").items | default (list) hub}}
-      {{hub- range $bmh := $hubBmhs hub}}
-        {{hub- $nodeName := dig "metadata" "annotations" "bmac.agent-install.openshift.io/hostname" "" $bmh hub}}
-        {{hub- if empty $nodeName hub}}
-          {{hub- $nodeName = dig "metadata" "name" "" $bmh hub}}
-        {{hub- end hub}}
-        {{hub- $bmcAddr := dig "spec" "bmc" "address" "" $bmh hub}}
-        {{hub- $withoutScheme := regexReplaceAll "^[a-zA-Z0-9+.-]+://([^@/]+@)?" $bmcAddr "" hub}}
-        {{hub- $hostPort := regexReplaceAll "/.*$" $withoutScheme "" hub}}
-        {{hub- $host := regexReplaceAll ":([0-9]+)$" $hostPort "" hub}}
-        {{hub- if and $nodeName $host hub}}
-          {{hub- $_ := set $hubAutoIPs $nodeName $host hub}}
-        {{hub- end hub}}
-      {{hub- end hub}}
-      {{hub- if empty $hubAutoIPs hub}}
-        {{hub- $hubCms := (lookup "v1" "ConfigMap" $clusterName "").items | default (list) hub}}
-        {{hub- range $cmItem := $hubCms hub}}
-          {{hub- $cmName := dig "metadata" "name" "" $cmItem hub}}
-          {{hub- if regexMatch "^bmh-" $cmName hub}}
-            {{hub- $bmhYaml := dig "data" "BareMetalHost" "" $cmItem hub}}
-            {{hub- if not (empty $bmhYaml) hub}}
-              {{hub- $bmh := ($bmhYaml | fromYaml | default dict) hub}}
-              {{hub- $nodeName := dig "metadata" "annotations" "bmac.agent-install.openshift.io/hostname" "" $bmh hub}}
-              {{hub- if empty $nodeName hub}}
-                {{hub- $nodeName = dig "metadata" "name" "" $bmh hub}}
-              {{hub- end hub}}
-              {{hub- $bmcAddr := dig "spec" "bmc" "address" "" $bmh hub}}
-              {{hub- $withoutScheme := regexReplaceAll "^[a-zA-Z0-9+.-]+://([^@/]+@)?" $bmcAddr "" hub}}
-              {{hub- $hostPort := regexReplaceAll "/.*$" $withoutScheme "" hub}}
-              {{hub- $host := regexReplaceAll ":([0-9]+)$" $hostPort "" hub}}
-              {{hub- if and $nodeName $host hub}}
-                {{hub- $_ := set $hubAutoIPs $nodeName $host hub}}
-              {{hub- end hub}}
-            {{hub- end hub}}
-          {{hub- end hub}}
-        {{hub- end hub}}
-      {{hub- end hub}}
-      {{hub- if not (empty $hubAutoIPs) hub}}
-        {{hub- $_ := set $nodeparameters "--ip" $hubAutoIPs hub}}
-        {{hub- $fillAutoIP = false hub}}
-      {{hub- end hub}}
-    {{hub- end hub}}
+  {{hub- $tplName := (dig "name" "" $t) hub}}
+  {{hub- $agent := (dig "agent" "fence_redfish" $t) hub}}
+  {{hub- $strategy := (dig "remediationStrategy" "OutOfServiceTaint" $t) hub}}
+  {{hub- $retrycountRaw := (dig "retrycount" 5 $t) hub}}
+  {{hub- $retrycount := (int $retrycountRaw) hub}}
+  {{hub- $retryinterval := (dig "retryinterval" "5s" $t) hub}}
+  {{hub- $timeout := (dig "timeout" "300s" $t) hub}}
+  {{hub- $secret := (dig "sharedSecretName" $defaultTargetSecret $t) hub}}
+  {{hub- if empty $secret hub}}
+  {{hub- $secret = (printf "%s-secret" $tplName) hub}}
+  {{hub- end hub}}
+  {{hub- $sharedparameters := (dig "sharedparameters" (dict) $t) hub}}
+  {{hub- $nodeparameters := (dig "nodeparameters" (dict) $t) hub}}
+  {{hub- $autoNodeIPsFromBMH := (dig "autoNodeIPsFromBMH" false $t) hub}}
+  {{hub- $nodeSecretNames := (dig "nodeSecretNames" (dict) $t) hub}}
+  {{hub- if empty $tplName hub}}
+    {{ fail "far.templates[].name is required and cannot be empty" }}
+  {{hub- end hub}}
+  {{hub- if and (kindIs "string" $retrycountRaw) (not (regexMatch "^[0-9]+$" $retrycountRaw)) hub}}
+    {{ fail (printf "far.templates[%s].retrycount must be an integer value, for example: retrycount: 15" $tplName) }}
+  {{hub- end hub}}
+  {{hub- if and (not $autoNodeIPsFromBMH) (empty $sharedparameters) (empty $nodeparameters) hub}}
+    {{ fail (printf "far.templates[%s] requires sharedparameters and/or nodeparameters, or set autoNodeIPsFromBMH=true to fill nodeparameters.--ip from BareMetalHost data" $tplName) }}
+  {{hub- end hub}}
+  {{hub- $fillAutoIP := and $autoNodeIPsFromBMH (not (hasKey $nodeparameters "--ip")) hub}}
+  {{hub- if $fillAutoIP hub}}
+  {{hub- $hubAutoIPs := dict hub}}
+  {{hub- $hubBmhs := (lookup "metal3.io/v1alpha1" "BareMetalHost" $clusterName "").items | default (list) hub}}
+  {{hub- range $bmh := $hubBmhs hub}}
+  {{hub- $nodeName := dig "metadata" "annotations" "bmac.agent-install.openshift.io/hostname" "" $bmh hub}}
+  {{hub- if empty $nodeName hub}}
+  {{hub- $nodeName = dig "metadata" "name" "" $bmh hub}}
+  {{hub- end hub}}
+  {{hub- $bmcAddr := dig "spec" "bmc" "address" "" $bmh hub}}
+  {{hub- $withoutScheme := regexReplaceAll "^[a-zA-Z0-9+.-]+://([^@/]+@)?" $bmcAddr "" hub}}
+  {{hub- $hostPort := regexReplaceAll "/.*$" $withoutScheme "" hub}}
+  {{hub- $host := regexReplaceAll ":([0-9]+)$" $hostPort "" hub}}
+  {{hub- if and $nodeName $host hub}}
+  {{hub- $_ := set $hubAutoIPs $nodeName $host hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if empty $hubAutoIPs hub}}
+  {{hub- $hubCms := (lookup "v1" "ConfigMap" $clusterName "").items | default (list) hub}}
+  {{hub- range $cmItem := $hubCms hub}}
+  {{hub- $cmName := dig "metadata" "name" "" $cmItem hub}}
+  {{hub- if regexMatch "^bmh-" $cmName hub}}
+  {{hub- $bmhYaml := dig "data" "BareMetalHost" "" $cmItem hub}}
+  {{hub- if not (empty $bmhYaml) hub}}
+  {{hub- $bmh := ($bmhYaml | fromYaml | default dict) hub}}
+  {{hub- $nodeName := dig "metadata" "annotations" "bmac.agent-install.openshift.io/hostname" "" $bmh hub}}
+  {{hub- if empty $nodeName hub}}
+  {{hub- $nodeName = dig "metadata" "name" "" $bmh hub}}
+  {{hub- end hub}}
+  {{hub- $bmcAddr := dig "spec" "bmc" "address" "" $bmh hub}}
+  {{hub- $withoutScheme := regexReplaceAll "^[a-zA-Z0-9+.-]+://([^@/]+@)?" $bmcAddr "" hub}}
+  {{hub- $hostPort := regexReplaceAll "/.*$" $withoutScheme "" hub}}
+  {{hub- $host := regexReplaceAll ":([0-9]+)$" $hostPort "" hub}}
+  {{hub- if and $nodeName $host hub}}
+  {{hub- $_ := set $hubAutoIPs $nodeName $host hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if not (empty $hubAutoIPs) hub}}
+  {{hub- $_ := set $nodeparameters "--ip" $hubAutoIPs hub}}
+  {{hub- $fillAutoIP = false hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $tplSpec := dict "agent" $agent "remediationStrategy" $strategy "retrycount" $retrycount "retryinterval" $retryinterval "timeout" $timeout "sharedSecretName" $secret hub}}
+  {{hub- if not (empty $nodeSecretNames) hub}}
+  {{hub- $_ := set $tplSpec "nodeSecretNames" $nodeSecretNames hub}}
+  {{hub- end hub}}
+  {{hub- if not (empty $sharedparameters) hub}}
+  {{hub- $_ := set $tplSpec "sharedparameters" $sharedparameters hub}}
+  {{hub- end hub}}
+  {{hub- if not (empty $nodeparameters) hub}}
+  {{hub- $_ := set $tplSpec "nodeparameters" $nodeparameters hub}}
+  {{hub- end hub}}
+  {{hub- if not $fillAutoIP hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: fence-agents-remediation.medik8s.io/v1alpha1
@@ -87,54 +98,41 @@ object-templates-raw: |
         namespace: openshift-workload-availability
       spec:
         template:
-          spec:
-            agent: '{{hub $agent hub}}'
-            remediationStrategy: '{{hub $strategy hub}}'
-            retrycount: {{hub $retrycount hub}}
-            retryinterval: '{{hub $retryinterval hub}}'
-            timeout: '{{hub $timeout hub}}'
-            sharedSecretName: '{{hub $secret hub}}'
-            {{hub- if not (empty $nodeSecretNames) hub}}
-            nodeSecretNames:
-              {{hub $nodeSecretNames | toYaml | autoindent hub}}
-            {{hub- end hub}}
-            {{hub- if not (empty $sharedparameters) hub}}
-            sharedparameters:
-              {{hub- range $k, $v := $sharedparameters hub}}
-              '{{hub $k hub}}': '{{hub $v hub}}'
-              {{hub- end hub}}
-            {{hub- end hub}}
-            {{hub- if or (not (empty $nodeparameters)) $fillAutoIP hub}}
-            nodeparameters:
-              {{hub- range $k, $v := $nodeparameters hub}}
-              '{{hub $k hub}}':
-                {{hub- if kindIs "map" $v hub}}
-                {{hub $v | toYaml | autoindent hub}}
-                {{hub- else hub}}
-                '{{hub $v hub}}'
-                {{hub- end hub}}
-              {{hub- end hub}}
-              {{hub- if $fillAutoIP hub}}
-              '--ip':
-                {{- $bmhs := (lookup "metal3.io/v1alpha1" "BareMetalHost" "openshift-machine-api" "").items | default (list) -}}
-                {{- $autoIPs := dict -}}
-                {{- range $bmh := $bmhs -}}
-                {{- $nodeName := dig "metadata" "annotations" "bmac.agent-install.openshift.io/hostname" "" $bmh -}}
-                {{- if empty $nodeName -}}
-                {{- $nodeName = dig "metadata" "name" "" $bmh -}}
-                {{- end -}}
-                {{- $bmcAddr := dig "spec" "bmc" "address" "" $bmh -}}
-                {{- $withoutScheme := regexReplaceAll "^[a-zA-Z0-9+.-]+://([^@/]+@)?" $bmcAddr "" -}}
-                {{- $hostPort := regexReplaceAll "/.*$" $withoutScheme "" -}}
-                {{- $host := regexReplaceAll ":([0-9]+)$" $hostPort "" -}}
-                {{- if and $nodeName $host -}}
-                {{- $_ := set $autoIPs $nodeName $host -}}
-                {{- end -}}
-                {{- end -}}
-                {{- if empty $autoIPs -}}
-                {{- fail "FAR: autoNodeIPsFromBMH=true but no BMC IPs found. Hub found none in namespace {{hub $clusterName hub}} (BareMetalHost CRs and bmh-* ConfigMaps), and spoke openshift-machine-api was empty. Set nodeparameters.--ip explicitly or set autoNodeIPsFromBMH=false." -}}
-                {{- end -}}
-                {{- toYaml $autoIPs | nindent 16 }}
-              {{hub- end hub}}
-            {{hub- end hub}}
+          spec: {{hub $tplSpec | toRawJson hub}}
+  {{hub- end hub}}
+  {{hub- if $fillAutoIP hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: fence-agents-remediation.medik8s.io/v1alpha1
+      kind: FenceAgentsRemediationTemplate
+      metadata:
+        name: '{{hub $tplName hub}}'
+        namespace: openshift-workload-availability
+      spec:
+        template:
+          spec: {{- $tplSpec := ({{hub $tplSpec | toRawJson | quote hub}} | fromJson) -}}
+            {{- $bmhs := (lookup "metal3.io/v1alpha1" "BareMetalHost" "openshift-machine-api" "").items | default (list) -}}
+            {{- $autoIPs := dict -}}
+            {{- range $bmh := $bmhs -}}
+            {{- $nodeName := dig "metadata" "annotations" "bmac.agent-install.openshift.io/hostname" "" $bmh -}}
+            {{- if empty $nodeName -}}
+            {{- $nodeName = dig "metadata" "name" "" $bmh -}}
+            {{- end -}}
+            {{- $bmcAddr := dig "spec" "bmc" "address" "" $bmh -}}
+            {{- $withoutScheme := regexReplaceAll "^[a-zA-Z0-9+.-]+://([^@/]+@)?" $bmcAddr "" -}}
+            {{- $hostPort := regexReplaceAll "/.*$" $withoutScheme "" -}}
+            {{- $host := regexReplaceAll ":([0-9]+)$" $hostPort "" -}}
+            {{- if and $nodeName $host -}}
+            {{- $_ := set $autoIPs $nodeName $host -}}
+            {{- end -}}
+            {{- end -}}
+            {{- if empty $autoIPs -}}
+            {{- fail "FAR: autoNodeIPsFromBMH=true but no BMC IPs found. Hub found none in namespace {{hub $clusterName hub}} (BareMetalHost CRs and bmh-* ConfigMaps), and spoke openshift-machine-api was empty. Set nodeparameters.--ip explicitly or set autoNodeIPsFromBMH=false." -}}
+            {{- end -}}
+            {{- $np := (index $tplSpec "nodeparameters" | default dict) -}}
+            {{- if not (kindIs "map" $np) -}}{{- $np = dict -}}{{- end -}}
+            {{- $_ := set $np "--ip" $autoIPs -}}
+            {{- $_ := set $tplSpec "nodeparameters" $np -}}
+            {{- $tplSpec | toRawJson }}
+  {{hub- end hub}}
   {{hub- end hub}}

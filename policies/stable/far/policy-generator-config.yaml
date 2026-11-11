@@ -45,14 +45,45 @@ policies:
     customMessage:
       noncompliant: >
         {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}.
-        Verify far.sharedSecretNamespace/sourceSecretName/sharedSecretName (or per-template overrides)
-        and confirm the source Secret exists on the managed cluster.
+        For secretsMode=copy, verify far.sharedSecretNamespace/sourceSecretName/sharedSecretName
+        (or per-template overrides) and confirm the source Secret exists on the managed cluster.
+        For secretsMode=external, the copy policy only asserts the FAR namespace; see
+        policy-far-secrets-ready for the Secret gate.
+  # Inform gate: target Secrets must exist in openshift-workload-availability with FAR keys.
+  # Blocks remediation templates until copy or external delivery has landed them.
+  - name: policy-far-secrets-ready
+    remediationAction: inform
+    dependencies:
+      - name: policy-far-secrets
+    manifests:
+      - path: test/bmc-secret-ready.yaml
+    customMessage:
+      noncompliant: >
+        {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}.
+        Confirm far.sharedSecretName (and nodeSecretNames) exist in openshift-workload-availability
+        with --username and --password keys. Missing keys fail this inform gate. For secretsMode=copy
+        the enforce secrets policy writes them; for secretsMode=external, External Secrets Operator
+        or another out-of-band process must land Secrets with those FAR keys there.
+  # Inform: surfaces active FenceAgentsRemediation objects (Node Health Check fencing a node).
+  # Does not gate remediation templates.
+  - name: policy-far-active-remediations
+    remediationAction: inform
+    dependencies:
+      - name: policy-far-operator-install
+    manifests:
+      - path: test/far-active-remediations.yaml
+    customMessage:
+      noncompliant: >
+        {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}.
+        A FenceAgentsRemediation in openshift-workload-availability means Node Health Check is
+        remediating a node. Investigate the NodeHealthCheck and the named remediation; this policy
+        becomes Compliant when no FenceAgentsRemediation objects remain.
   # Self-managed hub / local-cluster only: no hubTemplateOptions (blocks replication there).
   - name: policy-far-remediation-templates
     placement:
       placementPath: placement-remediation-hub.yaml
     dependencies:
-      - name: policy-far-secrets
+      - name: policy-far-secrets-ready
     manifests:
       - path: manifests/far-templates-spoke/far-template.yaml
     customMessage:
@@ -65,7 +96,7 @@ policies:
     hubTemplateOptions:
       serviceAccountName: autoshift-policy-service-account
     dependencies:
-      - name: policy-far-secrets
+      - name: policy-far-secrets-ready
     manifests:
       - path: manifests/far-templates/far-template.yaml
     customMessage:
