@@ -1,0 +1,29 @@
+# inform: each ClusterIssuer from config.certManager.issuers is Ready.
+#
+# cert-manager sets Ready=True only once an issuer actually works. For ACME that means the account
+# registered with the server, so a bad or missing EAB key, an unreachable server or a missing account
+# key Secret shows up here as NonCompliant, while policy-cert-manager-issuers reports Compliant
+# because the ClusterIssuer object matches. For a CA issuer it means the key pair Secret exists.
+#
+# Not caught here: DNS01 and HTTP01 solver credentials, such as a DNS provider token, are only used
+# when a Certificate is issued. policy-cert-manager-api-cert-ready and
+# policy-cert-manager-ingress-cert-ready surface that once a Certificate uses the issuer.
+#
+# One object per issuer is safe because each has its own name.
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- $issuers := (dig "certManager" "issuers" (list) ($raw | fromYaml | default dict)) hub}}
+  {{hub- if not $issuers hub}}{{hub fail "cert-manager: config.certManager.issuers is missing or empty in the rendered-config ConfigMap" hub}}{{hub- end hub}}
+  {{hub- range $i := $issuers hub}}
+  {{hub- if not (dig "name" "" $i) hub}}{{hub fail "cert-manager: every config.certManager.issuers entry needs both name and spec" hub}}{{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: {{hub (dig "name" "" $i) | toJson hub}}
+      status:
+        conditions:
+          - type: Ready
+            status: 'True'
+  {{hub- end hub}}
