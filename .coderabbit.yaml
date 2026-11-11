@@ -1,0 +1,111 @@
+# CodeRabbit review settings: https://docs.coderabbit.ai/reference/configuration
+# Pull requests from forks use the copy of this file on the target branch.
+language: en-US
+tone_instructions: Direct and specific. Report defects with the failure they cause; skip style nits.
+
+reviews:
+  profile: chill
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - ^main$
+  path_filters:
+    - '!**/*.drawio.svg'
+    - '!**/go.sum'
+  tools:
+    # Helm and ACM templates are not plain YAML, and Vale is the prose gate.
+    yamllint:
+      enabled: false
+    markdownlint:
+      enabled: false
+  path_instructions:
+    - path: 'policies/**/manifests/**'
+      instructions: &policy_templates |
+        These are Red Hat Advanced Cluster Management 2.17 policy templates. The validation suite proves
+        they render; it does not prove they enforce anything. Look for:
+        - A ConfigurationPolicy that can render no objects. It reports Compliant while applying nothing.
+          Required input read with `lookup ... | default dict` hides a missing object; it must fail with
+          `fail` or `fromConfigMap` instead.
+        - `musthave` never removes a field and appends to lists of objects. A value turned off or removed
+          in config stays on the live object, and a changed list entry becomes a second entry. Flag any
+          option whose "off" state depends on a field disappearing.
+        - Two object templates for the same object in one policy: only the first applies.
+        - A list key whose items are all conditional renders `key: null`, which clears the live list.
+        - `{{hub ... hub}}` used for something local to the target cluster, or `.ManagedClusterLabels`
+          read in a regular `{{ }}` template, where it is nil.
+        - A hub `lookup`, `fromConfigMap` or `fromSecret` outside the policy namespace needs
+          `hubTemplateOptions.serviceAccountName` on the policy entry, or it fails on the hub.
+        - Hub `fromSecret` returns an encrypted token: never pipe it to `base64dec` or compose it.
+        - Inside a block scalar, `{{-` must sit at the same indentation as the content around it;
+          multi-line output needs `autoindent`; `toInt`, `toBool` and `toLiteral` values must be quoted.
+        - Values copied into YAML unquoted (tags, labels, names) that can be numbers or contain `: `.
+        - `.PolicyMetadata`, `.ManagedClusterName` or `.ManagedClusterLabels` read inside `range`.
+        - Lookups indexed by position (`items[0]`) or by list order instead of by name or label, and
+          two policies that must agree on "which object" choosing it differently.
+        - `| default` on a value where `0` or `false` is legitimate.
+        - Functions the ACM engine lacks: `env`, `expandenv`, Helm-only `required`, `tpl`, `include`.
+        - An existence or readiness check bundled into an enforcing policy instead of its own inform
+          policy under `test/`.
+        - `mustnothave` used to assert a field value (it deletes the whole object).
+        - `mustonlyhave` on an object another controller owns, without read-modify-write.
+        - A fake object asserted only to force NonCompliant.
+        - Teardown that happens automatically on a mode change or unplacement. Removal must be explicit.
+    - path: 'policies/**/test/**'
+      instructions: *policy_templates
+    - path: 'policies/**/templates/**'
+      instructions: *policy_templates
+    - path: 'policies/**/policy-generator-config.yaml'
+      instructions: |
+        - Every ConfigurationPolicy keeps an `evaluationInterval` with both `compliant` and `noncompliant`,
+          as literals or the `${EVAL_*}` variables, never hub templates.
+        - `dependencies` resolve against the same cluster's copy of the other policy. A dependency on a
+          policy whose placement can miss a cluster this one selects (another label, cluster set or
+          target) stays Pending forever there.
+        - A root `remediationAction` overrides its children; inform checks belong in their own entry.
+        - Policy names follow `policy-<component>-...`, and the placement file, Placement name and
+          policy correspond. Names must fit the length validator.
+        - `${...}` variables belong here and in `placement*.yaml`, never in `manifests/`.
+        - `pruneObjectBehavior` other than `None` deletes objects on unplacement; it needs a stated reason.
+    - path: 'policies/**/placement*.yaml'
+      instructions: |
+        - Check that every placement in one policy directory selects the same clusters the policies
+          assume. A test or readiness policy placed more widely than the policy it checks reports
+          NonCompliant forever on the extra clusters.
+        - Gate with placement, not with an `if` on the same label inside the template.
+    - path: 'autoshift/values/**'
+      instructions: |
+        - Every new `autoshift.io/<key>` label or `config.<key>` must be declared, uncommented, in
+          `autoshift/values/clustersets/_example.yaml` or a `clusters/_example*.yaml`. The suite renders
+          only what the examples set, so a branch gated on an unset key is never tested.
+        - Never put credentials or credential-shaped fields in values. Secrets come through
+          `configSecretRef` to a Secret created out of band.
+        - Labels live in values files only; never on a ManagedCluster directly.
+    - path: 'tools/testdata/**'
+      instructions: |
+        Stubs must use short, low-entropy fake values; this directory is not allowlisted for secret
+        scanning. Secrets use base64 `data:`, and namespaced objects carry `metadata.namespace`.
+    - path: 'tools/internal/resolver/e2e_test.go'
+      instructions: |
+        Do not accept edits that loosen this test to make a policy pass. The fix belongs in the policy or
+        in a `tools/testdata/` stub.
+    - path: 'components/operator-install/**'
+      instructions: |
+        This chart is a source-agnostic pass-through. Flag ACM-specific logic added here, and
+        OwnNamespace operators installed without `targetNamespaces`.
+    - path: '**/*.md'
+      instructions: |
+        Prose follows the Red Hat style enforced by Vale: present tense, no em dashes, no contractions,
+        full Red Hat product names, and none of the banned terms (`IPI`, `hardcoded`, `vs`,
+        `a number of`). Never state a policy count. Check that claims about runtime behavior match the
+        templates in the same change.
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    # AGENTS.md and CLAUDE.md are read by default.
+    filePatterns:
+      - docs/policy-behavior.md
