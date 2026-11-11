@@ -1,0 +1,47 @@
+# cert-manager controller arguments, from config.certManager.controller.overrideArgs.
+#
+# Config (rendered-config, under certManager):
+#   controller.overrideArgs[]   arguments for the cert-manager controller (optional). DNS01 issuers on
+#                               private or split-horizon clusters usually need
+#                               --dns01-recursive-nameservers and --dns01-recursive-nameservers-only so
+#                               challenge TXT records resolve against public DNS.
+#
+# OWNERSHIP: where this policy is placed, AutoShift owns spec.controllerConfig.overrideArgs on
+# CertManager/cluster. The list is set to exactly what config declares, and removed when config
+# declares none; arguments added by hand are removed. Every other spec field is carried over.
+#
+# mustonlyhave, because musthave merges into lists: changing --dns01-recursive-nameservers=... under
+# musthave would leave the old argument next to the new one. mustonlyhave on spec deletes every spec
+# field it is not given, so the live spec is read on the managed cluster and carried over whole.
+#
+# Fails, leaving the CR untouched, when CertManager/cluster cannot be read, which means the
+# cert-manager Operator is not installed or has not created it yet.
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- $args := (dig "certManager" "controller" "overrideArgs" (list) ($raw | fromYaml | default dict)) hub}}
+  {{hub- range $a := $args hub}}
+  {{hub- if not $a hub}}{{hub fail "cert-manager: config.certManager.controller.overrideArgs contains an empty argument" hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{- $want := fromJson `{{hub dict "args" $args | toJson hub}}` }}
+  {{- $cm := (lookup "operator.openshift.io/v1alpha1" "CertManager" "" "cluster") }}
+  {{- if not $cm }}{{- fail "cert-manager: CertManager/cluster could not be read, so the controller arguments were left untouched" }}{{- end }}
+  {{- $spec := (dig "spec" dict $cm) }}
+  {{- $cc := (dig "controllerConfig" dict $spec) }}
+  {{- if $want.args }}
+  {{- $cc = set $cc "overrideArgs" $want.args }}
+  {{- else }}
+  {{- $cc = unset $cc "overrideArgs" }}
+  {{- end }}
+  {{- if $cc }}
+  {{- $spec = set $spec "controllerConfig" $cc }}
+  {{- else }}
+  {{- $spec = unset $spec "controllerConfig" }}
+  {{- end }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: operator.openshift.io/v1alpha1
+      kind: CertManager
+      metadata:
+        name: cluster
+      spec:
+        {{ $spec | toYaml | autoindent }}
