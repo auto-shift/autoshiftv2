@@ -1,0 +1,51 @@
+# ClusterIssuers from config.certManager.issuers. Any issuer type cert-manager supports works (ACME,
+# CA, Vault, Venafi, and so on): each entry's spec is passed through unchanged.
+#
+# Config (rendered-config, under certManager):
+#   issuers[]     ClusterIssuers to create (required, at least one, where this policy is placed)
+#     name        ClusterIssuer name; unique, and not autoshift-ca or autoshift-selfsigned, which
+#                 policy-cert-manager-ca owns
+#     spec        the full ClusterIssuer spec
+#
+# Secrets the spec references (ACME account keys, EAB HMAC keys, DNS provider tokens, CA key pairs)
+# are created out of band, by External Secrets Operator or by hand, in the cert-manager namespace.
+# This policy only names them.
+#
+# mustonlyhave on each ClusterIssuer: AutoShift creates and owns these objects, and musthave would
+# merge into lists such as acme.solvers, so a solver removed from config would stay in place.
+# Removing an entry from config leaves its ClusterIssuer behind (pruneObjectBehavior None); delete
+# it by hand.
+#
+# Fails, rather than rendering nothing, when issuers is missing or empty, when an entry lacks name
+# or spec, when two entries share a name, or when a name is reserved. ACME entries are also checked
+# for server, privateKeySecretRef.name and at least one solver, and, when externalAccountBinding is
+# set, its keyID and keySecretRef.name. Whether the issuer actually works (account registered, EAB
+# key accepted, CA Secret present) is checked by policy-cert-manager-issuers-ready.
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- $issuers := (dig "certManager" "issuers" (list) ($raw | fromYaml | default dict)) hub}}
+  {{hub- if not $issuers hub}}{{hub fail "cert-manager: config.certManager.issuers is missing or empty in the rendered-config ConfigMap" hub}}{{hub- end hub}}
+  {{hub- $seen := dict hub}}
+  {{hub- range $i := $issuers hub}}
+  {{hub- $name := (dig "name" "" $i) hub}}
+  {{hub- $spec := (dig "spec" dict $i) hub}}
+  {{hub- if not (and $name $spec) hub}}{{hub fail "cert-manager: every config.certManager.issuers entry needs both name and spec" hub}}{{hub- end hub}}
+  {{hub- if has $name (list "autoshift-ca" "autoshift-selfsigned") hub}}{{hub fail (printf "cert-manager: issuer name %s is reserved for policy-cert-manager-ca" $name) hub}}{{hub- end hub}}
+  {{hub- if hasKey $seen $name hub}}{{hub fail (printf "cert-manager: issuer name %s appears more than once in config.certManager.issuers" $name) hub}}{{hub- end hub}}
+  {{hub- $_ := set $seen $name true hub}}
+  {{hub- if hasKey $spec "acme" hub}}
+  {{hub- if not (and (dig "acme" "server" "" $spec) (dig "acme" "privateKeySecretRef" "name" "" $spec)) hub}}{{hub fail (printf "cert-manager: ACME issuer %s needs acme.server and acme.privateKeySecretRef.name" $name) hub}}{{hub- end hub}}
+  {{hub- if not (dig "acme" "solvers" (list) $spec) hub}}{{hub fail (printf "cert-manager: ACME issuer %s needs at least one entry in acme.solvers" $name) hub}}{{hub- end hub}}
+  {{hub- if (dig "acme" "externalAccountBinding" dict $spec) hub}}
+  {{hub- if not (and (dig "acme" "externalAccountBinding" "keyID" "" $spec) (dig "acme" "externalAccountBinding" "keySecretRef" "name" "" $spec)) hub}}{{hub fail (printf "cert-manager: ACME issuer %s sets externalAccountBinding without keyID and keySecretRef.name" $name) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: {{hub $name | toJson hub}}
+      spec:
+        {{hub $spec | toYaml | autoindent hub}}
+  {{hub- end hub}}

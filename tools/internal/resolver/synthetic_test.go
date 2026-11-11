@@ -260,6 +260,70 @@ func TestGenerateSyntheticConfigMaps_RenderedConfigContainsHubAndCluster(t *test
 	}
 }
 
+// renderedConfigFor returns the parsed data.config of <name>.rendered-config.
+func renderedConfigFor(t *testing.T, cms []unstructured.Unstructured, name string) map[string]interface{} {
+	t.Helper()
+	for _, cm := range cms {
+		n, _, _ := unstructured.NestedString(cm.Object, "metadata", "name")
+		if n != name+".rendered-config" {
+			continue
+		}
+		raw, _, _ := unstructured.NestedString(cm.Object, "data", "config")
+		var parsed map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			t.Fatalf("parse %s.rendered-config: %v", name, err)
+		}
+		return parsed
+	}
+	t.Fatalf("%s.rendered-config not found", name)
+	return nil
+}
+
+// A cluster's override of a nested hub key must land in that cluster's
+// rendered-config only. It must not write through to cfg.HubConfig, and so
+// must not reach the rendered-config of any other synthetic cluster. The
+// example files collide this way today: every cluster-install example sets
+// config.networking and the baremetal one sets config.ztwim, both of which the
+// hub example also sets.
+func TestGenerateSyntheticConfigMaps_ClusterOverrideDoesNotLeak(t *testing.T) {
+	cfg := &ExampleConfigs{
+		HubConfig: map[string]interface{}{
+			"networking": map[string]interface{}{"mtu": "1500", "proxy": "none"},
+		},
+		ClusterInstallConfig: map[string]interface{}{
+			"networking": map[string]interface{}{"mtu": "9000"},
+		},
+		ClusterInstallExtra: map[string]map[string]interface{}{
+			"aws":       {"aws": map[string]interface{}{"region": "us-east-2"}},
+			"baremetal": {"networking": map[string]interface{}{"proxy": "http://proxy:3128"}},
+		},
+	}
+
+	cms, err := GenerateSyntheticConfigMaps(cfg, "lint-cluster", "policies-autoshift")
+	if err != nil {
+		t.Fatalf("GenerateSyntheticConfigMaps: %v", err)
+	}
+
+	hubNet := cfg.HubConfig["networking"].(map[string]interface{})
+	if hubNet["mtu"] != "1500" || hubNet["proxy"] != "none" {
+		t.Errorf("cfg.HubConfig was mutated: networking = %v", hubNet)
+	}
+
+	want := map[string]map[string]interface{}{
+		"lint-cluster":           {"mtu": "9000", "proxy": "none"},
+		"lint-cluster-aws":       {"mtu": "1500", "proxy": "none"},
+		"lint-cluster-baremetal": {"mtu": "1500", "proxy": "http://proxy:3128"},
+	}
+	for name, wantNet := range want {
+		got, _ := renderedConfigFor(t, cms, name)["networking"].(map[string]interface{})
+		for k, v := range wantNet {
+			if got[k] != v {
+				t.Errorf("%s.rendered-config networking.%s = %v, want %v", name, k, got[k], v)
+			}
+		}
+	}
+}
+
 func TestGenerateSyntheticConfigMaps_NilConfig(t *testing.T) {
 	cms, err := GenerateSyntheticConfigMaps(nil, "lint-cluster", "policies-autoshift")
 	if err != nil {
