@@ -34,13 +34,19 @@ reviews:
     osvScanner:
       enabled: true
   pre_merge_checks:
+    # Do not grade the pull request description against the template checklist.
+    description:
+      mode: 'off'
     custom_checks:
       - name: no-credentials
         mode: error
         instructions: |
-          Fail when the change adds a credential: an API key, token, password, private key, pull
-          secret, a URL with embedded credentials, or a base64 string over 32 characters in values or
-          configuration. Fake values in tools/testdata/ pass only when short and low-entropy.
+          Fail when the change adds a credential: an API key, token, password, private key (any
+          `-----BEGIN ... PRIVATE KEY-----` block), pull secret, a URL with embedded credentials, or a
+          base64 string over 32 characters in values or configuration. Public certificate data is not a
+          credential: a `-----BEGIN CERTIFICATE-----` block, such as an inline CA bundle (`ca:`), passes,
+          including its long base64 lines. Fake values in tools/testdata/ pass only when short and
+          low-entropy.
       - name: ai-attribution
         mode: warning
         instructions: |
