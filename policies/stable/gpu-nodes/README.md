@@ -25,6 +25,16 @@ for it to run on.
 The taint means only workloads that ask for a GPU land on an expensive instance. The GPU operator's
 own operands tolerate it, so the driver stack still installs.
 
+Node Feature Discovery has to run on these nodes too: its PCI vendor label is how the GPU Operator
+finds them. On OpenShift 4.22 the default `nfd-worker` tolerations cover a `NoSchedule` taint, and
+the vendor label appeared on tainted GPU nodes with no extra configuration. OpenShift 4.20 added
+`spec.operand.workerTolerations` to the `NodeFeatureDiscovery` resource for clusters that need them
+stated; to confirm a cluster's worker tolerates the taint:
+
+```bash
+oc get daemonset nfd-worker -n openshift-nfd -o jsonpath='{.spec.template.spec.tolerations}{"\n"}'
+```
+
 ## Two things that are easy to get wrong
 
 **Subnets are inherited, not reconstructed.** The sibling node policies build an AWS subnet filter
@@ -48,12 +58,16 @@ on the bill.
 | Policy | Mode | Asserts |
 |--------|------|---------|
 | `policy-gpu-nodes-aws` | enforce | The MachineSets exist with the requested shape |
-| `policy-gpu-nodes-test` | inform | MachineSets reached their replica count; every GPU node is Ready **and** reports `nvidia.com/gpu` capacity |
+| `policy-gpu-nodes-test` | inform | MachineSets reached their replica count; every GPU node is Ready **and** lists `nvidia.com/gpu` in `status.allocatable` |
 
-The capacity assertion is the one worth having. A GPU node whose driver stack never finished looks
-completely healthy — Ready, schedulable — while reporting no GPU, so every GPU workload sits
-Pending with nothing obviously wrong. Both test assertions are skipped when the replica count is
-`0`, so a parked MachineSet does not report NonCompliant.
+The capacity check is the one worth having. A GPU node whose driver stack never finished looks
+completely healthy (Ready, schedulable) while reporting no GPU, so every GPU workload sits Pending
+with nothing obviously wrong. The policy fails and names the node.
+
+`policy-gpu-nodes-test` is placed only on clusters whose `autoshift.io/gpu-nodes` is set and not `0`,
+so a parked MachineSet is not checked at all. On a placed cluster, every case where there is
+nothing to check fails with a message rather than reporting Compliant: the label missing, no zone to
+check, or no GPU node yet.
 
 ## Extension points not implemented
 
