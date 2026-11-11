@@ -1,0 +1,37 @@
+# Reports when cert-manager TLS was requested but is not in effect.
+#
+# The deploy policy emits the Certificate only when the issuer exists, and leaves the tls component
+# managed when the secret is absent, so Quay serves an Operator-generated self-signed certificate
+# while every other policy reports Compliant. This asserts the two real objects that have to exist
+# for the requested issuer to be in effect, so it reports NonCompliant naming whichever is missing
+# rather than emitting a stand-in object. Inform only, so neither is ever created.
+object-templates-raw: |
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $quayCfg := (index $rcmConfig "quay" | default dict) hub}}
+  {{hub- $tlsCfg := (index $quayCfg "tls" | default dict) hub}}
+  {{hub- $certCfg := (index $tlsCfg "certificate" | default dict) hub}}
+  {{hub- $issuerRef := (index $certCfg "issuerRef" | default dict) hub}}
+  {{hub- $issuerName := (index $issuerRef "name" | default "") hub}}
+  {{hub- $issuerKind := (index $issuerRef "kind" | default "ClusterIssuer") hub}}
+  {{hub- $tlsSecretName := (index $tlsCfg "secretName" | default "") hub}}
+  {{hub- if $issuerName hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: {{hub $issuerKind hub}}
+      metadata:
+        name: {{hub $issuerName hub}}
+        {{hub- if ne $issuerKind "ClusterIssuer" hub}}
+        namespace: quay-enterprise
+        {{hub- end hub}}
+  {{hub- if $tlsSecretName hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub $tlsSecretName hub}}
+        namespace: quay-enterprise
+  {{hub- end hub}}
+  {{hub- end hub}}

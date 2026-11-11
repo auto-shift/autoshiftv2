@@ -1,0 +1,33 @@
+# STIG ocp-allowed-registries and ocp-allowed-registries-for-import. The Compliance Operator ships
+# no automatic remediation for either: the permitted registry list is a site decision.
+#
+# disconnected-mirror also writes this CR (spec.additionalTrustedCA), so the live spec is read and
+# merged rather than replaced. mergeOverwrite replaces lists wholesale, which is what makes
+# removing a registry from config revert it on the cluster instead of leaving it appended.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $reg := (dig "manualRemediations" "imageRegistries" dict $cfg) hub}}
+  {{hub- $allowed := (dig "allowed" (list) $reg) hub}}
+  {{hub- $forImport := (dig "allowedForImport" (list) $reg) hub}}
+  {{hub- if or $allowed $forImport hub}}
+  {{hub- $want := dict hub}}
+  {{hub- if $allowed hub}}
+  {{hub- $_ := set $want "registrySources" (dict "allowedRegistries" $allowed) hub}}
+  {{hub- end hub}}
+  {{hub- if $forImport hub}}
+  {{hub- $_ := set $want "allowedRegistriesForImport" $forImport hub}}
+  {{hub- end hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: Image
+      metadata:
+        name: cluster
+      spec:
+        {{- $want := `
+        {{hub $want | toYaml | autoindent hub}}
+        ` | fromYaml }}
+        {{- $live := (dig "spec" dict ((lookup "config.openshift.io/v1" "Image" "" "cluster") | default dict)) }}
+        {{ mergeOverwrite $live $want | toYaml | autoindent }}
+  {{hub- end hub}}

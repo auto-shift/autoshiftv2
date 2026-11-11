@@ -39,26 +39,6 @@ func lookupHint(errMsg string) string {
 	return stub
 }
 
-// repoRoot walks up from the package directory to find the repository root
-// (identified by the presence of a `policies/` directory).
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "policies")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Skip("could not find repo root (no policies/ directory in any parent)")
-		}
-		dir = parent
-	}
-}
-
 // TestPipeline_EndToEnd runs the full lint-labels pipeline against the real
 // policies/ and autoshift/values/ directories. It mirrors what autoshift-ci
 // does in CI.
@@ -423,6 +403,11 @@ func TestPipeline_EndToEnd(t *testing.T) {
 			}
 		}
 	}
+
+	// A ConfigurationPolicy with nothing to apply reports Compliant, so a policy that renders
+	// empty in every profile shows green while enforcing nothing. Checked here because this is
+	// where the resolved output for every profile already exists.
+	emptyCharts = reportEmptyConfigurationPolicies(t, policiesDir, results, extraCtxs)
 
 	t.Logf("\nACM resolution: %d clean, %d spoke errors, %d hub errors, %d errors across %d managed profiles, %d invalid-YAML, %d helm failures (%d charts × %d profiles)",
 		cleanCharts, warnCharts, hubErrCharts, managedErrCharts, len(extraCtxs), yamlErrCharts, helmFailures, len(results), len(extraCtxs)+1)

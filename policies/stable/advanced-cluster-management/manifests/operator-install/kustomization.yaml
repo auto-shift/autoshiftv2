@@ -2,8 +2,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # Renders the shared components/operator-install chart. ACM installs into open-cluster-management in
 # single-namespace (OwnNamespace) mode — its OperatorGroup scopes targetNamespaces to its own namespace.
-# It also creates the policy namespace (${POLICY_NAMESPACE}) as an extra namespace. The OperatorGroup name
-# is left to the component default (reuse an existing group in the namespace, else the namespace name).
+# It does NOT create the policy namespace. policy-foundation creates that on the cluster AutoShift is
+# deployed to, and on a managed hub the namespace belongs to that hub's own deployment, which is what
+# policy-managed-hub-namespace asserts. The OperatorGroup name is left to the component default (reuse
+# an existing group in the namespace, else the namespace name).
 helmGlobals:
   chartHome: ../../../../../components/
 helmCharts:
@@ -12,8 +14,6 @@ helmCharts:
     valuesInline:
       name: acm
       namespace: open-cluster-management
-      namespaces:
-        - ${POLICY_NAMESPACE}
       targetNamespaces:
         - open-cluster-management
       remediation: ${REMEDIATION}

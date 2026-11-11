@@ -1,0 +1,46 @@
+# NIST sshd-limit-user-access. By default any account with a shell can reach a node over SSH; the
+# rule wants that narrowed with AllowUsers, AllowGroups, DenyUsers or DenyGroups.
+#
+# On Red Hat CoreOS this is narrower than it looks. Only root and core have a real shell, and only
+# core carries authorized keys, so `AllowUsers core` changes nothing operationally. It is worth
+# setting anyway: it is the control's defence in depth, so that an account added later cannot reach
+# a node over SSH without someone also editing this.
+#
+# Written as an sshd_config drop-in through a MachineConfig, which ROLLS EVERY NODE in the listed
+# pools. Prefer AllowUsers over AllowGroups: core's membership of the core group is primary rather
+# than supplementary, so `getent group core` lists no members, and a group form depends on sshd
+# matching the primary group. Naming an account that does not exist locks everyone out of SSH.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $sd := (dig "manualRemediations" "sshdAccess" dict $cfg) hub}}
+  {{hub- $lines := list hub}}
+  {{hub- range $k := (list "AllowUsers" "AllowGroups" "DenyUsers" "DenyGroups") hub}}
+  {{hub- $v := (dig $k (list) $sd) hub}}
+  {{hub- if $v hub}}
+  {{hub- $lines = append $lines (printf "%s %s" $k (join " " $v)) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $lines hub}}
+  {{hub- range $pool := (dig "pools" (list "master" "worker") $sd) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: machineconfiguration.openshift.io/v1
+      kind: MachineConfig
+      metadata:
+        name: 75-{{hub $pool hub}}-sshd-access
+        labels:
+          machineconfiguration.openshift.io/role: {{hub $pool hub}}
+      spec:
+        config:
+          ignition:
+            version: 3.2.0
+          storage:
+            files:
+              - path: /etc/ssh/sshd_config.d/74-autoshift-access.conf
+                mode: 384
+                overwrite: true
+                contents:
+                  source: data:text/plain;charset=utf-8;base64,{{hub (printf "%s\n" (join "\n" $lines)) | b64enc hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

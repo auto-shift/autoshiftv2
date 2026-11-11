@@ -8,8 +8,20 @@ autoshift:
   # When false, policies use their defined remediationAction
   dryRun: false
 
+# Where policies come from. Set the git pair or the OCI pair; the OCI pair wins when present.
+#
+# Git mode renders PolicyGenerator dirs live through the CMP sidecar, so it needs
+# policyGenerator: true below. OCI mode deploys prerendered Helm charts and never uses the CMP.
 autoshiftGitRepo: https://github.com/auto-shift/autoshiftv2.git
 autoshiftGitBranchTag: main
+
+# OCI mode. autoshiftOciRepo alone selects it; both values are required together.
+# autoshiftOciVersion pins the release, because Argo CD does not reliably track a mutable tag.
+# autoshiftOciRepo: oci://quay.io/autoshift/policies
+# autoshiftOciVersion: 0.0.5
+#
+# DEPRECATED: autoshiftOciRegistry was a separate boolean that chose the mode. It still works and
+# still decides, but it is redundant now and should be deleted from your values.
 
 # ArgoCD namespace — single source of truth for all policy charts
 # Per-cluster overrides use the autoshift.io/gitops-namespace label
@@ -20,7 +32,7 @@ gitopsNamespace: openshift-gitops
 #   (validation fails otherwise). true installs the CMP sidecar in the infra ArgoCD repo-server.
 # - OCI mode ships PRERENDERED Helm charts (built in CI by `make render-policy-charts`) and never uses
 #   the CMP, so false is RECOMMENDED — it avoids configuring a sidecar nothing calls. It is NOT
-#   required and is not validated: the ApplicationSet branches on autoshiftOciRegistry, not on this
+#   required and is not validated: the deploy mode is chosen by autoshiftOciRepo, not by this
 #   flag, so an OCI deployment that leaves it true still deploys correctly.
 # The default below is true because the default deploy mode is git/source (no autoshiftOciRegistry).
 # This is the FLEET-WIDE default; a hub can override it in its self-managed clusterset under
@@ -29,7 +41,7 @@ policyGenerator: true
 
 # Optional: Enable versioned ClusterSet names for gradual rollout
 # When true, appends version/branch to all clusterset names
-# - OCI mode: uses autoshiftOciVersion (defaults to "latest", e.g., "hub" -> "hub-0-0-1")
+# - OCI mode: uses autoshiftOciVersion (e.g., "hub" -> "hub-0-0-5")
 # - Git mode: uses autoshiftGitBranchTag (e.g., "hub" -> "hub-main" or "hub-feature-xyz")
 # Use this when deploying multiple AutoShift versions side-by-side
 # versionedClusterSets: false

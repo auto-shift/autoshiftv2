@@ -15,10 +15,10 @@ spec:
   # cross-cutting autoshift config on top. No per-chart $values git ref — top-level autoshift is the
   # only chart that pulls external values files.
   sources:
-    {{- if .Values.autoshiftOciRegistry }}
+    {{- if eq (include "autoshift.ociMode" .) "true" }}
     - path: .
       repoURL: {{ .Values.autoshiftOciRepo }}/cluster-config-maps
-      targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
+      targetRevision: {{ .Values.autoshiftOciVersion }}
     {{- else }}
     - path: policies/stable/cluster-config-maps
       repoURL: {{ .Values.autoshiftGitRepo }}
@@ -29,6 +29,7 @@ spec:
           gitopsNamespace: {{ include "autoshift.gitopsNamespace" . }}
           policy_namespace: {{ printf "policies-%s" .Release.Name }}
           clusterSetSuffix: {{ $clusterSetSuffix }}
+          config: {{ (.Values.config | default dict) | toYaml | nindent 12 }}
           autoshift:
             dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
             evaluationInterval:

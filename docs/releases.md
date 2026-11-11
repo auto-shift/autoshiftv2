@@ -4,7 +4,7 @@ This guide covers how AutoShift releases are created, how OCI mode works, and ho
 
 ## How OCI mode works
 
-AutoShift has two deployment modes controlled by the `autoshiftOciRegistry` value:
+AutoShift has two deployment modes. Setting `autoshiftOciRepo` selects OCI; without it, policies come from git.
 
 ### Git mode (default)
 ```
@@ -17,7 +17,7 @@ Auto-discovers policies/ directories in Git
 Deploys each policy as an ArgoCD Application
 ```
 
-### OCI mode (`autoshiftOciRegistry: true`)
+### OCI mode (`autoshiftOciRepo` set)
 ```
 AutoShift Chart (from OCI)
     |
@@ -61,16 +61,24 @@ All charts share the same version number, set during the release process.
 
 ## OCI configuration values
 
-When deploying from OCI, three values control the behavior. These are set automatically by the `install-autoshift.sh` script generated during the release:
+When deploying from OCI, two values control the behavior. These are set automatically by the `install-autoshift.sh` script generated during the release:
 
 ```yaml
-# Enable OCI mode (boolean, not a URL)
-autoshiftOciRegistry: true
-
-# OCI path where policies are published (Helm charts + PolicyGenerator artifacts)
+# Where the policy charts are published, and the value that selects OCI mode.
+# Change this if you release your own charts.
 autoshiftOciRepo: oci://quay.io/autoshift/policies
 
+# The release to deploy. Argo CD does not reliably track a mutable tag, so pin it.
+# In an ArgoCD Application, inject it from the Application's own targetRevision:
+#   parameters:
+#     - name: autoshiftOciVersion
+#       value: $ARGOCD_APP_SOURCE_TARGET_REVISION
+autoshiftOciVersion: "0.0.5"
 ```
+
+> [!NOTE]
+> `autoshiftOciRegistry` was a separate boolean that selected the mode. It still works and still
+> decides, but it is redundant now and should be deleted from your values.
 
 ## Overview
 
@@ -258,24 +266,36 @@ When enabled, AutoShift:
 
 For disconnected environments, mirror the released artifacts to an internal registry.
 
+[![AutoShift disconnected delivery](diagrams/autoshift-oci-disconnected.drawio.svg)](diagrams/autoshift-oci-disconnected.drawio.svg)
+
 > **One artifact type.** Every AutoShift policy ships as a **Helm chart** under `oci://<registry>/policies/<name>`
 > — the hand-authored holdout charts and the PolicyGenerator policies (rendered to stock Helm charts in CI by
 > `make render-policy-charts`). All are listed in `policy-list.txt`; `helm pull` works on every one. The
 > policy-generator `ConfigManagementPlugin` is never used for OCI.
 
-**Recommended — the `ImageSet` generator.** It discovers every AutoShift artifact (main chart, bootstrap charts,
-all policy charts, plus the operator images each enabled policy needs) and emits an
-`ImageSetConfiguration` for `oc mirror`:
+**Recommended: the `ImageSet` generator.** Every release publishes `imageset-config.yaml`, built by
+`make generate-imageset`. It holds every operator any policy can install, as declared in the
+`_example*.yaml` label contract, whether or not a shipped profile enables it, with each operator's
+dependencies, the main, bootstrap and policy charts, the console plugin image, and the images a few
+components pull outside their operator. An operator the Red Hat catalog does not carry for the
+OpenShift version is left out and named in a comment in the file.
 
 ```bash
-make generate-imageset VERSION=X.Y.Z
-# or call the script directly with your values files:
+make generate-imageset VERSION=X.Y.Z   # the release imageset, in release-artifacts/
+make verify-imageset VERSION=X.Y.Z     # oc-mirror dry run plus an existence check on every extra image
+
+# or mirror only what your own values files enable:
 bash scripts/generate-imageset-config.sh \
-  autoshift/values/global.yaml,autoshift/values/clustersets/hub.yaml \
+  autoshift/values/clustersets/hub.yaml \
   --output imageset-config.yaml --include-autoshift-charts
 
 oc mirror --config imageset-config.yaml docker://registry.example.com
 ```
+
+Generation fails, rather than writing a partial file, when the dependencies cannot be resolved, when a
+values file names a channel or package the catalog does not have, or when an enabled operator is missing
+its `-channel`, `-source` or `-source-namespace` label. CI regenerates and verifies the release imageset
+on every pull request and every Monday, because the Red Hat catalogs change without a commit here.
 
 **Manual alternative**: copy the OCI artifacts registry-to-registry with `oras` (all policies are Helm charts):
 
@@ -295,12 +315,14 @@ for policy in $(cat policy-list.txt); do
 done
 ```
 
-Update the OCI values to point to your internal registry:
+Point `autoshiftOciRepo` at your internal registry. This is the one value to change when you
+publish your own charts, whether to a mirror or to your own namespace:
 
 ```yaml
-autoshiftOciRegistry: true
 autoshiftOciRepo: oci://registry.example.com/autoshift/policies
 ```
+
+`autoshiftOciVersion` needs no change if the Application injects it from its own `targetRevision`.
 
 ## Version management
 

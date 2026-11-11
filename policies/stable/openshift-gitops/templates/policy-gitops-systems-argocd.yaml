@@ -16,6 +16,11 @@ spec:
   remediationAction: inform
 {{ end }}
   disabled: false
+  # The infra agent stanza resolves the principal Route, which lives in the principal namespace.
+  # Without a service account a hub template may only look up inside the policy namespace, and the
+  # whole policy fails to resolve rather than just that value.
+  hubTemplateOptions:
+    serviceAccountName: autoshift-policy-service-account
   dependencies:
     - name: policy-gitops-operator-install
       namespace: {{ .Values.policy_namespace }}
@@ -36,6 +41,10 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
+            {{/* The infra instance name, per cluster from config.gitops.infra.name, else this chart's
+                 default. fromConfigMap for the same reason as the ArgoCD policy below: a missing
+                 rendered-config must fail, not bind cluster-admin to a default name. */}}
+            {{ "{{hub" }} $argoName := (dig "gitops" "infra" "name" "{{ .Values.gitops.argoName }}" (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -49,7 +58,7 @@ spec:
                 apiVersion: rbac.authorization.k8s.io/v1
                 kind: ClusterRoleBinding
                 metadata:
-                  name: cluster-admin-{{ .Values.gitops.argoName }}-argocd-application-controller
+                  name: cluster-admin-{{ "{{hub" }} $argoName {{ "hub}}" }}-argocd-application-controller
                   annotations:
                     helm.sh/hook-weight: "3"
                 roleRef:
@@ -58,7 +67,7 @@ spec:
                   name: cluster-admin
                 subjects:
                 - kind: ServiceAccount
-                  name: {{ .Values.gitops.argoName }}-argocd-application-controller
+                  name: {{ "{{hub" }} $argoName {{ "hub}}" }}-argocd-application-controller
                   namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -75,11 +84,35 @@ spec:
             {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
             {{/* Infra ArgoCD tuning (resources, autoscale, processors, rbac) comes from this cluster's
                  rendered-config ConfigMap (config.gitops.infra), so one policy serves per-cluster values.
-                 Defaults below preserve the previous behavior when a field is unset. */}}
-            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
-            {{ "{{hub-" }} $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+                 When a field is unset there, the default is this chart's values.yaml, rendered in at Helm
+                 time, so bootstrap and day 2 read the same numbers. No inline literals: every key the
+                 templates below reference must exist in values.yaml or the render fails. */}}
+            {{/* fromConfigMap, NOT lookup. The two differ on a MISSING ConfigMap: lookup swallows the
+                 not-found and hands back an empty map, while fromConfigMap returns the error and fails
+                 the template. That difference is the whole point here.
+
+                 cluster-config-maps writes this ConfigMap for every cluster in a known cluster set, with
+                 data.config set to "{}" when nothing is configured, so an empty configuration is still a
+                 PRESENT ConfigMap. Absence therefore never means "no configuration"; it means the
+                 rendered configuration has not landed yet, and there is no ordering between that policy
+                 and this one. With lookup, that window renders a complete and plausible ArgoCD spec
+                 built entirely from defaults, and enforces it -- which is how the repository server lost
+                 its Config Management Plugin and stopped rendering every PolicyGenerator policy on the
+                 hub. Failing the template instead leaves the existing object untouched and reports
+                 template-error until the configuration arrives. */}}
+            {{ "{{hub-" }} $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $infra := (index (index $cfg "gitops" | default dict) "infra" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $argoName := (dig "name" "{{ .Values.gitops.argoName }}" $infra) {{ "hub}}" }}
             {{ "{{hub-" }} $pgEnabled := (index (index $cfg "gitops" | default dict) "policyGenerator" | default false) {{ "hub}}" }}
+            {{ "{{hub-" }} $agentCfg := (index $infra "agent" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $agentNs := (index $infra "agentNamespace" | default "openshift-gitops-infra-agent") {{ "hub}}" }}
+            {{ "{{hub-" }} $infraModeDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") {{ "hub}}" }}
+            {{ "{{hub-" }} $infraMode := (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraModeDefault) {{ "hub}}" }}
+            {{ "{{hub-" }} $pRoute := (lookup "route.openshift.io/v1" "Route" $agentNs "infra-principal-agent-principal") | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $pHost := (dig "spec" "host" "" $pRoute) {{ "hub}}" }}
+            {{ "{{hub-" }} $clientMode := (index $agentCfg "mode" | default "autonomous") {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $infraMode "agent-managed" {{ "hub}}" }}{{ "{{hub-" }} $clientMode = "managed" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $infraMode "agent-autonomous" {{ "hub}}" }}{{ "{{hub-" }} $clientMode = "autonomous" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $server := (index $infra "server" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $serverAutoscale := (index $server "autoscale" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $serverLimits := (index $server "limits" | default dict) {{ "hub}}" }}
@@ -90,6 +123,9 @@ spec:
             {{ "{{hub-" }} $repo := (index $infra "repo" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $repoLimits := (index $repo "limits" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $repoRequests := (index $repo "requests" | default dict) {{ "hub}}" }}
+            {{/* Hoisted because both the volumeMounts and the volumes list below have to know whether
+                 ANY item will be emitted before they write their key. */}}
+            {{ "{{hub-" }} $caBundle := (eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default (printf "%v" (ternary (index $repo "cluster_ca_bundle") {{ $.Values.gitops.repo.cluster_ca_bundle }} (hasKey $repo "cluster_ca_bundle")))) "true") {{ "hub}}" }}
             {{ "{{hub-" }} $ha := (index $infra "ha" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $haLimits := (index $ha "limits" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $haRequests := (index $ha "requests" | default dict) {{ "hub}}" }}
@@ -99,11 +135,40 @@ spec:
             {{ "{{hub-" }} $controller := (index $infra "controller" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $controllerLimits := (index $controller "limits" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $controllerRequests := (index $controller "requests" | default dict) {{ "hub}}" }}
+            {{/* GOMEMLIMIT is DERIVED from the controller memory limit, so the two cannot drift.
+                 The Go runtime does not read the container limit; left unset it collects on GOGC
+                 alone and a refresh storm is killed before it ever collects.
+
+                 trimSuffix is deliberately avoided: the ACM 2.15 and earlier template allowlist
+                 does not carry it. contains and regexReplaceAll are safe on every supported hub.
+
+                 Only Gi and Mi are parsed, which is what Kubernetes quantities use in practice.
+                 Anything else -- a decimal like 1.5Gi, SI units like 8G, or a bare byte count --
+                 leaves the derivation empty and the environment variable is then omitted rather
+                 than guessed. Set controller.goMemLimit explicitly for those, because a value
+                 derived wrongly is worse than none: too low and the runtime collects constantly
+                 without ever using the memory it has. */}}
+            {{ "{{hub-" }} $ctrlMem := (index $controllerLimits "memory" | default "{{ $.Values.gitops.controller.limits.memory }}") {{ "hub}}" }}
+            {{ "{{hub-" }} $gmlPct := (index $controller "goMemLimitPercent" | default {{ $.Values.gitops.controller.goMemLimitPercent }}) {{ "hub}}" }}
+            {{ "{{hub-" }} $gmlMib := 0 {{ "hub}}" }}
+            {{ "{{hub-" }} if not (contains "." $ctrlMem) {{ "hub}}" }}
+            {{ "{{hub-" }} if contains "Gi" $ctrlMem {{ "hub}}" }}
+            {{ "{{hub-" }} $gmlMib = mul ((regexReplaceAll "[^0-9]" $ctrlMem "") | int) 1024 {{ "hub}}" }}
+            {{ "{{hub-" }} else if contains "Mi" $ctrlMem {{ "hub}}" }}
+            {{ "{{hub-" }} $gmlMib = ((regexReplaceAll "[^0-9]" $ctrlMem "") | int) {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $gmlDerived := (ternary (printf "%dMiB" (div (mul $gmlMib $gmlPct) 100)) "" (gt $gmlMib 0)) {{ "hub}}" }}
+            {{ "{{hub-" }} $goMemLimit := (index $controller "goMemLimit" | default $gmlDerived) {{ "hub}}" }}
+            {{ "{{hub-" }} $pgSidecar := (index $infra "policyGenerator" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $pgSidecarLimits := (index $pgSidecar "limits" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $pgSidecarRequests := (index $pgSidecar "requests" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $pgTarExclusions := (index $pgSidecar "tarExclusions" | default (list{{ range $.Values.gitops.policyGenerator.tarExclusions }} {{ . | quote }}{{ end }})) {{ "hub}}" }}
             {{ "{{hub-" }} $applicationSet := (index $infra "applicationSet" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $applicationSetLimits := (index $applicationSet "limits" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $applicationSetRequests := (index $applicationSet "requests" | default dict) {{ "hub}}" }}
-            {{ "{{hub-" }} $rbac := "g, cluster-admins, role:admin\ng, system:cluster-admins, role:admin\n" {{ "hub}}" }}
-            {{ "{{hub-" }} range (index $infra "rbac_policies" | default list) {{ "hub}}" }}
+            {{ "{{hub-" }} $rbac := "" {{ "hub}}" }}
+            {{ "{{hub-" }} range (index $infra "rbac_policies" | default (list{{ range $.Values.gitops.rbac_policies }} {{ . | quote }}{{ end }})) {{ "hub}}" }}
             {{ "{{hub-" }} $rbac = printf "%s%s\n" $rbac . {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{/* The CMP sidecar image is the SAME image as the running argocd-repo-server (operator-set),
@@ -113,43 +178,85 @@ spec:
                  returns nothing in ArgoCD's repo-server. No value fallback: if the repo-server isn't found
                  the image resolves empty and the ArgoCD CR fails loudly rather than retrying a bad pinned
                  tag. The repo-server always exists by the time this day-2 policy runs. */}}
-            {{ "{{" }} $argoRepoDep := (lookup "apps/v1" "Deployment" "{{ .Values.gitops.argoNamespace }}" "{{ .Values.gitops.argoName }}-repo-server") {{ "}}" }}
+            {{ "{{" }} $argoRepoDep := (lookup "apps/v1" "Deployment" "{{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}" "{{ "{{hub" }} $argoName {{ "hub}}" }}-repo-server") {{ "}}" }}
             {{ "{{" }} $argoImageLive := "" {{ "}}" }}
             {{ "{{" }} if $argoRepoDep {{ "}}" }}{{ "{{" }} $argoImageLive = (index $argoRepoDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
-            {{/* Same for the ACM subscription image (ships the PolicyGenerator binary): spoke-side lookup of
-                 the running multicluster-operators-hub-subscription so it matches the hub's ACM version.
-                 No value fallback — the lookup is the source of truth. */}}
-            {{ "{{" }} $acmSubDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "multicluster-operators-hub-subscription") {{ "}}" }}
-            {{ "{{" }} $acmImageLive := "" {{ "}}" }}
-            {{ "{{" }} if $acmSubDep {{ "}}" }}{{ "{{" }} $acmImageLive = (index $acmSubDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
+            {{/* Same for the PolicyGenerator binary, which comes from the ACM CLI downloads image.
+                 Red Hat Advanced Cluster Management moved the binary to that image in 2.15; the copy left
+                 behind in multicluster-operators-subscription is frozen at the release it moved, so on 2.17
+                 it is still a release-2.15 build. Its embedded kustomize probes Helm with
+                 `helm version -c --short`, and Helm 4 (Red Hat OpenShift GitOps 1.22) removed that
+                 shorthand, so every nested Helm render fails. No value fallback: the lookup is the source
+                 of truth, and an empty image fails the ArgoCD CR loudly. */}}
+            {{ "{{" }} $acmCliDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "acm-cli-downloads") {{ "}}" }}
+            {{ "{{" }} $pgImage := "" {{ "}}" }}
+            {{ "{{" }} if $acmCliDep {{ "}}" }}{{ "{{" }} $pgImage = (index $acmCliDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
+            {{- with ((.Values.gitops).policyGenerator).acmCliImage }}
+            {{ "{{" }} $pgImage = {{ . | quote }} {{ "}}" }}
+            {{- end }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: argoproj.io/v1beta1
                 kind: ArgoCD
                 metadata:
-                  name: {{ .Values.gitops.argoName }}
+                  name: {{ "{{hub" }} $argoName {{ "hub}}" }}
                   namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
-                  disableAdmin: {{ "{{hub" }} index $infra "disableAdmin" | default false {{ "hub}}" }}
+                  disableAdmin: {{ "{{hub" }} ternary (index $infra "disableAdmin") {{ $.Values.gitops.disableAdmin }} (hasKey $infra "disableAdmin") {{ "hub}}" }}
+                  {{ "{{hub-" }} if and (hasPrefix "agent" $infraMode) (ne $pHost "") {{ "hub}}" }}
+                  # The Argo CD agent, when gitops-infra selects an agent mode. It belongs on THIS instance
+                  # rather than a sibling: a namespace holds one Argo CD, and the Applications worth mirroring
+                  # are the ones this instance already owns. This policy is placed on hub clustersets, which is
+                  # also the only place an infra instance exists, so the placement is the gate. The credentials
+                  # and the principal come from the gitops-agent policies. Guarded on the principal Route,
+                  # because an empty address yields an agent that never connects. The server stays enabled,
+                  # unlike a team agent: this is the cluster's working Argo CD and its console is expected to
+                  # keep answering.
+                  argoCDAgent:
+                    agent:
+                      enabled: true
+                      allowedNamespaces:
+                        {{ "{{hub-" }} range (index $agentCfg "agentNamespaces" | default (list "*")) {{ "hub}}" }}
+                        - '{{ "{{hub" }} . {{ "hub}}" }}'
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                      # Without creds the agent falls back to userpass, waits on a secret nothing creates, and never
+                      # becomes ready. The operator turns this into ARGOCD_AGENT_CREDS, and mtls:any is what makes
+                      # it present the client certificate below.
+                      creds: 'mtls:any'
+                      client:
+                        mode: {{ "{{hub" }} $clientMode {{ "hub}}" }}
+                        principalServerAddress: {{ "{{hub" }} $pHost {{ "hub}}" }}
+                        principalServerPort: '{{ "{{hub" }} (index $agentCfg "principalServerPort" | default "443") {{ "hub}}" }}'
+                      tls:
+                        insecure: false
+                        rootCASecretName: gitops-agent-ca
+                        secretName: gitops-agent-client-tls
+                  {{ "{{hub-" }} else if eq $infraMode "uninstall" {{ "hub}}" }}
+                  # Teardown. musthave never removes a field, so leaving the stanza out would keep the agent
+                  # running; it has to be switched off explicitly.
+                  argoCDAgent:
+                    agent:
+                      enabled: false
+                  {{ "{{hub-" }} end {{ "hub}}" }}
                   server:
-                    {{ "{{hub-" }} if (index $serverAutoscale "enabled" | default false) {{ "hub}}" }}
+                    {{ "{{hub-" }} if (ternary (index $serverAutoscale "enabled") {{ $.Values.gitops.server.autoscale.enabled }} (hasKey $serverAutoscale "enabled")) {{ "hub}}" }}
                     autoscale:
                       enabled: true
                       hpa:
-                        maxReplicas: {{ "{{hub" }} index $serverAutoscale "maxReplicas" | default 10 {{ "hub}}" }}
+                        maxReplicas: {{ "{{hub" }} index $serverAutoscale "maxReplicas" | default {{ $.Values.gitops.server.autoscale.maxReplicas }} {{ "hub}}" }}
                         scaleTargetRef:
                           apiVersion: "apps/v1"
                           kind: deployment
-                          name: {{ $.Values.gitops.argoName }}-server
-                        targetCPUUtilizationPercentage: {{ "{{hub" }} index $serverAutoscale "targetCPUUtilizationPercentage" | default 50 {{ "hub}}" }}
+                          name: {{ "{{hub" }} $argoName {{ "hub}}" }}-server
+                        targetCPUUtilizationPercentage: {{ "{{hub" }} index $serverAutoscale "targetCPUUtilizationPercentage" | default {{ $.Values.gitops.server.autoscale.targetCPUUtilizationPercentage }} {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $serverLimits "cpu" | default "500m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $serverLimits "memory" | default "256Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $serverLimits "cpu" | default "{{ $.Values.gitops.server.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $serverLimits "memory" | default "{{ $.Values.gitops.server.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $serverRequests "cpu" | default "125m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $serverRequests "memory" | default "128Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $serverRequests "cpu" | default "{{ $.Values.gitops.server.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $serverRequests "memory" | default "{{ $.Values.gitops.server.requests.memory }}" {{ "hub}}" }}
                     route:
                       enabled: true
                   monitoring:
@@ -157,31 +264,60 @@ spec:
                   kustomizeBuildOptions: --enable-helm --helm-command /usr/local/bin/helm --enable-alpha-plugins --load-restrictor LoadRestrictionsNone
                   applicationInstanceLabelKey: argocd.argoproj.io/instance
                   resourceTrackingMethod: annotation+label
+                  # THE CLUSTER CACHE IS THE CONTROLLER'S LARGEST ALLOCATION. It watches every API
+                  # kind in the cluster by default, so its footprint tracks whatever else is
+                  # installed rather than how many Applications exist. The Operator already excludes
+                  # a sane base set (endpoints, leases, subject access reviews, Kyverno reports);
+                  # this adds the kinds that are heavy on an OpenShift hub and that Argo CD never
+                  # manages, because they are generated rather than authored. Measured on one hub:
+                  # 43521 Events, 605 PackageManifests.
+                  #
+                  # Excluding a kind removes it from discovery and sync EVERYWHERE for this
+                  # instance, so anything listed here can no longer be deployed by it. Keep the list
+                  # to generated, never-authored resources. Set config.gitops.infra.resourceExclusions
+                  # to replace it wholesale.
+                  resourceExclusions: |
+                    {{ "{{hub" }} (index $infra "resourceExclusions" | default {{ $.Values.gitops.resourceExclusions | toJson }}) | autoindent {{ "hub}}" }}
                   sso:
                     dex:
                       resources:
                         limits:
-                          cpu: {{ "{{hub" }} index $dexLimits "cpu" | default "500m" {{ "hub}}" }}
-                          memory: {{ "{{hub" }} index $dexLimits "memory" | default "256Mi" {{ "hub}}" }}
+                          cpu: {{ "{{hub" }} index $dexLimits "cpu" | default "{{ $.Values.gitops.dex.limits.cpu }}" {{ "hub}}" }}
+                          memory: {{ "{{hub" }} index $dexLimits "memory" | default "{{ $.Values.gitops.dex.limits.memory }}" {{ "hub}}" }}
                         requests:
-                          cpu: {{ "{{hub" }} index $dexRequests "cpu" | default "125m" {{ "hub}}" }}
-                          memory: {{ "{{hub" }} index $dexRequests "memory" | default "128Mi" {{ "hub}}" }}
+                          cpu: {{ "{{hub" }} index $dexRequests "cpu" | default "{{ $.Values.gitops.dex.requests.cpu }}" {{ "hub}}" }}
+                          memory: {{ "{{hub" }} index $dexRequests "memory" | default "{{ $.Values.gitops.dex.requests.memory }}" {{ "hub}}" }}
                       openShiftOAuth: true
                     provider: dex
                   rbac:
                     defaultPolicy: ''
-                    # cluster-admins + system:cluster-admins get Argo CD admin, plus any entries from
-                    # config.gitops.infra.rbac_policies ($rbac built at the top of this block).
+                    # Every line comes from config.gitops.infra.rbac_policies, falling back to this
+                    # chart's gitops.rbac_policies ($rbac built at the top of this block). Nothing is
+                    # granted implicitly: defaultPolicy is empty, so an empty list means no access
+                    # apart from the built-in admin account. A `g` line takes a user or a group,
+                    # but OpenShift login yields an opaque sub, so groups are the practical unit.
                     policy: {{ "{{hub" }} $rbac | toJson {{ "hub}}" }}
                     scopes: '[groups]'
                   repo:
+                    replicas: {{ "{{hub" }} index $repo "replicas" | default {{ $.Values.gitops.repo.replicas }} {{ "hub}}" }}
+                    {{ "{{hub-" }} if $pgEnabled {{ "hub}}" }}
+                    # Trim the tarball streamed to the CMP sidecar on every render.
+                    extraRepoCommandArgs:
+                      {{ "{{hub-" }} range $pgTarExclusions {{ "hub}}" }}
+                      - --plugin-tar-exclude
+                      - {{ "{{hub" }} . | quote {{ "hub}}" }}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if (index $pgSidecar "useManifestGeneratePaths" | default {{ $.Values.gitops.policyGenerator.useManifestGeneratePaths }}) {{ "hub}}" }}
+                      - --plugin-use-manifest-generate-paths
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $repoLimits "cpu" | default "2000m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $repoLimits "memory" | default "2048Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $repoLimits "cpu" | default "{{ $.Values.gitops.repo.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $repoLimits "memory" | default "{{ $.Values.gitops.repo.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $repoRequests "cpu" | default "500m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $repoRequests "memory" | default "512Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $repoRequests "cpu" | default "{{ $.Values.gitops.repo.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $repoRequests "memory" | default "{{ $.Values.gitops.repo.requests.memory }}" {{ "hub}}" }}
                     {{ "{{hub-" }} if $pgEnabled {{ "hub}}" }}
                     env:
                       - name: POLICY_GEN_ENABLE_HELM
@@ -189,25 +325,31 @@ spec:
                       - name: KUSTOMIZE_PLUGIN_HOME
                         value: /etc/kustomize/plugin
                     initContainers:
-                      # Binary path inside the ACM image varies by version; search known locations.
+                      # Stages the PolicyGenerator binary out of the ACM CLI downloads image.
                       - name: policy-generator-install
-                        image: {{ "{{" }} $acmImageLive {{ "}}" }}
+                        image: {{ "{{" }} $pgImage {{ "}}" }}
                         command: [/bin/sh, -c]
                         args:
                           - |
                             set -e
-                            for src in \
-                              /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator/PolicyGenerator \
-                              /policy-generator/PolicyGenerator \
-                              /policy-generator/PolicyGenerator-rhel8 \
-                              /policy-generator/PolicyGenerator-not-fips-compliant; do
-                              if [ -f "$src" ]; then
-                                cp "$src" /policy-generator-tmp/PolicyGenerator
+                            # /acm-cli holds one tarball per architecture, plus a Red Hat Enterprise Linux 9
+                            # build for x86_64, which is preferred there because it is the FIPS-capable one.
+                            case "$(uname -m)" in
+                              x86_64)  tarballs="PolicyGenerator-rhel9.tar.gz linux-amd64-PolicyGenerator.tar.gz" ;;
+                              aarch64) tarballs="linux-arm64-PolicyGenerator.tar.gz" ;;
+                              ppc64le) tarballs="linux-ppc64le-PolicyGenerator.tar.gz" ;;
+                              s390x)   tarballs="linux-s390x-PolicyGenerator.tar.gz" ;;
+                              *)       tarballs="" ;;
+                            esac
+                            for tarball in $tarballs; do
+                              if [ -f "/acm-cli/$tarball" ]; then
+                                tar -xzf "/acm-cli/$tarball" -C /policy-generator-tmp
                                 chmod +x /policy-generator-tmp/PolicyGenerator
                                 exit 0
                               fi
                             done
-                            echo "PolicyGenerator binary not found in ACM image" >&2
+                            echo "no PolicyGenerator tarball for $(uname -m) in /acm-cli, which holds:" >&2
+                            ls /acm-cli >&2
                             exit 1
                         volumeMounts:
                           - name: policy-generator
@@ -221,6 +363,15 @@ spec:
                         env:
                           - name: KUSTOMIZE_PLUGIN_HOME
                             value: /etc/kustomize/plugin
+                        # The sidecar runs the actual kustomize/PolicyGenerator/Helm render, so it
+                        # needs real CPU. Without resources it competes unbounded and renders time out.
+                        resources:
+                          limits:
+                            cpu: {{ "{{hub" }} index $pgSidecarLimits "cpu" | default "{{ $.Values.gitops.policyGenerator.limits.cpu }}" {{ "hub}}" }}
+                            memory: {{ "{{hub" }} index $pgSidecarLimits "memory" | default "{{ $.Values.gitops.policyGenerator.limits.memory }}" {{ "hub}}" }}
+                          requests:
+                            cpu: {{ "{{hub" }} index $pgSidecarRequests "cpu" | default "{{ $.Values.gitops.policyGenerator.requests.cpu }}" {{ "hub}}" }}
+                            memory: {{ "{{hub" }} index $pgSidecarRequests "memory" | default "{{ $.Values.gitops.policyGenerator.requests.memory }}" {{ "hub}}" }}
                         volumeMounts:
                           - name: var-files
                             mountPath: /var/run/argocd
@@ -234,16 +385,19 @@ spec:
                           - name: policy-generator
                             mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
                     {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if or $pgEnabled $caBundle {{ "hub}}" }}
                     volumeMounts:
                       {{ "{{hub-" }} if $pgEnabled {{ "hub}}" }}
                       - name: policy-generator
                         mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
                       {{ "{{hub-" }} end {{ "hub}}" }}
-                      {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default (printf "%v" (index $repo "cluster_ca_bundle" | default false))) "true" {{ "hub}}" }}
+                      {{ "{{hub-" }} if $caBundle {{ "hub}}" }}
                       - name: user-ca-bundle
                         mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
                         subPath: ca-bundle.crt
                       {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if or $pgEnabled $caBundle {{ "hub}}" }}
                     volumes:
                       {{ "{{hub-" }} if $pgEnabled {{ "hub}}" }}
                       - name: policy-generator
@@ -254,47 +408,61 @@ spec:
                       - name: cmp-tmp
                         emptyDir: {}
                       {{ "{{hub-" }} end {{ "hub}}" }}
-                      {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default (printf "%v" (index $repo "cluster_ca_bundle" | default false))) "true" {{ "hub}}" }}
+                      {{ "{{hub-" }} if $caBundle {{ "hub}}" }}
                       - name: user-ca-bundle
                         configMap:
                           name: user-ca-bundle
                       {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                   ha:
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $haLimits "cpu" | default "500m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $haLimits "memory" | default "256Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $haLimits "cpu" | default "{{ $.Values.gitops.ha.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $haLimits "memory" | default "{{ $.Values.gitops.ha.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $haRequests "cpu" | default "125m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $haRequests "memory" | default "128Mi" {{ "hub}}" }}
-                    enabled: {{ "{{hub" }} index $ha "enabled" | default "false" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $haRequests "cpu" | default "{{ $.Values.gitops.ha.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $haRequests "memory" | default "{{ $.Values.gitops.ha.requests.memory }}" {{ "hub}}" }}
+                    enabled: {{ "{{hub" }} ternary (index $ha "enabled") {{ $.Values.gitops.ha.enabled }} (hasKey $ha "enabled") {{ "hub}}" }}
                   redis:
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $redisLimits "cpu" | default "500m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $redisLimits "memory" | default "256Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $redisLimits "cpu" | default "{{ $.Values.gitops.redis.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $redisLimits "memory" | default "{{ $.Values.gitops.redis.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $redisRequests "cpu" | default "125m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $redisRequests "memory" | default "128Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $redisRequests "cpu" | default "{{ $.Values.gitops.redis.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $redisRequests "memory" | default "{{ $.Values.gitops.redis.requests.memory }}" {{ "hub}}" }}
                   controller:
                     processors:
-                      status: {{ "{{hub" }} index $controller "statusProcessors" | default 20 {{ "hub}}" }}
-                      operation: {{ "{{hub" }} index $controller "operationProcessors" | default 10 {{ "hub}}" }}
+                      status: {{ "{{hub" }} index $controller "statusProcessors" | default {{ $.Values.gitops.controller.statusProcessors }} {{ "hub}}" }}
+                      operation: {{ "{{hub" }} index $controller "operationProcessors" | default {{ $.Values.gitops.controller.operationProcessors }} {{ "hub}}" }}
+                    # GOMEMLIMIT is a SOFT ceiling that makes the Go runtime collect harder as it
+                    # approaches, trading CPU for staying alive instead of being OOMKilled. Argo CD
+                    # recommends 80-90% of the container limit; $goMemLimit is derived from
+                    # controller.limits.memory above so the two cannot drift apart. Omitted entirely
+                    # when the limit is in a form the derivation does not parse.
+                    {{ "{{hub-" }} if $goMemLimit {{ "hub}}" }}
+                    env:
+                      - name: GOMEMLIMIT
+                        value: '{{ "{{hub" }} $goMemLimit {{ "hub}}" }}'
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    # Stop watching resource kinds this instance cannot list at all, rather than
+                    # retrying them forever.
+                    respectRBAC: {{ "{{hub" }} index $controller "respectRBAC" | default "{{ $.Values.gitops.controller.respectRBAC }}" {{ "hub}}" }}
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $controllerLimits "cpu" | default "2000m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $controllerLimits "memory" | default "4096Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $controllerLimits "cpu" | default "{{ $.Values.gitops.controller.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $controllerLimits "memory" | default "{{ $.Values.gitops.controller.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $controllerRequests "cpu" | default "250m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $controllerRequests "memory" | default "1024Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $controllerRequests "cpu" | default "{{ $.Values.gitops.controller.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $controllerRequests "memory" | default "{{ $.Values.gitops.controller.requests.memory }}" {{ "hub}}" }}
                   applicationSet:
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $applicationSetLimits "cpu" | default "2" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $applicationSetLimits "memory" | default "1Gi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $applicationSetLimits "cpu" | default "{{ $.Values.gitops.applicationSet.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $applicationSetLimits "memory" | default "{{ $.Values.gitops.applicationSet.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $applicationSetRequests "cpu" | default "250m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $applicationSetRequests "memory" | default "512Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $applicationSetRequests "cpu" | default "{{ $.Values.gitops.applicationSet.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $applicationSetRequests "memory" | default "{{ $.Values.gitops.applicationSet.requests.memory }}" {{ "hub}}" }}
                   resourceHealthChecks:
                     - group: policy.open-cluster-management.io
                       kind: Policy
@@ -347,6 +515,33 @@ spec:
                   {{- range $clusterSet, $value := .Values.managedClusterSets }}
                     - {{ $clusterSet }}
                   {{- end }}
+                  # Hub cluster sets are included deliberately: under hub-of-hubs a regional hub is a
+                  # managed cluster of the global hub AND lives in a hub cluster set, so the global
+                  # hub's Argo CD can only reach it through a registration made here.
+                  #
+                  # This cluster itself is excluded. GitOpsCluster exists so an Argo CD can reach
+                  # OTHER clusters; Argo CD already reaches the one it runs on as the built-in
+                  # in-cluster destination, and every AutoShift Application targets exactly that. A
+                  # self registration adds a second entry for the same cluster reached through the
+                  # cluster-proxy addon, and the application controller builds a FULL CLUSTER CACHE
+                  # PER REGISTERED CLUSTER, so the hub pays for two complete caches of itself before
+                  # comparing a single Application. Measured on a hub with 58 Applications and 299
+                  # Policies: the controller was OOMKilled repeatedly against a 4Gi limit.
+                  #
+                  # local-cluster is the right discriminator and cluster-type is not. Red Hat
+                  # Advanced Cluster Management sets local-cluster on the cluster running THAT
+                  # instance, so a regional hub carries it in its own instance and never in the
+                  # global hub's. Excluding on cluster-type would drop every regional hub.
+                  #
+                  # NotIn also matches a cluster with no such label, which is every managed cluster.
+                  predicates:
+                    - requiredClusterSelector:
+                        labelSelector:
+                          matchExpressions:
+                            - key: 'local-cluster'
+                              operator: NotIn
+                              values:
+                                - 'true'
                   tolerations:
                     - key: cluster.open-cluster-management.io/unreachable
                       operator: Exists

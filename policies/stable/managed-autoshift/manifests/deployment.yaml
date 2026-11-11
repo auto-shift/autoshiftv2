@@ -1,0 +1,166 @@
+object-templates-raw: |
+  #Indentation anchor
+  {{hub- $policyNs := .PolicyMetadata.namespace hub}}
+  {{hub- $clusterLabels := .ManagedClusterLabels hub}}
+  {{hub- $clusterName := .ManagedClusterName hub}}
+  # Which hubs this copy writes an Application for. Two policies share this file:
+  #   policy-managed-autoshift        runs ON a managed hub and writes that hub's own Application
+  #   policy-managed-autoshift-agent  runs on the self-managed hub running the infra principal, and
+  #                                   writes the Application of every managed hub whose infra agent
+  #                                   runs managed, into that agent's namespace here
+  # A managed hub in managed mode gets its Application from the hub above only, because the
+  # principal owns Applications for that agent and a second writer on the managed hub would fight it.
+  # The role comes from the policy name, not this cluster's labels: each placement already decides
+  # where its policy runs.
+  {{hub- $asPrincipal := hasSuffix "managed-autoshift-agent" .PolicyMetadata.name hub}}
+  {{hub- $targets := list hub}}
+  {{hub- if $asPrincipal hub}}
+  {{hub- $mcList := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
+  {{hub- range $_, $mc := ($mcList.items | default list) hub}}
+  {{hub- $mcName := (dig "metadata" "name" "" $mc) hub}}
+  {{hub- $mcLabels := (dig "metadata" "labels" dict $mc) hub}}
+  {{hub- if and (ne $mcName $clusterName) (eq (index $mcLabels "autoshift.io/cluster-type" | default "") "hub") (eq (index $mcLabels "autoshift.io/autoshift-enable-install" | default "false") "true") hub}}
+  {{hub- $targets = append $targets (dict "name" $mcName "labels" $mcLabels) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- $targets = list (dict "name" $clusterName "labels" $clusterLabels) hub}}
+  {{hub- end hub}}
+  {{hub- range $target := $targets hub}}
+  {{hub- $targetName := (index $target "name") hub}}
+  {{hub- $targetLabels := (index $target "labels") hub}}
+  # A cluster another deployment owns has no rendered-config in this policy namespace, so it is
+  # skipped here rather than claimed.
+  {{hub- $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" $targetName)) | default dict hub}}
+  {{hub- $rcConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $autoshiftConfigs := (index $rcConfig "managedAutoshift" | default list) hub}}
+  # Bare 'agent' takes its mode from the managed hub's own config.gitops.infra.agent.mode, which is
+  # what its agent reads, so it is resolved the same way here.
+  {{hub- $infraMode := (index $targetLabels "autoshift.io/gitops-infra" | default "") hub}}
+  # On the managed hub only that bare form needs skipping here: the placement already excludes
+  # agent-managed, and cannot read config.
+  {{hub- $bareManaged := and (eq $infraMode "agent") (eq (dig "gitops" "infra" "agent" "mode" "autonomous" $rcConfig) "managed") hub}}
+  {{hub- $writeHere := ternary (or (eq $infraMode "agent-managed") $bareManaged) (not $bareManaged) $asPrincipal hub}}
+  {{hub- if and $writeHere (not (empty $autoshiftConfigs)) hub}}
+    {{hub range $autoshiftConfig := $autoshiftConfigs hub}}
+      {{hub $appName := index $autoshiftConfig "appName" | default $targetName hub}}
+      {{hub- $repoUrl := index $autoshiftConfig "repoUrl" | default "" hub}}
+      # Defaults to the managed hub's own gitops namespace, where its infra instance runs. It is also
+      # passed to the nested chart as gitopsNamespace, so the nested AutoShift creates its own
+      # Applications in that namespace too, unless helmValues sets it.
+      {{hub- $gitopsNamespace := (dig "gitopsNamespace" (index $targetLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") $autoshiftConfig) hub}}
+      # Managed mode: the namespace named after the managed hub's infra agent, which the principal
+      # maps to that agent. The agent creates the Application in its own namespace on the managed hub.
+      {{hub- $agentName := printf "%s-infra" $targetName hub}}
+      {{hub- $appNamespace := ternary $agentName $gitopsNamespace $asPrincipal hub}}
+      {{hub- $defaultValuesFile := (print "values." $targetName ".yaml") | list hub}}
+      {{hub- $valuesFiles := index $autoshiftConfig "valuesFiles" | default $defaultValuesFile hub}}
+      {{hub- $argoProject := index $autoshiftConfig "argoProject" | default "default"  hub}}
+      {{hub- $argoServer := index $autoshiftConfig "argoServer" | default "https://kubernetes.default.svc" hub}}
+      {{hub- $targetRevision := index $autoshiftConfig "targetRevision" | default "main" hub}}
+      {{hub- $ociRepo := index $autoshiftConfig "ociRepo" | default "" hub}}
+      {{hub- $ociVersion := index $autoshiftConfig "ociVersion" | default "" hub}}
+      {{hub- $ociMode := (ne $ociRepo "") hub}}
+      {{hub- $valuesRepoUrl := index $autoshiftConfig "valuesRepoUrl" | default "" hub}}
+      {{hub- $valuesTargetRevision := index $autoshiftConfig "valuesTargetRevision" | default "main" hub}}
+      {{hub- $versionedClusterSets := index $autoshiftConfig "versionedClusterSets" | default "false" hub}}
+      {{hub- $helmValues := index $autoshiftConfig "helmValues" | default dict hub}}
+      {{hub- $autoshiftEnabled := (index $targetLabels "autoshift.io/autoshift-enable-install" | default "false") hub}}
+      {{hub- $sourceReady := ternary (ne $ociVersion "") (and (ne $repoUrl "") (ne $targetRevision "")) $ociMode hub}}
+      {{hub- if and (ne $appName "autoshift") (le (len $appName) 11) (ne $gitopsNamespace "") (eq $autoshiftEnabled "true") (not (empty $valuesFiles)) $sourceReady hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: {{hub $appName hub}}
+        namespace: {{hub $appNamespace hub}}
+      spec:
+        syncPolicy:
+          automated:
+            prune: false
+            selfHeal: true
+        destination:
+          namespace: {{hub $gitopsNamespace hub}}
+          {{hub- if $asPrincipal hub}}
+          name: {{hub $agentName hub}}
+          {{hub- else hub}}
+          server: {{hub $argoServer hub}}
+          {{hub- end hub}}
+        {{hub- if (eq $valuesRepoUrl "") hub}}
+        source:
+          {{hub- if $ociMode hub}}
+          chart: autoshift
+          repoURL: {{hub $ociRepo hub}}
+          targetRevision: {{hub $ociVersion hub}}
+          {{hub- else hub}}
+          path: autoshift
+          repoURL: {{hub $repoUrl hub}}
+          targetRevision: {{hub $targetRevision hub}}
+          {{hub- end hub}}
+          helm:
+            valueFiles:
+            {{hub- range $file := $valuesFiles hub}}
+            - {{hub $file hub}}
+            {{hub- end hub}}
+            values: |-
+              {{hub- if $ociMode hub}}
+              autoshiftOciRepo: oci://{{hub $ociRepo hub}}/policies
+              autoshiftOciVersion: {{hub $ociVersion hub}}
+              {{hub- else hub}}
+              autoshiftGitRepo: {{hub $repoUrl hub}}
+              autoshiftGitBranchTag: {{hub $targetRevision hub}}
+              policyGenerator: "true"
+              {{hub- end hub}}
+              {{hub- if eq $versionedClusterSets "true" hub}}
+              versionedClusterSets: "true"
+              {{hub- end hub}}
+              {{hub- if not (hasKey $helmValues "gitopsNamespace") hub}}
+              gitopsNamespace: {{hub $gitopsNamespace hub}}
+              {{hub- end hub}}
+              {{hub- if $helmValues hub}}
+              {{hub $helmValues | toYaml | autoindent hub}}
+              {{hub- end hub}}
+        project: {{hub $argoProject hub}}
+        {{hub- else hub}}
+        sources:
+          - ref: values
+            repoURL: {{hub $valuesRepoUrl hub}}
+            targetRevision: {{hub $valuesTargetRevision hub}}
+          - helm:
+              valueFiles:
+              {{hub- range $file := $valuesFiles hub}}
+              - "$values/{{hub $file hub}}"
+              {{hub- end hub}}
+              values: |-
+                {{hub- if $ociMode hub}}
+                autoshiftOciRepo: oci://{{hub $ociRepo hub}}/policies
+                autoshiftOciVersion: {{hub $ociVersion hub}}
+                {{hub- else hub}}
+                autoshiftGitRepo: {{hub $repoUrl hub}}
+                autoshiftGitBranchTag: {{hub $targetRevision hub}}
+                {{hub- end hub}}
+                {{hub- if eq $versionedClusterSets "true" hub}}
+                versionedClusterSets: "true"
+                {{hub- end hub}}
+                {{hub- if not (hasKey $helmValues "gitopsNamespace") hub}}
+                gitopsNamespace: {{hub $gitopsNamespace hub}}
+                {{hub- end hub}}
+                {{hub- if $helmValues hub}}
+                {{hub $helmValues | toYaml | autoindent hub}}
+                {{hub- end hub}}
+            {{hub- if $ociMode hub}}
+            chart: autoshift
+            repoURL: {{hub $ociRepo hub}}
+            targetRevision: {{hub $ociVersion hub}}
+            {{hub- else hub}}
+            path: autoshift
+            repoURL: {{hub $repoUrl hub}}
+            targetRevision: {{hub $targetRevision hub}}
+            {{hub- end hub}}
+        project: {{hub $argoProject hub}}
+        {{hub- end hub}}
+      {{hub- end hub}}
+  {{hub end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

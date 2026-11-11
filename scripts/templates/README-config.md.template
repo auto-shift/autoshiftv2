@@ -1,0 +1,47 @@
+# {{DIR_BASENAME}}
+
+TODO: Describe what this directory configures, and the `autoshift.io/` labels and `config.` keys it
+reads.
+
+| Policy | What it does |
+|---|---|
+| `policy-{{POLICY_NAME}}` | TODO: the resource `manifests/{{POLICY_NAME}}.yaml` manages |
+
+## Placement
+
+{{PLACEMENT_SUMMARY}}
+
+`placement.yaml` holds the predicate. A policy added later with a different predicate gets its own
+`placement-<policy>.yaml`.
+
+## Layout
+
+```
+{{DIR_BASENAME}}/
+  kustomization.yaml            # entry point: generators: [policy-generator-config.yaml]
+  policy-generator-config.yaml  # the PolicyGenerator: policy graph, remediation, evaluation interval
+  placement.yaml                # Placement predicate and tolerations
+  manifests/
+    {{POLICY_NAME}}.yaml        # bare resource; PolicyGenerator wraps it in a ConfigurationPolicy
+```
+
+Write each manifest as the bare resource. PolicyGenerator generates the `ConfigurationPolicy` around
+it. A resource that needs hub templates, loops, or conditionals goes in an `object-templates-raw`
+manifest instead.
+
+To add a policy to this directory, run the generator again with the same `--dir`, then add a row to
+the policy table:
+
+```bash
+./scripts/generate-policy.sh <name> --dir {{POLICY_DIR}} --target <hub|spoke|both|all>
+```
+
+## Test locally
+
+```bash
+# Render this directory as the repo-server CMP does (needs: make install-policy-generator)
+scripts/pg-render.sh {{POLICY_DIR}}
+
+# Full validation: render, hub and spoke template resolution, label contract
+make test
+```

@@ -1,22 +1,81 @@
 # Hub1 - Spoke hub managed by hub-of-hubs
 hubClusterSets:
   hub1:
-    config: {}
+    config:
+      # AutoShift deployed ONTO this managed hub. The managed-autoshift policy creates an Argo CD
+      # Application in this cluster's OWN Argo CD pointing at itself, which is the per-hub shape.
+      # This hub then runs its own AutoShift, configuring only ITS spokes; it cannot target
+      # itself, because only the hub-of-hubs' Red Hat Advanced Cluster Management manages it.
+      managedAutoshift:
+        - appName: 'hub1'             # 11 characters or fewer, and never 'autoshift'
+          repoUrl: 'https://github.com/auto-shift/autoshiftv2.git'
+          targetRevision: 'main'
+          gitopsNamespace: 'openshift-gitops'
+          argoProject: 'default'
+          argoServer: 'https://kubernetes.default.svc'
+          valuesFiles:
+            - 'values/global.yaml'
+            - 'values/clustersets/managed.yaml'
+      # Compliance Operator scans. Profiles are PINNED to a version: ocp4-stig tracks whatever
+      # DISA publishes next, so an unpinned name would silently change what is measured and, with
+      # autoApply on, change the cluster. Adopting a new release means adding an entry.
+      #
+      # autoApply is false: this scans and reports and changes nothing. Turning it on applies every
+      # remediation the scan produced except those in exclude, and several are MachineConfigs that
+      # reboot every node, in more than one round. Hardening is a deliberate choice, so layer
+      # hub-hardened.yaml on top rather than flipping this. See docs/compliance.md.
+      compliance:
+        scans:
+          - name: stig-v2r3
+            profiles:
+              - ocp4-stig-v2r3
+              - ocp4-stig-node-v2r3
+              - rhcos4-stig-v2r3
+            scanSetting: default
+            autoApply: false
+            # These four rewrite the default project template so every new project gets a
+            # deny-by-default NetworkPolicy and a ResourceQuota, and ship only that restrictive
+            # half. Deny-by-default blocks the kube-apiserver, breaking admission webhooks (Red Hat
+            # Advanced Cluster Security) and the cluster-manager namespaces; the quota rejects every
+            # pod that declares no resources. Use manualRemediations.projectTemplate instead.
+            exclude:
+              - ocp4-stig-v2r3-project-config-and-template-network-policy
+              - ocp4-stig-v2r3-project-config-and-template-network-policy-1
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
     labels:
       # OpenShift version for cluster deployment and image mirroring
-      openshift-version: '4.22.8'
+      openshift-version: '4.22.18'
+      self-managed: 'false'
+      # Lets the managed-autoshift policy place here. With cluster-type hub (injected by this entry
+      # living under hubClusterSets), gitops and self-managed false, this is the full predicate set.
+      autoshift-enable-install: 'true'
+      ### OpenShift Gitops
       gitops: 'true' # is expected to be installed on all hub clusters
       gitops-subscription-name: openshift-gitops-operator
       gitops-disable-default-argocd: 'true'
-      gitops-channel: gitops-1.21
+      gitops-channel: gitops-1.22
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
       # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
-      self-managed: 'false'
-      cluster-install: 'true'
+      # Infra Argo CD agent. This managed hub's infra-gitops reports to the infra principal on the
+      # hub above, which also delivers this hub's AutoShift Application (policy-managed-autoshift-agent).
+      gitops-infra: 'agent-managed'
+      # Infra Argo CD principal for THIS hub's own spokes, which enroll through the gitops-infra
+      # label in its nested AutoShift's values (clustersets/managed.yaml).
+      gitops-agent: 'true'
+      ### AutoShift Console Plugin
+      autoshift-console: 'true'
+      ### Advanced Cluster Management
+      acm-observability: 'true'
       acm-enable-provisioning: 'true'
       # Single-node hub: run ACM components with a single replica (no HA scheduling)
       acm-availability-config: 'Basic'
+      acm-search-storage: 'true'
+      # acm-search-storage-class: 'ocs-storagecluster-ceph-rbd'
+      # acm-search-storage-size: '100Gi'
+      ### Cluster Install
+      cluster-install: 'true'
       ### infra-nodes
       infra-nodes: ''
       infra-nodes-numcpu: ''
@@ -78,7 +137,7 @@ hubClusterSets:
       ### OpenShift Pipelines
       pipelines: 'true'
       pipelines-subscription-name: openshift-pipelines-operator-rh
-      pipelines-channel: pipelines-1.23
+      pipelines-channel: pipelines-1.24
       pipelines-source: redhat-operators
       pipelines-source-namespace: openshift-marketplace
       ### Trusted Artifact Signer
@@ -95,6 +154,15 @@ hubClusterSets:
       quay-source-namespace: openshift-marketplace
       ### Developer OpenShift Gitops
       gitops-dev: 'true'
+      # A managed hub is still a managed cluster from the layer above, so it can run a team's Argo CD
+      # agent reporting to that team's principal on the hub-of-hubs. To opt in, set this to 'true'
+      # with the per-team label below; this one places the spoke policy, the per-team label decides
+      # which teams and in which mode.
+      gitops-agent-enrolled: 'false'
+      # agent-managed: the HUB owns this team's Application resources for this cluster and the
+      # agent pulls them down, rather than the spoke owning them and mirroring up. Per-cluster, so
+      # another of team test's clusters could still run autonomous.
+      # gitops-dev-team-test: 'agent-managed'
       ### Loki
       loki: 'true'
       loki-subscription-name: loki-operator
@@ -110,6 +178,8 @@ hubClusterSets:
       logging-channel: stable-6.6
       logging-source: redhat-operators
       logging-source-namespace: openshift-marketplace
+      ### Global Observability
+      global-observability: 'true'
       ### Cluster Observability Operator
       coo: 'true'
       coo-subscription-name: cluster-observability-operator

@@ -1,0 +1,41 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-managed-autoshift
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # The Application on the managed hub itself. Same predicates as placement-ns.yaml, plus one:
+  # gitops-infra uses NotIn deliberately. In agent-managed mode the principal on the hub above owns
+  # this hub's Application through policy-managed-autoshift-agent, so writing one here as well would
+  # give the same object two writers. Excluding that one mode leaves every other mode, and every hub
+  # with no gitops-infra label at all, selected. Bare 'agent' resolving to managed is skipped in the
+  # template, because a placement cannot read config.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/gitops'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/autoshift-enable-install'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/self-managed'
+              operator: In
+              values:
+                - 'false'
+            - key: 'autoshift.io/gitops-infra'
+              operator: NotIn
+              values:
+                - 'agent-managed'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

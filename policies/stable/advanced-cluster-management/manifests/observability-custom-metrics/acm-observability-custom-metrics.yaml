@@ -1,0 +1,42 @@
+# Custom metrics allowlist for MultiClusterObservability.
+#
+# ACM collects a fixed default set of metrics from each managed cluster. To collect anything else it
+# reads a ConfigMap named observability-metrics-custom-allowlist alongside its own default allowlist.
+# This renders that ConfigMap from config.acm.observability.customMetrics.
+#
+# The keys under `platform` and `userWorkload` are passed through verbatim rather than translated,
+# because they are Red Hat Advanced Cluster Management's schema, not this chart's: names, matches,
+# renames, recording_rules and collect_rules (confirmed against the operator's own
+# observability-metrics-allowlist on 2.17). Passing them through means a key added by a later
+# release works with no change here.
+#
+# mustonlyhave, not musthave: a ConfigMap merges keys, so a metric removed from values would linger
+# in the allowlist forever and keep being collected. Owning the object outright is the only way a
+# removal takes effect, at the cost that hand edits to this ConfigMap are reverted.
+#
+# In a multi-tier rollup a metric is only forwarded if it is allowed on the hub whose collectors
+# gather it, so set this on every participating hub clusterset, not just the top one.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $custom := (dig "acm" "observability" "customMetrics" dict $cfg) hub}}
+  {{hub- $platform := (dig "platform" dict $custom) hub}}
+  {{hub- $userWorkload := (dig "userWorkload" dict $custom) hub}}
+  {{hub- if or $platform $userWorkload hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: observability-metrics-custom-allowlist
+        namespace: open-cluster-management-observability
+      data:
+        {{hub- if $platform hub}}
+        metrics_list.yaml: |
+          {{hub $platform | toYaml | autoindent hub}}
+        {{hub- end hub}}
+        {{hub- if $userWorkload hub}}
+        uwl_metrics_list.yaml: |
+          {{hub $userWorkload | toYaml | autoindent hub}}
+        {{hub- end hub}}
+  {{hub- end hub}}

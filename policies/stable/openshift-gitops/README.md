@@ -13,12 +13,19 @@ is discovered by the ArgoCD **PolicyGenerator ConfigManagementPlugin (CMP)** sid
 
 1. **OpenShift GitOps (ArgoCD) itself** — the engine that runs every AutoShift ArgoCD Application,
    including the ApplicationSet that deploys all the other `policies/*`.
-2. **The PolicyGenerator CMP** — `templates/policy-generator-cmp.yaml` deploys the
-   `ConfigManagementPlugin` named `policy-generator` (plus its sidecar wiring on the ArgoCD CR via
-   `policy-gitops-systems-argocd.yaml`). Until this exists, no `policy-generator-config.yaml` anywhere
-   in the repo can be rendered.
+2. **The PolicyGenerator CMP** — `templates/policy-gitops-cmp-plugin.yaml` places the
+   `ConfigManagementPlugin` named `policy-generator` onto every hub (plus its sidecar wiring on the
+   ArgoCD CR through `policy-gitops-systems-argocd.yaml`). Until this exists, no
+   `policy-generator-config.yaml` anywhere in the repo can be rendered.
 
-That is a chicken-and-egg: PolicyGenerator can't render the chart whose job is to install
+   It ships as a `Policy` rather than a ConfigMap that ArgoCD applies, for two reasons. A managed
+   hub never runs the bootstrap chart and never syncs this chart in-cluster, so ArgoCD cannot reach
+   it. And on any hub, an ArgoCD copy cannot heal a missing ConfigMap: the repo-server fails to
+   mount it and stops, and ArgoCD needs that repo-server to render this chart. The
+   `config-policy-controller` carries the desired ConfigMap inside the `Policy` itself, so it
+   restores it with ArgoCD still down.
+
+That is a chicken-and-egg: PolicyGenerator cannot render the chart whose job is to install
 PolicyGenerator. So this chart emits its `Policy` objects **directly as Helm templates**.
 
 It is also installed by `helm install` during **bootstrap phase 1**, before ArgoCD (and therefore the
@@ -46,3 +53,13 @@ Because the `Policy` objects here are hand-written Helm templates (not PolicyGen
 Version pinning still behaves like every other operator: set `config.gitops.versions` (and optional
 `config.gitops.startingCSV`), else the `autoshift.io/gitops-version` label is used — implemented inline
 in `policy-gitops-operator-install.yaml`.
+
+## Argo CD agent
+
+`policy-gitops-operator-install.yaml` adds each principal namespace, for infra and for each team, to
+`ARGOCD_CLUSTER_CONFIG_NAMESPACES`, because OpenShift GitOps reconciles `sourceNamespaces` only for
+a cluster-scoped instance. Comments belong **above** that env key, never inside its value: it is a
+folded scalar, hub templates have no comment syntax, and a `#` line there is folded into the value.
+
+See [Argo CD agent](../../../docs/gitops-agent.md) for the user-facing guide and
+[gitops-dev](../gitops-dev/README.md) for the per-team agents.

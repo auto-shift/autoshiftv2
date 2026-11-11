@@ -1,0 +1,29 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-quay-cnpg
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # CNPG-backed Quay databases. Requires the cloudnative-pg operator on the same cluster, so the
+  # predicate ANDs it in rather than relying on the policy dependency alone.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/quay'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/cloudnative-pg'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/quay-db-mode'
+              operator: In
+              values:
+                - 'managed'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

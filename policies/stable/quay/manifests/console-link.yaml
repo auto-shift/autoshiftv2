@@ -1,0 +1,24 @@
+# Registry host ConfigMap + console application-menu link. Split out of the deleted bootstrap Job
+# manifest — both are declarative and both are still wanted.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: quay-config
+  # Lives alongside Quay on the target cluster. Previously the hub policy namespace
+  # (.PolicyMetadata.namespace), which only exists where the policy runs on the hub itself, so it
+  # failed on every managed spoke.
+  namespace: quay-enterprise
+data:
+  host: '{{ (lookup "route.openshift.io/v1" "Route" "quay-enterprise" "registry-quay" ).spec.host }}'
+---
+apiVersion: console.openshift.io/v1
+kind: ConsoleLink
+metadata:
+  name: quay
+spec:
+  applicationMenu:
+    section: Red Hat applications
+    imageURL: https://upload.wikimedia.org/wikipedia/commons/3/3a/OpenShift-LogoType.svg
+  href: https://{{ (lookup "route.openshift.io/v1" "Route" "quay-enterprise" "registry-quay" ).spec.host }}
+  location: ApplicationMenu
+  text: Red Hat Quay Enterprise Registry

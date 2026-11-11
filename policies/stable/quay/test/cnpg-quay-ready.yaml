@@ -1,0 +1,20 @@
+# Readiness gate for the two CNPG databases backing Quay and Clair (quay-db-mode: managed).
+# Only asserts while readyInstances is short of spec.instances, so scaling the cluster up does not
+# park the policy in violation against a stale literal.
+object-templates-raw: |
+  {{- range $db := (list "quay-db" "clair-db") }}
+  {{- $cluster := (lookup "postgresql.cnpg.io/v1" "Cluster" "quay-enterprise" $db) | default dict }}
+  {{- $specInstances := (index (index $cluster "spec" | default dict) "instances" | default 1 | toInt) }}
+  {{- $readyInstances := (index (index $cluster "status" | default dict) "readyInstances" | default 0 | toInt) }}
+  {{- if lt $readyInstances $specInstances }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: {{ $db }}
+        namespace: quay-enterprise
+      status:
+        readyInstances: {{ $specInstances }}
+  {{- end }}
+  {{- end }}

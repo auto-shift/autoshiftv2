@@ -1,7 +1,7 @@
+# fromConfigMap fails the policy when rendered-config or a caRef ConfigMap is missing, and a caRef
+# key that is absent fails explicitly, rather than rendering nothing and reporting Compliant.
 object-templates-raw: |
-  {{hub $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub $config := (index $cm "data" | default dict) hub}}
-  {{hub $configYaml := (index $config "config" | default "" | fromYaml | default dict) hub}}
+  {{hub $configYaml := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" | fromYaml | default dict) hub}}
   {{hub $disconnected := (index $configYaml "disconnected" | default dict) hub}}
   {{hub $mirror := (index $disconnected "mirrorRegistry" | default dict) hub}}
   {{hub $mirrorHost := (index $mirror "host") hub}}
@@ -9,9 +9,10 @@ object-templates-raw: |
   {{hub $caRef := (index $mirror "caRef" | default dict) hub}}
   {{hub if not (empty $caRef) hub}}
   {{hub $refNs := (index $caRef "namespace" | default .PolicyMetadata.namespace) hub}}
-  {{hub $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict hub}}
-  {{hub $refData := (index $refCM "data" | default dict) hub}}
-  {{hub $ca = (index $refData (index $caRef "key") | default $ca) hub}}
+  {{hub $ca = (fromConfigMap $refNs (index $caRef "name") (index $caRef "key")) hub}}
+  {{hub if not $ca hub}}
+  {{hub fail (printf "config.disconnected.mirrorRegistry.caRef: ConfigMap %s/%s has no key %s" $refNs (index $caRef "name") (index $caRef "key")) hub}}
+  {{hub end hub}}
   {{hub end hub}}
   {{hub if and (gt (len $mirrorHost) 0) (gt (len $ca) 0) hub}}
   {{hub $registryKey := (replace ":" ".." $mirrorHost) hub}}

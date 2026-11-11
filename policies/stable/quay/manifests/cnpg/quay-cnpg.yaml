@@ -1,0 +1,103 @@
+# CNPG PostgreSQL for Quay (quay-db-mode: managed). Two SEPARATE clusters by design — Red Hat does
+# not support sharing one externally managed database between Quay and Clair, and the database must
+# not be shared with other workloads either (connection-limit contention).
+#
+# NO Pooler here, unlike the gitlab/jfrog CNPG charts: pgBouncer is explicitly unsupported with Quay
+# and Clair, so both connect straight to the <cluster>-rw service.
+#
+# pg_trgm must exist before Quay's schema migration runs — an externally managed PostgreSQL requires
+# it to be enabled manually, so it is created in postInitApplicationSQL (runs in the application
+# database as the owner, which is where Quay needs it).
+#
+# Storage matches the 50Gi the Quay Operator allocates for its own managed database, so switching
+# quay-db-mode does not silently change the disk budget.
+#
+# No imageName by default, so the Operator runs its built-in PostgreSQL image and records it in the
+# Cluster at creation: an Operator upgrade does not move an existing database. config.quay.dbImage
+# names another image; change it in a maintenance window. A minor change rolls the replicas, then the
+# primary; a higher major is an offline in-place upgrade, and a lower one is rejected. Removing the key
+# leaves the last image in place (musthave never removes a field).
+#
+# config.quay.dbPrimaryUpdate: unsupervised (default) switches the primary over automatically;
+# supervised updates the replicas and waits for a manual switchover of the primary; CloudNativePG
+# rejects it on a single-instance Cluster.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $dbImage := (index (index $cfg "quay" | default dict) "dbImage" | default "") hub}}
+  {{hub- $dbPrimaryUpdate := (index (index $cfg "quay" | default dict) "dbPrimaryUpdate" | default "unsupervised") hub}}
+  {{hub- if not (has $dbPrimaryUpdate (list "unsupervised" "supervised")) hub}}{{hub fail (printf "config.quay.dbPrimaryUpdate: %s is not unsupervised or supervised" $dbPrimaryUpdate) hub}}{{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: quay-db
+        namespace: quay-enterprise
+      spec:
+        instances: '{{hub index .ManagedClusterLabels "autoshift.io/quay-db-instances" | default "2" | toInt hub}}'
+        {{hub- if $dbImage hub}}
+        imageName: '{{hub $dbImage hub}}'
+        {{hub- end hub}}
+        primaryUpdateStrategy: '{{hub $dbPrimaryUpdate hub}}'
+        postgresql:
+          parameters:
+            max_connections: '200'
+            shared_buffers: 512MB
+            effective_cache_size: 1536MB
+            work_mem: 8MB
+        bootstrap:
+          initdb:
+            database: quay
+            owner: quay
+            postInitApplicationSQL:
+              - CREATE EXTENSION IF NOT EXISTS pg_trgm;
+        storage:
+          size: 50Gi
+        resources:
+          requests:
+            cpu: '1'
+            memory: 2Gi
+          limits:
+            cpu: '2'
+            memory: 4Gi
+        affinity:
+          enablePodAntiAffinity: true
+          topologyKey: kubernetes.io/hostname
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: clair-db
+        namespace: quay-enterprise
+      spec:
+        instances: '{{hub index .ManagedClusterLabels "autoshift.io/quay-clair-db-instances" | default "2" | toInt hub}}'
+        {{hub- if $dbImage hub}}
+        imageName: '{{hub $dbImage hub}}'
+        {{hub- end hub}}
+        primaryUpdateStrategy: '{{hub $dbPrimaryUpdate hub}}'
+        postgresql:
+          parameters:
+            max_connections: '200'
+            shared_buffers: 512MB
+            effective_cache_size: 1536MB
+            work_mem: 8MB
+        bootstrap:
+          initdb:
+            database: clair
+            owner: clair
+            postInitApplicationSQL:
+              - CREATE EXTENSION IF NOT EXISTS pg_trgm;
+              - CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+        storage:
+          size: 50Gi
+        resources:
+          requests:
+            cpu: '1'
+            memory: 2Gi
+          limits:
+            cpu: '2'
+            memory: 4Gi
+        affinity:
+          enablePodAntiAffinity: true
+          topologyKey: kubernetes.io/hostname

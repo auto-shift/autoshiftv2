@@ -2,8 +2,11 @@
 
 **Build and run a fleet of OpenShift clusters from Git.**
 
+[![Documentation](https://img.shields.io/badge/docs-auto--shift.github.io-1D4174?logo=materialformkdocs&logoColor=white)](https://auto-shift.github.io/autoshiftv2/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/auto-shift/autoshiftv2/blob/main/LICENSE)
 ![OpenShift Version](https://img.shields.io/badge/OpenShift-4.22-red?logo=redhatopenshift&logoColor=white)
 ![Red Hat Advanced Cluster Management Version](https://img.shields.io/badge/Advanced_Cluster_Management-2.17-blue?logo=redhat&logoColor=white)
+![Red Hat OpenShift GitOps Version](https://img.shields.io/badge/OpenShift_GitOps-1.22-green?logo=argo&logoColor=white)
 
 AutoShiftv2 is an opinionated [Infrastructure-as-Code (IaC)](https://martinfowler.com/bliki/InfrastructureAsCode.html)
 framework for managing OpenShift at scale with
@@ -27,7 +30,51 @@ vSphere through Hive. A cluster arrives with its operators and configuration alr
 Once running, it stays at the state its values files describe. Adding a capability to a hundred
 clusters is one label; adding it to a single cluster is the same label on that cluster.
 
-**[Get started →](docs/quickstart.md)**  ·  [Browse the labels](docs/values-reference.md)  ·  [All documentation](docs/)
+**[Get started →](docs/quickstart.md)**  ·  [Browse the labels](docs/values-reference.md)  ·  [All documentation](#documentation)
+
+## Versions
+
+AutoShift targets one combination, laid out the way Red Hat publishes it. OpenShift 4.22 sits
+inside the range Red Hat OpenShift GitOps 1.22 supports.
+
+| Product | Version | Components | Supported OpenShift Container Platform |
+|---|---|---|---|
+| Red Hat OpenShift GitOps | 1.22 | Argo CD 3.5.3, Helm 4.2.4, Kustomize 5.8.1 | 4.18-4.22 |
+| Red Hat Advanced Cluster Management | 2.17 | multicluster engine 2.17 | See the support matrix |
+
+Red Hat publishes both, and they are the source for the rows above:
+
+- [Red Hat OpenShift GitOps compatibility and support matrix](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.22/html/release_notes/gitops-release-notes)
+- [Red Hat Advanced Cluster Management 2.17 support matrix](https://access.redhat.com/articles/7142376)
+
+AutoShift pins its own tooling to match what those products run, because the Red Hat OpenShift
+GitOps repository server renders the charts that reach a cluster and Red Hat Advanced Cluster
+Management resolves the policy templates. Rendering or resolving locally with a different version
+is how local output starts to diverge from the cluster.
+
+| Tool | Version | Derived from |
+|---|---|---|
+| Helm | 4.2.4 | Red Hat OpenShift GitOps 1.22 |
+| Kustomize | 5.8.1 | Red Hat OpenShift GitOps 1.22 |
+| go-template-utils | 7.2.0 | Red Hat Advanced Cluster Management 2.17 |
+| PolicyGenerator plugin | 1.19.0 | Pinned so rendered output cannot change without a change here |
+| Go | 1.27.4 | Floor set by go-template-utils, read from `tools/go.mod` |
+
+These are compatibility pins, not currency pins: move one when the channel it derives from moves,
+not when upstream releases. Every value lives in `versions.yaml`, which lists each file that must
+agree and is enforced by `TestVersionPins`, so this table cannot drift from the pins it describes.
+The pin policy is in the [developer guide](docs/developer-guide.md#keeping-versions-current).
+
+## Platforms
+
+Clusters are provisioned from the same values files that configure them, on any of:
+
+[![AWS](https://img.shields.io/badge/AWS-Hive-FF9900?logo=amazonwebservices&logoColor=white)](docs/cluster-install.md)
+[![vSphere](https://img.shields.io/badge/vSphere-Hive-607078?logo=vmware&logoColor=white)](docs/cluster-install.md)
+[![Baremetal](https://img.shields.io/badge/Baremetal-Assisted_Installer-EE0000?logo=redhat&logoColor=white)](docs/cluster-install.md)
+
+Provisioning detail for each platform, including networking and credentials, is in
+[cluster install](docs/cluster-install.md).
 
 ## How it works
 
@@ -116,9 +163,6 @@ To run a new AutoShift release against a few clusters before the whole fleet, se
 [ClusterSet Assignment](docs/cluster-set-assignment.md).
 
 ## Documentation
-
-📚 **[Complete Documentation](https://auto-shift.github.io/autoshiftv2/)**, also under
-[`docs/`](docs/) in this repository.
 
 - 🚀 [Quick Start Guide](docs/quickstart.md) - Full installation walkthrough (Source and OCI)
 - 🏗️ [Provisioning Clusters](docs/cluster-install.md) - Install new clusters from AutoShift

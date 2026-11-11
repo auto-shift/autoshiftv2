@@ -1,0 +1,28 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-quay-deploy
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Registry deployment for every db-mode EXCEPT managed. The managed path is the same manifest
+  # under placement-quay-cnpg.yaml, which additionally waits on CNPG readiness — the two placements
+  # are mutually exclusive so exactly one lands per cluster.
+  # NOTE: quay-db-mode: 'managed' without cloudnative-pg: 'true' matches neither placement and the
+  # registry will not deploy. The two labels are meant to be set together.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/quay'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/quay-db-mode'
+              operator: NotIn
+              values:
+                - 'managed'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

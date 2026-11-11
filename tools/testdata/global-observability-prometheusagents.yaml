@@ -1,0 +1,38 @@
+---
+# MCOA-created PrometheusAgents on an intermediate hub. policy-global-observability-prometheus does a
+# read-modify-write against these: it replaces the lists it owns and preserves everything else, so the
+# resolver needs them present or its lookup guard correctly refuses to build a partial object.
+apiVersion: monitoring.rhobs/v1alpha1
+kind: PrometheusAgent
+metadata:
+  name: mcoa-default-platform-metrics-collector-global
+  namespace: open-cluster-management-observability
+spec:
+  # A representative slice of what MCOA sets; the policy must leave all of it intact.
+  image: registry.redhat.io/rhacm2/acm-prometheus-rhel9:v2.17
+  replicas: 1
+  serviceAccountName: mcoa-platform-metrics-collector
+  scrapeInterval: 300s
+  logLevel: warn
+  secrets:
+    - observability-managed-cluster-certs
+  remoteWrite:
+    - name: acm-observability
+      url: https://observatorium-api.example.com/api/metrics/v1/default/api/v1/receive
+---
+apiVersion: monitoring.rhobs/v1alpha1
+kind: PrometheusAgent
+metadata:
+  name: mcoa-default-user-workload-metrics-collector-global
+  namespace: open-cluster-management-observability
+spec:
+  image: registry.redhat.io/rhacm2/acm-prometheus-rhel9:v2.17
+  replicas: 1
+  serviceAccountName: mcoa-user-workload-metrics-collector
+  scrapeInterval: 300s
+  logLevel: warn
+  secrets:
+    - observability-managed-cluster-certs
+  remoteWrite:
+    - name: acm-observability
+      url: https://observatorium-api.example.com/api/metrics/v1/default/api/v1/receive

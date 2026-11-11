@@ -11,7 +11,7 @@ The policy suite handles:
 3. **Istio control plane** - Creates Istio CR with ambient profile and OpenTelemetry integration
 4. **ZTunnel** - Deploys per-node L4 proxy DaemonSet for mTLS and telemetry
 5. **Kiali** - Configures Kiali dashboard with OpenShift OAuth and Prometheus integration
-6. **Tempo tracing** - Deploys TempoStack with S3 storage (ODF) and Jaeger query frontend
+6. **Tempo tracing** - Deploys TempoStack with S3 storage (ODF) and Jaeger query front end
 7. **Monitoring** - Creates ServiceMonitor and PodMonitor for OpenShift monitoring
 
 ## Prerequisites
