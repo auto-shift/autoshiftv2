@@ -114,6 +114,23 @@ spec:
                     autoshift.io/createdByAutoshift: "true"
                     autoshift.io/eso-writeback-namespace: "true"
             {{ "{{hub-" }} end {{ "hub}}" }}
+            ##### Extra bootstrap read-store namespaces (hubBootstrap.extraStores). Same #####
+            ##### ownership model as sharedNamespace: this hub creates what it declares #####
+            ##### as remoteNamespace. Skip the policy namespace. #####
+            {{ "{{hub-" }} range $es := (dig "eso" "hubBootstrap" "extraStores" (list) $clusterConfig) {{ "hub}}" }}
+              {{ "{{hub-" }} $esNs := (dig "remoteNamespace" "" ($es | default dict)) {{ "hub}}" }}
+              {{ "{{hub-" }} if and (ne $esNs "") (ne $esNs "{{ $policyNamespace }}") {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} $esNs {{ "hub}}" }}
+                  labels:
+                    autoshift.io/createdByAutoshift: "true"
+                    autoshift.io/eso-extra-store-namespace: "true"
+              {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $grants := (dig "eso" "bootPrereqs" "rbac" $baked.rbac $clusterConfig) {{ "hub}}" }}
             {{ "{{hub-" }} range $grant := $grants {{ "hub}}" }}
             {{ "{{hub-" }} $name := (dig "name" "" $grant) {{ "hub}}" }}

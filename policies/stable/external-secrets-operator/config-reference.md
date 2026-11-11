@@ -66,8 +66,9 @@ chart-only) can be overridden per deployment/cluster under `config.eso.hubBootst
 | `storePrefix` | string | `hub-bootstrap` | Names everything the bootstrap mints/copies: store (default), `<prefix>-client` Secret, `<prefix>-hub-ca` ConfigMap, `<prefix>-reader` Role, `<prefix>-ca` / issuers, `<prefix>-client-ca` ConfigMap. Chart-only (the spoke store *name* alone can be overridden at runtime via `config.eso.hubBootstrap.storeName`). |
 | `sharedNamespace` | string | `eso-shared` | Namespace on the propagating hub that the bootstrap store READS, and that children get `get`/`list`/`watch` on. Default `eso-shared` is a curated fan-out namespace. Empty rolls back to the policy namespace (historical; that namespace also holds client keys and install credentials). Policy-namespace `resourceNames` grants are the opt-in for material that must reach exactly one cluster. Runtime override: `config.eso.hubBootstrap.sharedNamespace`. |
 | `writebackNamespace` | string | `eso-writeback` | Namespace on the propagating hub that children WRITE into via `config.eso.pushSecrets`. Separate from `sharedNamespace` so siblings cannot `list` those tokens. The write-back `ClusterSecretStore` is created only when **this cluster** has `config.eso.pushSecrets` and this value is non-empty. Empty disables the write-back store, the namespace, and write RBAC even if `pushSecrets` is set. Runtime override: `config.eso.hubBootstrap.writebackNamespace`. |
-| `consumerNamespaces` | list(string) | `[]` | Extra namespaces on the child that may reference the hub-bootstrap ClusterSecretStore(s) — applied to **both** the read store (`hub-bootstrap`) and, when present, the write-back store (`hub-bootstrap-writeback`). A namespace granted read access to `sharedNamespace` is granted write access to `writebackNamespace` too. Write a list of name strings (`- app-ns`), never maps (`- name: app-ns`): a map list fails hub templating on `policy-eso-boot-store` with `failed to resolve the template`. The operand namespace, `sharedNamespace`/`writebackNamespace`, and `config.defaultSecretsNamespace` are always allowed. Runtime override: `config.eso.hubBootstrap.consumerNamespaces`. |
+| `consumerNamespaces` | list(string) | `[]` | Extra namespaces on the child that may reference the hub-bootstrap ClusterSecretStore(s) — applied to the read store (`hub-bootstrap`), each `extraStores` CSS, and, when present, the write-back store (`hub-bootstrap-writeback`). A namespace granted read access to `sharedNamespace` is granted write access to `writebackNamespace` too. Write a list of name strings (`- app-ns`), never maps (`- name: app-ns`): a map list fails hub templating on `policy-eso-boot-store` with `failed to resolve the template`. The operand namespace, `sharedNamespace`/`writebackNamespace`, and `config.defaultSecretsNamespace` are always allowed. Runtime override: `config.eso.hubBootstrap.consumerNamespaces`. |
 | `consumerNamespaceSelector` | map | `{}` | Optional label selector (OR with the namespace list) for the same allow-list. Runtime override: `config.eso.hubBootstrap.consumerNamespaceSelector`. |
+| `extraStores` | list(map) | `[]` | Sibling **read** `ClusterSecretStore`s that reuse the bootstrap client cert, serving CA, and `hubServer` / `deriveHubUrl` cadence. Each item needs `name` (store name on this cluster) and `remoteNamespace` (namespace on the parent). Keep `eso-shared` for general fan-out; use extras for isolated namespaces such as BMC. The parent creates each `remoteNamespace` and grants children `get`/`list`/`watch` there. Runtime override: `config.eso.hubBootstrap.extraStores`. |
 | `clientCAConfigMap` | string | `''` → `<storePrefix>-client-ca` | Name of the `openshift-config` ConfigMap `APIServer.spec.clientCA` points at. Chart-only. |
 | `authSecretRefreshInterval` | duration | `1h` | Default `refreshInterval` for the store-auth ExternalSecrets `policy-eso-secret-stores` emits (credential pulls through the bootstrap store). Per-store override: `secretStores[].authSecretConfig.refreshInterval`. Chart-only. |
 | `teardown` | bool | `false` | Explicit decommission flag: every boot policy switches from provisioning to removal (spoke store + client secret + serving-CA copy, hub mint estate, reader RBAC, clientCA ConfigMap, `APIServer.spec.clientCA` → `""` — a disruptive apiserver rollout). Removing the `hubBootstrap` block WITHOUT this flag is a deliberate no-op. Runtime override: `config.eso.hubBootstrap.teardown`. See README → Decommissioning. |
@@ -199,7 +200,7 @@ values files (per-cluster files may override). Everything here is evaluated **pe
 ### `config.eso.secrets[]`
 
 *How-to: [Create Secrets](README.md#create-secrets-configesosecrets).
-Paste-ready hops: [quickstart Step 4](quickstart.md#step-4--list-secrets-to-create-on-each-cluster).*
+Paste-ready hops: [quickstart Step 4](quickstart.md#step-4-list-secrets-to-create-on-each-cluster).*
 
 Rendered by `policy-eso-cluster-secrets` on whichever cluster the config lands on. This is
 the list of Secrets **this cluster** should have. `storeRef` names the provider (Vault on
@@ -276,7 +277,7 @@ that entry is skipped.
 | `remoteKey` | string | `name` | Destination name in the remote store (parent Secret name, or Vault path under the store `path`). Collected for parent write RBAC. When `data` is omitted, emitted as `match.remoteRef.remoteKey`. |
 | `refreshInterval` | duration | `1h` | ESO re-push cadence. ACM only keeps the `PushSecret` object present. |
 | `data` | list(map) | unset | Per-key `match` entries, verbatim PushSecret. Omit to push every key under `remoteKey`. |
-| `stripServiceAccountTokenType` | bool | `false` | Source is `type: kubernetes.io/service-account-token`: stages a plain `Opaque` copy (`<name>-opaque`) of just the keys named by `data[].match.secretKey` and pushes that instead, so the destination isn't garbage-collected as an orphaned SA token (see [troubleshooting R11 cause 10](troubleshooting.md#r11--a-pushsecret-is-not-syncing)). Requires at least one `data[].match.secretKey`; leave unset for TLS/dockerconfigjson/etc. sources. |
+| `stripServiceAccountTokenType` | bool | `false` | Source is `type: kubernetes.io/service-account-token`: stages a plain `Opaque` copy (`<name>-opaque`) of just the keys named by `data[].match.secretKey` and pushes that instead, so the destination isn't garbage-collected as an orphaned SA token (see [troubleshooting R11 cause 10](troubleshooting.md#r11-a-pushsecret-is-not-syncing)). Requires at least one `data[].match.secretKey`; leave unset for TLS/dockerconfigjson/etc. sources. |
 | `prune` | bool | `config.eso.pruneRemovedStores` | Delete the `PushSecret` if the entry is later removed. Does not delete the remote Secret or Vault path. |
 
 ### `config.eso.secretStores[]` — list item wrapper
@@ -322,7 +323,7 @@ listed namespace.
 
 ### `authSecretConfig`
 
-*Concept walkthrough: [the two-hop credential transport](mechanics.md#4-authsecretconfig--the-two-hop-credential-transport); worked example:
+*Concept walkthrough: [the two-hop credential transport](mechanics.md#4-authsecretconfig-the-two-hop-credential-transport); worked example:
 [Auth secrets](README.md#auth-secrets-authsecretconfig) in the README.*
 
 Provisions each auth-ref target Secret through the two-hop transport: an ExternalSecret on
@@ -357,7 +358,7 @@ from the ref **in `spec`** — never repeated here.
 
 ### `config.eso.hubBootstrap`
 
-*Concept walkthrough: [the bootstrap store](mechanics.md#2-the-bootstrap-store--clustercluster-secret-transport) and [trust modes](mechanics.md#3-mtls-trust-modes);
+*Concept walkthrough: [the bootstrap store](mechanics.md#2-the-bootstrap-store-clustercluster-secret-transport) and [trust modes](mechanics.md#3-mtls-trust-modes);
 worked examples: [hub bootstrap](README.md#clustercluster-hub-bootstrap-configesohubbootstrap)
 in the README.*
 
@@ -371,8 +372,9 @@ key for key. Only the keys below differ from or add to the chart surface:
 | `storeName` | string | chart `storePrefix` (`hub-bootstrap`) | **Runtime-only.** Name of the ClusterSecretStore created on the spoke — the name consumers put in `secretStoreRef`. All *other* minted-object names still derive from the chart `storePrefix`. |
 | `sharedNamespace` | string | chart `hubBootstrap.sharedNamespace` (`eso-shared`) | Per-cluster override of the fan-out namespace the bootstrap store reads. Empty rolls back to the policy namespace. |
 | `writebackNamespace` | string | chart `hubBootstrap.writebackNamespace` (`eso-writeback`) | Per-cluster override of the namespace children write into. The write-back store is created only when this cluster has `config.eso.pushSecrets` and this value is non-empty. Empty disables the write-back store, the namespace, and write RBAC. |
-| `consumerNamespaces` | list(string) | chart `consumerNamespaces` | Extra child namespaces allowed to reference the hub-bootstrap store(s) — both read and write-back. List of name strings (`- app-ns`), not maps. |
+| `consumerNamespaces` | list(string) | chart `consumerNamespaces` | Extra child namespaces allowed to reference the hub-bootstrap store(s) — both read and write-back. List of name strings (`- app-ns`), not maps. Also applied to each `extraStores` CSS. |
 | `consumerNamespaceSelector` | map | chart `consumerNamespaceSelector` | Optional label selector (OR with the namespace list). |
+| `extraStores` | list(map) | chart `extraStores` (`[]`) | Sibling **read** `ClusterSecretStore`s that reuse the bootstrap client cert, serving CA, and `hubServer` / `deriveHubUrl` cadence. Only `name` and `remoteNamespace` differ from `hub-bootstrap`. Use for isolated fan-out namespaces (for example BMC) without replacing `sharedNamespace`. Parent creates each `remoteNamespace` and grants children `get`/`list`/`watch` there. |
 | `mode` | string | chart `mode` (`selfSigned`) | Trust mode: `selfSigned` \| `externalCA` \| `externalCAReuseServingCert`. |
 | `teardown` | bool | chart `teardown` (`false`) | Explicit decommission flag — see §1 and README → Decommissioning. |
 | `clientIdentity.*` | — | chart values | Same keys as §1 `clientIdentity` (`certCNPrefix`, `baseDomain`, `useDefaultCertValues`, `certDuration`, `certRenewBefore`, `certUsages`, `privateKeyAlgorithm`, `privateKeySize`), same mode-gated defaults. |

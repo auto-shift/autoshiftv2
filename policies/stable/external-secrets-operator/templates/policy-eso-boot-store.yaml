@@ -53,7 +53,9 @@
 #                     the policy resolves hub templates as autoshift-policy-service-account (cluster-admin), set
 #                     in hubTemplateOptions below. Default false: use hubServer config.
 #   storeName       : ClusterSecretStore name (defaults to the chart's hubBootstrap.storePrefix)
-# (No certCN/remoteNamespace: the identity + the namespace it reads are fixed by the deployment.)
+#   extraStores     : optional sibling READ stores (same cert/URL/CA as hub-bootstrap; different
+#                     remoteNamespace). Each entry needs name + remoteNamespace.
+# (No certCN: the identity is fixed by the deployment. sharedNamespace / extraStores set remoteNamespace.)
 #
 # All-or-nothing: absent config.eso.hubBootstrap -> no-op. Depends on ESO being installed.
 #
@@ -67,6 +69,7 @@
 {{- $hb := (default (dict) $eso.hubBootstrap) }}
 {{- $defaultConsumerNs := (dig "consumerNamespaces" (list) $hb) }}
 {{- $defaultConsumerSel := (dig "consumerNamespaceSelector" (dict) $hb) }}
+{{- $defaultExtraStores := (dig "extraStores" (list) $hb) }}
 {{- $esoNamespace := $eso.namespace }}
 {{- $storePrefix := (dig "storePrefix" "" $hb | default "hub-bootstrap") }}
 {{- $clientSecret := (printf "%s-client" $storePrefix) }}
@@ -197,6 +200,7 @@ spec:
                     {{ "{{hub-" }} $pushSecrets := (dig "eso" "pushSecrets" (list) $clusterConfig) {{ "hub}}" }}
                     {{ "{{hub-" }} $consumerNs := (index $hubBootstrap "consumerNamespaces" | default (`{{ $defaultConsumerNs | toJson }}` | fromJson)) {{ "hub}}" }}
                     {{ "{{hub-" }} $consumerSel := (index $hubBootstrap "consumerNamespaceSelector" | default (`{{ $defaultConsumerSel | toJson }}` | fromJson)) {{ "hub}}" }}
+                    {{ "{{hub-" }} $extraStores := (index $hubBootstrap "extraStores" | default (`{{ $defaultExtraStores | toJson }}` | fromJson)) {{ "hub}}" }}
                     {{ "{{hub-" }} $dsn := (index $clusterConfig "defaultSecretsNamespace" | default "") {{ "hub}}" }}
                     ##### externalCA-mode mint settings: the CN prefix + baseDomain are bridged to the spoke, which derives #####
                     ##### its own client cert CN the SAME way as the hub clientca-external policy (from its apiserverurl.openshift.io #####
@@ -256,6 +260,16 @@ spec:
                       {{ "{{hub-" }} if eq $hubServer "" {{ "hub}}" }}
                         {{ "{{hub-" }} $hubErrors = append $hubErrors "[hub] hub apiserver URL unresolved: set config.eso.hubBootstrap.hubServer (or values externalSecretsOperator.hubServer), or enable deriveHubUrl so this policy derives it from the apiserverurl.openshift.io ClusterClaim" {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} range $es := ($extraStores | default list) {{ "hub}}" }}
+                        {{ "{{hub-" }} $es = ($es | default dict) {{ "hub}}" }}
+                        {{ "{{hub-" }} $esName := (dig "name" "" $es) {{ "hub}}" }}
+                        {{ "{{hub-" }} $esNs := (dig "remoteNamespace" "" $es) {{ "hub}}" }}
+                        {{ "{{hub-" }} if or (eq $esName "") (eq $esNs "") {{ "hub}}" }}
+                          {{ "{{hub-" }} $hubErrors = append $hubErrors "[hub] hubBootstrap.extraStores[] requires name and remoteNamespace" {{ "hub}}" }}
+                        {{ "{{hub-" }} else if or (eq $esName $storeName) (eq $esName (printf "%s-writeback" $storeName)) {{ "hub}}" }}
+                          {{ "{{hub-" }} $hubErrors = append $hubErrors (printf "[hub] hubBootstrap.extraStores name %q collides with the bootstrap read/writeback store" $esName) {{ "hub}}" }}
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} if eq $servingCASrc "" {{ "hub}}" }}
                         {{ "{{hub-" }} $hubErrors = append $hubErrors (printf "[hub] hub serving CA ConfigMap %s/%s not found yet (the boot-serving-ca policy stashes it) — retrying" "{{ $policyNamespace }}" "{{ $servingCAConfigMap }}") {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
@@ -310,6 +324,7 @@ spec:
                     {{ "{{-" }} $pushSecrets := `{{ "{{hub" }} $pushSecrets | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
                     {{ "{{-" }} $consumerNs := `{{ "{{hub" }} $consumerNs | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
                     {{ "{{-" }} $consumerSel := `{{ "{{hub" }} $consumerSel | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+                    {{ "{{-" }} $extraStores := `{{ "{{hub" }} $extraStores | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
                     {{ "{{-" }} $dsn := `{{ "{{hub" }} $dsn {{ "hub}}" }}` {{ "}}" }}
                     ##### externalCA CN inputs — the spoke derives the full CN/SAN itself from these + its own apiserver URL #####
                     {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
@@ -341,6 +356,17 @@ spec:
                         kind: ClusterSecretStore
                         metadata:
                           name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
+                      {{ "{{-" }} range $es := ($extraStores | default list) {{ "}}" }}
+                        {{ "{{-" }} $esName := (dig "name" "" ($es | default dict)) {{ "}}" }}
+                        {{ "{{-" }} if ne $esName "" {{ "}}" }}
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: external-secrets.io/v1
+                        kind: ClusterSecretStore
+                        metadata:
+                          name: {{ "{{" }} $esName {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
                     - complianceType: mustnothave
                       objectDefinition:
                         apiVersion: v1
@@ -634,6 +660,59 @@ spec:
                         metadata:
                           name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }}
+                      ##### Extra read stores: same cert, URL, and CA as hub-bootstrap; only #####
+                      ##### remoteNamespace (and store name) differ. Same cadence as writeback #####
+                      ##### (deriveHubUrl / hubServer), for isolated fan-out namespaces such as #####
+                      ##### BMC credentials outside eso-shared. #####
+                      {{ "{{-" }} range $es := ($extraStores | default list) {{ "}}" }}
+                        {{ "{{-" }} $es = ($es | default dict) {{ "}}" }}
+                        {{ "{{-" }} $esName := (dig "name" "" $es) {{ "}}" }}
+                        {{ "{{-" }} $esNs := (dig "remoteNamespace" "" $es) {{ "}}" }}
+                        {{ "{{-" }} if and (ne $esName "") (ne $esNs "") {{ "}}" }}
+                    - complianceType: mustonlyhave
+                      objectDefinition:
+                        apiVersion: external-secrets.io/v1
+                        kind: ClusterSecretStore
+                        metadata:
+                          name: {{ "{{" }} $esName {{ "}}" }}
+                          labels:
+                            autoshift.io/eso-bootstrap-extra-store: {{ "{{" }} $storeName {{ "}}" }}
+                        spec:
+                          {{ "{{-" }} $condNsEx := list "{{ $esoNamespace }}" {{ "}}" }}
+                          {{ "{{-" }} if and (ne $esNs "") (not (has $esNs $condNsEx)) {{ "}}" }}{{ "{{-" }} $condNsEx = append $condNsEx $esNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} range $n := ($consumerNs | default list) {{ "}}" }}
+                            {{ "{{-" }} if and (ne $n "") (not (has $n $condNsEx)) {{ "}}" }}{{ "{{-" }} $condNsEx = append $condNsEx $n {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                          conditions:
+                            - namespaces:
+                              {{ "{{-" }} range $n := $condNsEx {{ "}}" }}
+                                - {{ "{{" }} $n {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} if or (hasKey ($consumerSel | default dict) "matchLabels") (hasKey ($consumerSel | default dict) "matchExpressions") {{ "}}" }}
+                            - namespaceSelector: {{ "{{" }} $consumerSel | toRawJson {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
+                          provider:
+                            kubernetes:
+                              server:
+                                url: {{ "{{" }} $hubServer {{ "}}" }}
+                                caProvider:
+                                  type: ConfigMap
+                                  name: {{ $servingCAConfigMap }}
+                                  key: ca.crt
+                                  namespace: {{ $esoNamespace }}
+                              remoteNamespace: {{ "{{" }} $esNs {{ "}}" }}
+                              auth:
+                                cert:
+                                  clientCert:
+                                    name: {{ $clientSecret }}
+                                    namespace: {{ $esoNamespace }}
+                                    key: tls.crt
+                                  clientKey:
+                                    name: {{ $clientSecret }}
+                                    namespace: {{ $esoNamespace }}
+                                    key: tls.key
+                        {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
                       ##### Consumers create their own ExternalSecrets referencing this store ($storeName, #####
                       ##### kind ClusterSecretStore) — this policy provisions ONLY the store + its auth. #####
                       {{ "{{-" }} end {{ "}}" }}
@@ -708,6 +787,7 @@ spec:
             {{ "{{hub-" }} $pushSecrets := (dig "eso" "pushSecrets" (list) $clusterConfig) {{ "hub}}" }}
             {{ "{{hub-" }} $consumerNs := (index $hubBootstrap "consumerNamespaces" | default (`{{ $defaultConsumerNs | toJson }}` | fromJson)) {{ "hub}}" }}
             {{ "{{hub-" }} $consumerSel := (index $hubBootstrap "consumerNamespaceSelector" | default (`{{ $defaultConsumerSel | toJson }}` | fromJson)) {{ "hub}}" }}
+            {{ "{{hub-" }} $extraStores := (index $hubBootstrap "extraStores" | default (`{{ $defaultExtraStores | toJson }}` | fromJson)) {{ "hub}}" }}
             {{ "{{hub-" }} $dsn := (index $clusterConfig "defaultSecretsNamespace" | default "") {{ "hub}}" }}
             ##### externalCA-mode mint settings: the CN prefix + baseDomain are bridged to the spoke, which derives #####
             ##### its own client cert CN the SAME way as the hub clientca-external policy (from its apiserverurl.openshift.io #####
@@ -767,6 +847,16 @@ spec:
               {{ "{{hub-" }} if eq $hubServer "" {{ "hub}}" }}
                 {{ "{{hub-" }} $hubErrors = append $hubErrors "[hub] hub apiserver URL unresolved: set config.eso.hubBootstrap.hubServer (or values externalSecretsOperator.hubServer), or enable deriveHubUrl so this policy derives it from the apiserverurl.openshift.io ClusterClaim" {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} range $es := ($extraStores | default list) {{ "hub}}" }}
+                {{ "{{hub-" }} $es = ($es | default dict) {{ "hub}}" }}
+                {{ "{{hub-" }} $esName := (dig "name" "" $es) {{ "hub}}" }}
+                {{ "{{hub-" }} $esNs := (dig "remoteNamespace" "" $es) {{ "hub}}" }}
+                {{ "{{hub-" }} if or (eq $esName "") (eq $esNs "") {{ "hub}}" }}
+                  {{ "{{hub-" }} $hubErrors = append $hubErrors "[hub] hubBootstrap.extraStores[] requires name and remoteNamespace" {{ "hub}}" }}
+                {{ "{{hub-" }} else if or (eq $esName $storeName) (eq $esName (printf "%s-writeback" $storeName)) {{ "hub}}" }}
+                  {{ "{{hub-" }} $hubErrors = append $hubErrors (printf "[hub] hubBootstrap.extraStores name %q collides with the bootstrap read/writeback store" $esName) {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
               {{ "{{hub-" }} if eq $servingCASrc "" {{ "hub}}" }}
                 {{ "{{hub-" }} $hubErrors = append $hubErrors (printf "[hub] hub serving CA ConfigMap %s/%s not found yet (the boot-serving-ca policy stashes it) — retrying" "{{ $policyNamespace }}" "{{ $servingCAConfigMap }}") {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
@@ -821,6 +911,7 @@ spec:
             {{ "{{-" }} $pushSecrets := `{{ "{{hub" }} $pushSecrets | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
             {{ "{{-" }} $consumerNs := `{{ "{{hub" }} $consumerNs | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
             {{ "{{-" }} $consumerSel := `{{ "{{hub" }} $consumerSel | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+            {{ "{{-" }} $extraStores := `{{ "{{hub" }} $extraStores | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
             {{ "{{-" }} $dsn := `{{ "{{hub" }} $dsn {{ "hub}}" }}` {{ "}}" }}
             ##### externalCA CN inputs — the spoke derives the full CN/SAN itself from these + its own apiserver URL #####
             {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
@@ -852,6 +943,17 @@ spec:
                 kind: ClusterSecretStore
                 metadata:
                   name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
+              {{ "{{-" }} range $es := ($extraStores | default list) {{ "}}" }}
+                {{ "{{-" }} $esName := (dig "name" "" ($es | default dict)) {{ "}}" }}
+                {{ "{{-" }} if ne $esName "" {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: external-secrets.io/v1
+                kind: ClusterSecretStore
+                metadata:
+                  name: {{ "{{" }} $esName {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
             - complianceType: mustnothave
               objectDefinition:
                 apiVersion: v1
@@ -1144,6 +1246,59 @@ spec:
                 kind: ClusterSecretStore
                 metadata:
                   name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              ##### Extra read stores: same cert, URL, and CA as hub-bootstrap; only #####
+              ##### remoteNamespace (and store name) differ. Same cadence as writeback #####
+              ##### (deriveHubUrl / hubServer), for isolated fan-out namespaces such as #####
+              ##### BMC credentials outside eso-shared. #####
+              {{ "{{-" }} range $es := ($extraStores | default list) {{ "}}" }}
+                {{ "{{-" }} $es = ($es | default dict) {{ "}}" }}
+                {{ "{{-" }} $esName := (dig "name" "" $es) {{ "}}" }}
+                {{ "{{-" }} $esNs := (dig "remoteNamespace" "" $es) {{ "}}" }}
+                {{ "{{-" }} if and (ne $esName "") (ne $esNs "") {{ "}}" }}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: external-secrets.io/v1
+                kind: ClusterSecretStore
+                metadata:
+                  name: {{ "{{" }} $esName {{ "}}" }}
+                  labels:
+                    autoshift.io/eso-bootstrap-extra-store: {{ "{{" }} $storeName {{ "}}" }}
+                spec:
+                  {{ "{{-" }} $condNsEx := list "{{ $esoNamespace }}" {{ "}}" }}
+                  {{ "{{-" }} if and (ne $esNs "") (not (has $esNs $condNsEx)) {{ "}}" }}{{ "{{-" }} $condNsEx = append $condNsEx $esNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} range $n := ($consumerNs | default list) {{ "}}" }}
+                    {{ "{{-" }} if and (ne $n "") (not (has $n $condNsEx)) {{ "}}" }}{{ "{{-" }} $condNsEx = append $condNsEx $n {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  conditions:
+                    - namespaces:
+                      {{ "{{-" }} range $n := $condNsEx {{ "}}" }}
+                        - {{ "{{" }} $n {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if or (hasKey ($consumerSel | default dict) "matchLabels") (hasKey ($consumerSel | default dict) "matchExpressions") {{ "}}" }}
+                    - namespaceSelector: {{ "{{" }} $consumerSel | toRawJson {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  provider:
+                    kubernetes:
+                      server:
+                        url: {{ "{{" }} $hubServer {{ "}}" }}
+                        caProvider:
+                          type: ConfigMap
+                          name: {{ $servingCAConfigMap }}
+                          key: ca.crt
+                          namespace: {{ $esoNamespace }}
+                      remoteNamespace: {{ "{{" }} $esNs {{ "}}" }}
+                      auth:
+                        cert:
+                          clientCert:
+                            name: {{ $clientSecret }}
+                            namespace: {{ $esoNamespace }}
+                            key: tls.crt
+                          clientKey:
+                            name: {{ $clientSecret }}
+                            namespace: {{ $esoNamespace }}
+                            key: tls.key
+                {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
               ##### Consumers create their own ExternalSecrets referencing this store ($storeName, #####
               ##### kind ClusterSecretStore) — this policy provisions ONLY the store + its auth. #####

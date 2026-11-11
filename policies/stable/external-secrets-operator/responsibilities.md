@@ -7,7 +7,7 @@ per ConfigurationPolicy. Use this when you need to answer "which policy owns tha
 
 Companion docs: [README.md](README.md) (operational reference),
 [quickstart.md](quickstart.md) (getting started),
-[mechanics.md](mechanics.md) (how the mechanisms work), [CONFIG-REFERENCE.md](CONFIG-REFERENCE.md)
+[mechanics.md](mechanics.md) (how the mechanisms work), [config-reference.md](config-reference.md)
 (every knob), [troubleshooting.md](troubleshooting.md) (when it breaks).
 
 ## How to read this
@@ -161,7 +161,7 @@ payoff of the boot chain: after this, the cluster can pull hub secrets.
 
 | CP | Responsibility |
 |---|---|
-| `eso-boot-store` (enforce) | Build the hub-bootstrap `ClusterSecretStore` on the cluster: copy this cluster's client-cert Secret and the hub serving CA from the owning deployment's policy namespace (via `copySecretData`/`fromConfigMap` — never a Secret lookup), and point a kubernetes-provider store at the hub apiserver over mTLS with `remoteNamespace` = `sharedNamespace` (`eso-shared` by default). Store name comes from the runtime `storeName` override, else the chart `storePrefix`. When `writebackNamespace` is set, emit a second store named `<storeName>-writeback` with the same cert, URL, and CA, `remoteNamespace` = that write-back namespace. Empty `writebackNamespace` mustnothave-clears the leftover write-back store. |
+| `eso-boot-store` (enforce) | Build the hub-bootstrap `ClusterSecretStore` on the cluster: copy this cluster's client-cert Secret and the hub serving CA from the owning deployment's policy namespace (via `copySecretData`/`fromConfigMap` — never a Secret lookup), and point a kubernetes-provider store at the hub apiserver over mTLS with `remoteNamespace` = `sharedNamespace` (`eso-shared` by default). Store name comes from the runtime `storeName` override, else the chart `storePrefix`. When `writebackNamespace` is set, emit a second store named `<storeName>-writeback` with the same cert, URL, and CA, `remoteNamespace` = that write-back namespace. Empty `writebackNamespace` mustnothave-clears the leftover write-back store. `hubBootstrap.extraStores` mints additional read stores the same way (same cert/URL/CA, different `name` + `remoteNamespace`). |
 | `eso-boot-store-gate` (inform) | Status-ConfigMap gate. |
 
 ### `templates/policy-eso-cluster-secrets.yaml`

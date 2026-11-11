@@ -12,7 +12,7 @@ each bootstrap trust mode, from empty deployment to consumed secrets.
 
 ## Architecture: cross-cluster cert auth flow
 
-*Mechanism deep-dives: [the bootstrap store](mechanics.md#2-the-bootstrap-store--clustercluster-secret-transport) and [mTLS trust modes](mechanics.md#3-mtls-trust-modes) in mechanics.md.*
+*Mechanism deep-dives: [the bootstrap store](mechanics.md#2-the-bootstrap-store-clustercluster-secret-transport) and [mTLS trust modes](mechanics.md#3-mtls-trust-modes) in mechanics.md.*
 
 For the cluster→cluster bootstrap, an ESO `kubernetes`-provider store on a **spoke** reads
 Secrets straight from the **hub** apiserver over **mutual TLS**. Two independent trust chains
@@ -185,7 +185,7 @@ New policies are automatically discovered by the ApplicationSet. In Git mode, th
 ## Configuration
 
 Full key-by-key tables for every chart value, runtime config key, and label live in
-[CONFIG-REFERENCE.md](CONFIG-REFERENCE.md); the underlying mechanisms (bootstrap store, trust
+[config-reference.md](config-reference.md); the underlying mechanisms (bootstrap store, trust
 modes, two-hop credential transport, gates, cleanup) are described in
 [mechanics.md](mechanics.md); a per-PolicySet / per-policy / per-ConfigurationPolicy ownership
 map lives in [responsibilities.md](responsibilities.md); the sections below explain
@@ -224,7 +224,7 @@ the chart value `externalSecretsOperator.externalSecretsConfig` *is* the default
 verbatim (any CRD field goes there), and `config.eso.externalSecretsConfig` in the AutoShift
 values is a same-shaped override deep-merged over it at ACM propagation time (override wins).
 Key summary: the `externalSecretsConfig` rows in
-[CONFIG-REFERENCE.md](CONFIG-REFERENCE.md#externalsecretsoperator).
+[config-reference.md](config-reference.md#externalsecretsoperator).
 The rendered config already resolves the AutoShift values levels, so setting the key at any
 level composes naturally.
 
@@ -292,8 +292,8 @@ Verify what the operator applied: `oc get networkpolicy -n external-secrets-oper
 `ClusterSecretStore` objects on each managed cluster from the per-cluster
 rendered-config ConfigMap (read via hub-template `lookup`, the same mechanism the
 `cluster-config-maps` policy uses). Key-by-key tables for every store field:
-[`config.eso.secretStores[]`](CONFIG-REFERENCE.md#configesosecretstores--list-item-wrapper)
-in CONFIG-REFERENCE.md.
+[`config.eso.secretStores[]`](config-reference.md#configesosecretstores-list-item-wrapper)
+in config-reference.md.
 
 Four policies are driven from the per-cluster ESO config:
 
@@ -343,7 +343,7 @@ not enforce them, so set them correctly in config:
 
 ### Removing a store — pruning (`pruneRemovedStores` / per-store `prune`)
 
-*Sweep mechanics (baked labels, label-driven `mustnothave`): [mechanics.md §8](mechanics.md#8-cleanup--baked-prune-labels-label-driven-sweeps-explicit-teardown).*
+*Sweep mechanics (baked labels, label-driven `mustnothave`): [mechanics.md §8](mechanics.md#8-cleanup-baked-prune-labels-label-driven-sweeps-explicit-teardown).*
 
 When a store entry is **removed from config**, everything it created is pruned by default: the
 `ClusterSecretStore`/`SecretStore` itself, its spoke auth ExternalSecrets (**and their target
@@ -389,8 +389,8 @@ fleet). Unlabeled objects (created manually or by anything else) are never candi
 
 ### Auth secrets (`authSecretConfig`)
 
-*Concept walkthrough: [the two-hop credential transport](mechanics.md#4-authsecretconfig--the-two-hop-credential-transport); key tables:
-[`authSecretConfig`](CONFIG-REFERENCE.md#authsecretconfig) in CONFIG-REFERENCE.md.*
+*Concept walkthrough: [the two-hop credential transport](mechanics.md#4-authsecretconfig-the-two-hop-credential-transport); key tables:
+[`authSecretConfig`](config-reference.md#authsecretconfig) in config-reference.md.*
 
 Most auth methods reference a Kubernetes Secret (the Vault token, AppRole SecretID,
 client cert/key, a bearer token, cloud creds, ...). `authSecretConfig` — an optional
@@ -470,7 +470,7 @@ native. Only omitting (or misspelling) the `external` key itself means native.
 cluster's owning namespace. The hub's config-policy-controller service account must be allowed
 those reads — if the policy sits Compliant but emits nothing (no ExternalSecrets, no status
 ConfigMap), check for lookup RBAC denials in the policy status and grant the reads via
-[`bootPrereqs.rbac`](#boot-prerequisites--hub-side-rbac-bootprereqs) rather than widening the
+[`bootPrereqs.rbac`](#boot-prerequisites-hub-side-rbac-bootprereqs) rather than widening the
 policy itself.
 
 **`sources` is one map; the policy branches on it** (a single invariant keeps source→target
@@ -550,7 +550,7 @@ Other notes:
 `fromRef` or component, a provider not in `spec.provider`, a sourced component whose ref
 isn't set in `spec`, or a source missing `hubSecretName` **records the store's problem and
 skips just that store** (per-store skip, surfaced via the status ConfigMap + gate — see
-[Precondition failures](#precondition-failures--where-to-look-status-configmap--gate)); every
+[Precondition failures](#precondition-failures-where-to-look-status-configmap-gate)); every
 other store still provisions.
 
 | `fromRef` | `base` (under `spec.provider.<provider>`) | components |
@@ -827,7 +827,7 @@ config:
 
 ### Kubernetes cert auth RBAC (`certAuthRBAC`)
 
-*Key tables: [`certAuthRBAC`](CONFIG-REFERENCE.md#certauthrbac) in CONFIG-REFERENCE.md.*
+*Key tables: [`certAuthRBAC`](config-reference.md#certauthrbac) in config-reference.md.*
 
 When a store uses the **kubernetes** provider with **cert** auth
 (`spec.provider.kubernetes.auth.cert`), the apiserver identifies the client by the
@@ -1148,6 +1148,8 @@ What happens, in order (each step self-heals until its input exists):
 > root store + seed — the policy treats that identically, no code path differs. The trade-off is
 > the usual one: a shared root store means its Vault identity spans every tenant that pulls from it.
 
+### Per-store server-CA delivery (`caSource`)
+
 For a kubernetes-provider store, ESO must **trust the TLS cert the remote apiserver
 presents** — via `provider.kubernetes.server.caBundle` (inline PEM) or `…server.caProvider`
 (a ConfigMap/Secret ref). That CA is the one that signed the **remote** apiserver's serving
@@ -1196,7 +1198,7 @@ config:
   (some of namespace/name/key), a `caSource` on a store with no `caProvider`, or a
   non-`ConfigMap` `caProvider` is a **per-store precondition error**: that store is recorded in
   the status ConfigMap and skipped while the others still provision (see
-  [Precondition failures](#precondition-failures--where-to-look-status-configmap--gate)).
+  [Precondition failures](#precondition-failures-where-to-look-status-configmap-gate)).
 - **No name mismatch:** the destination is the store's own `caProvider` (`name`/`key`/namespace),
   so there is nothing to keep in sync. ESO's controller already has cluster-wide ConfigMap read,
   so no extra RBAC is needed.
@@ -1341,7 +1343,7 @@ never denied by its own RBAC. Two things follow from how that grant works:
 
 *Key tables: [`config.eso.pushSecrets[]`](config-reference.md#configesopushsecrets) in
 config-reference.md. Mechanism: [push-back](mechanics.md#10-push-back-spoke-to-parent-to-vault)
-in mechanics.md. Diagnosis: [troubleshooting R11](troubleshooting.md#r11--a-pushsecret-is-not-syncing).*
+in mechanics.md. Diagnosis: [troubleshooting R11](troubleshooting.md#r11-a-pushsecret-is-not-syncing).*
 
 `config.eso.secrets` **pulls** a value onto a cluster. `config.eso.pushSecrets`
 **publishes** a Secret that already exists on that cluster. The two lists are independent. A
@@ -1530,7 +1532,7 @@ any `kubernetes.io/service-account-token` Secret whose referenced `ServiceAccoun
 exist (by UID) in *that Secret's own namespace*, which it never will in `eso-writeback` or any
 other cross-cluster write-back target. The Secret disappears seconds after ESO creates it,
 repeatedly, with no error surfaced anywhere in this chart's own signals. Full symptom and
-confirmation steps: [troubleshooting R11 cause 10](troubleshooting.md#r11--a-pushsecret-is-not-syncing).
+confirmation steps: [troubleshooting R11 cause 10](troubleshooting.md#r11-a-pushsecret-is-not-syncing).
 
 Set `stripServiceAccountTokenType: true` on the entry to fix it. The policy stages an
 intermediate plain `Opaque` Secret (`<name>-opaque`) in the same namespace, containing only
@@ -1566,8 +1568,8 @@ values.
 
 ## Cluster→cluster hub bootstrap (`config.eso.hubBootstrap`)
 
-*Concept walkthrough: [the bootstrap store](mechanics.md#2-the-bootstrap-store--clustercluster-secret-transport); key tables:
-[`config.eso.hubBootstrap`](CONFIG-REFERENCE.md#configesohubbootstrap) in CONFIG-REFERENCE.md.*
+*Concept walkthrough: [the bootstrap store](mechanics.md#2-the-bootstrap-store-clustercluster-secret-transport); key tables:
+[`config.eso.hubBootstrap`](config-reference.md#configesohubbootstrap) in config-reference.md.*
 
 A self-contained way to make hub Secrets reachable from a spoke **through ESO**, before the
 spoke has any real `secretStores` configured. It stands the **hub up as a
@@ -2006,7 +2008,7 @@ retiring the cluster from the feature).
 
 ### Cleanup reference — every automatic removal in one place
 
-*Concept walkthrough: [cleanup mechanics](mechanics.md#8-cleanup--baked-prune-labels-label-driven-sweeps-explicit-teardown) in mechanics.md.*
+*Concept walkthrough: [cleanup mechanics](mechanics.md#8-cleanup-baked-prune-labels-label-driven-sweeps-explicit-teardown) in mechanics.md.*
 
 The chart never relies on ACM `pruneObjectBehavior`; every removal is an explicit, label-driven
 `mustnothave` sweep in the policy that created the object. This table consolidates them — each row
@@ -2014,16 +2016,16 @@ links to the section with the full mechanics:
 
 | Trigger | Removed automatically | Policy |
 |---|---|---|
-| store entry removed from `config.eso.secretStores` (its `eso-prune` label says `"true"`) | the `ClusterSecretStore`/`SecretStore` itself; its spoke auth `ExternalSecret`s **and their target Secrets** (`creationPolicy: Owner` garbage-collects them); its delivered-CA ConfigMap | `policy-eso-secret-stores` — [pruning](#removing-a-store--pruning-pruneremovedstores--per-store-prune) |
+| store entry removed from `config.eso.secretStores` (its `eso-prune` label says `"true"`) | the `ClusterSecretStore`/`SecretStore` itself; its spoke auth `ExternalSecret`s **and their target Secrets** (`creationPolicy: Owner` garbage-collects them); its delivered-CA ConfigMap | `policy-eso-secret-stores` — [pruning](#removing-a-store-pruning-pruneremovedstores-per-store-prune) |
 | *(same trigger)* | its hub-side credential `ExternalSecret`s — prune is ANDed across declaring stores, so any store wanting retention wins | `policy-eso-hub-secrets` |
 | *(same trigger)* | its cert-auth RBAC (`ClusterRole`/`ClusterRoleBinding`/`Role`/`RoleBinding`) | `policy-eso-cert-auth-rbac` |
-| mode switch **leaving `externalCA`** | the spoke-minted `Certificate` `<prefix>-client` (its Secret is kept — the new mode's copy target) | `policy-eso-boot-store` — [mode switches](#mode-switches--what-gets-cleaned-up-automatically) |
+| mode switch **leaving `externalCA`** | the spoke-minted `Certificate` `<prefix>-client` (its Secret is kept — the new mode's copy target) | `policy-eso-boot-store` — [mode switches](#mode-switches-what-gets-cleaned-up-automatically) |
 | mode switch **leaving `selfSigned`** | the hub mint estate: both ClusterIssuers, the CA `Certificate` + `Secret`, every labeled client `Certificate` + generated `Secret` | `policy-eso-boot-clientca-self` |
 | a cluster **departs the deployment** (`selfSigned`) | that cluster's client `Certificate` + generated `Secret` | `policy-eso-boot-clientca-self` |
 | an owning namespace has **no clusters left** this evaluation | its labeled reader `Role` + `RoleBinding` (each kind swept independently, so half-deleted pairs converge) | the active mode's clientca policy |
-| `diagnostics.debugRender` switched **off** | that policy's `<configpolicy>-debug-render` preview ConfigMap | every cert boot policy — [diagnostics](#diagnostics--readinessonly--debugrender-per-cluster) |
-| all preconditions healthy | the policy's `<name>-status` ConfigMap (self-clearing) | every policy with preconditions — [status ConfigMap](#precondition-failures--where-to-look-status-configmap--gate) |
-| `hubBootstrap.teardown: true` | the full bootstrap estate, incl. `APIServer.spec.clientCA` set back to `""` | all five cert boot policies — [decommissioning](#decommissioning--teardown-true) |
+| `diagnostics.debugRender` switched **off** | that policy's `<configpolicy>-debug-render` preview ConfigMap | every cert boot policy — [diagnostics](#diagnostics-readinessonly-debugrender-per-cluster) |
+| all preconditions healthy | the policy's `<name>-status` ConfigMap (self-clearing) | every policy with preconditions — [status ConfigMap](#precondition-failures-where-to-look-status-configmap-gate) |
+| `hubBootstrap.teardown: true` | the full bootstrap estate, incl. `APIServer.spec.clientCA` set back to `""` | all five cert boot policies — [decommissioning](#decommissioning-teardown-true) |
 
 Deliberate **non-removals** (all safety-motivated):
 
@@ -2176,7 +2178,7 @@ clusters:
 ### Diagnostics — `readinessOnly` / `debugRender` (per-cluster)
 
 *Concept: [diagnostics run modes](mechanics.md#7-diagnostics-run-modes); using them as instruments:
-[troubleshooting.md R9](troubleshooting.md#r9--using-the-diagnostics-toggles-as-instruments).*
+[troubleshooting.md R9](troubleshooting.md#r9-using-the-diagnostics-toggles-as-instruments).*
 
 Two **separate, composable** switches for bringing up or debugging the cert bootstrap without letting
 the active (cluster-mutating) boot policies fire. Both are read **per-cluster** from
@@ -2331,8 +2333,8 @@ flowchart TB
 
 ### Precondition failures — where to look (status ConfigMap + gate)
 
-*Concept: [failure surfacing](mechanics.md#6-failure-surfacing--status-configmap--inform-gate); reading the signals in practice:
-[troubleshooting.md §2](troubleshooting.md#2-signal-sources--where-truth-lives-in-the-order-to-consult-it).*
+*Concept: [failure surfacing](mechanics.md#6-failure-surfacing-status-configmap-inform-gate); reading the signals in practice:
+[troubleshooting.md §2](troubleshooting.md#2-signal-sources-where-truth-lives-in-the-order-to-consult-it).*
 
 The boot policies never call the template `fail` builtin. `fail` aborts template **processing**, so the
 config-policy-controller reports a `template error` whose envelope embeds the **entire** hub-resolved
@@ -2649,7 +2651,7 @@ is [troubleshooting.md](troubleshooting.md). The quick checks below cover the ba
 ### PushSecret is not Synced
 The source Secret is missing, `storeRef` points at the read store, `consumerNamespaces`
 is a list of maps, or a hop was not re-listed on the parent. Full runbook:
-[troubleshooting R11](troubleshooting.md#r11--a-pushsecret-is-not-syncing).
+[troubleshooting R11](troubleshooting.md#r11-a-pushsecret-is-not-syncing).
 
 ### Boot/readiness policy NonCompliant
 A boot or readiness Policy showing NonCompliant has hit a precondition — the detail is in its **status
@@ -2661,7 +2663,7 @@ oc get cm <policy>-status -n open-cluster-management-agent-addon -o jsonpath='{.
 ```
 Most policies write a flat `errors` list; the per-store store policies (`policy-eso-secret-stores`) key it
 `errors.<storename>.[hub|spoke]` and go NonCompliant when *any* store is broken while still provisioning
-the healthy ones. See [Precondition failures — where to look](#precondition-failures--where-to-look-status-configmap--gate).
+the healthy ones. See [Precondition failures — where to look](#precondition-failures-where-to-look-status-configmap-gate).
 
 ## Resources
 - [Operator Documentation](https://operatorhub.io/operator/external-secrets-operator) - Find your operator details

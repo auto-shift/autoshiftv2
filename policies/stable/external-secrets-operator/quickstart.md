@@ -8,7 +8,7 @@ Deeper material lives elsewhere:
 
 - [README.md](README.md) — the full operational reference (every store option, cleanup, teardown).
 - [mechanics.md](mechanics.md) — *how* the mechanisms work (templating layers, trust modes, two-hop transport).
-- [CONFIG-REFERENCE.md](CONFIG-REFERENCE.md) — key-by-key tables for every chart value and runtime config key.
+- [config-reference.md](config-reference.md) — key-by-key tables for every chart value and runtime config key.
 - [troubleshooting.md](troubleshooting.md) — signal sources, triage flow, runbooks.
 - [responsibilities.md](responsibilities.md) — which policy/PolicySet owns which object.
 
@@ -31,10 +31,10 @@ Five layers, each optional beyond the first:
 4. **Secrets** (`config.eso.secrets`) — the list of Secrets **this cluster**
    should have. Global hub pulls from Vault into `eso-shared`; site hubs and spokes pull
    through `hub-bootstrap` from the parent's `eso-shared`. See
-   [Step 4](#step-4--list-secrets-to-create-on-each-cluster).
+  [Step 4](#step-4-list-secrets-to-create-on-each-cluster).
 5. **Push-back** (`config.eso.pushSecrets`) — optional. Publish a Secret that already exists
    on a cluster toward the parent (`hub-bootstrap-writeback`) and, on the global hub, into
-   Vault. The chart never creates that source Secret. See [Step 5](#step-5--push-a-secret-back).
+  Vault. The chart never creates that source Secret. See [Step 5](#step-5-push-a-secret-back).
 
 ```mermaid
 flowchart LR
@@ -340,7 +340,7 @@ for the runbooks.
 
 ## Step 3 — add your first user store
 
-*Background: [the two-hop credential transport](mechanics.md#4-authsecretconfig--the-two-hop-credential-transport) in mechanics.md; every store
+*Background: [the two-hop credential transport](mechanics.md#4-authsecretconfig-the-two-hop-credential-transport) in mechanics.md; every store
 option: [Secret Stores](README.md#secret-stores-configesosecretstores) and
 [Auth secrets](README.md#auth-secrets-authsecretconfig) in the README.*
 
@@ -604,6 +604,38 @@ on `eso-shared` and do not have `list` on `eso-writeback`. The name is
 `<storePrefix>-writeback` (default `hub-bootstrap-writeback`). No `pushSecrets` on this
 cluster, or empty `writebackNamespace`, turns it off.
 
+### Extra read stores (`hubBootstrap.extraStores`)
+
+For an isolated fan-out namespace that must keep the same `deriveHubUrl` / client-cert cadence
+as `hub-bootstrap` (for example BMC credentials outside `eso-shared`), declare sibling **read**
+stores. Each entry needs `name` and `remoteNamespace`. The store reuses the bootstrap cert, CA,
+and parent API URL; only the store name and parent namespace change.
+
+```yaml
+config:
+  eso:
+    hubBootstrap:
+      deriveHubUrl: true
+      clientIdentity:
+        baseDomain: autoshift.io
+      # eso-shared stays for general secrets
+      extraStores:
+        - name: hub-bootstrap-bmc
+          remoteNamespace: openshift-workload-availability
+      consumerNamespaces:
+        - openshift-workload-availability
+    secrets:
+      - name: default-bmc-cred
+        namespace: openshift-workload-availability
+        storeRef:
+          name: hub-bootstrap-bmc
+          kind: ClusterSecretStore
+```
+
+Declare the same `extraStores` list on each hop that should mint the CSS. The parent creates
+the `remoteNamespace` and grants children `get`/`list`/`watch` there. Point FAR at
+`secretsMode: external` when the Secret already lands FAR-shaped in that namespace.
+
 ```mermaid
 flowchart LR
   subgraph child[child cluster]
@@ -697,7 +729,7 @@ deploys where, the [per-file breakdown](responsibilities.md#per-file-breakdown) 
 ## Where to go next
 
 - Multi-hop trees (global hub → spoke-hub → leaf): use `deriveHubUrl: true` and read
-  *Multi-hop topology contract* in [mechanics.md](mechanics.md#multi-hop-topology-contract-global-hub--spoke-hub--leaf).
+  *Multi-hop topology contract* in [mechanics.md](mechanics.md#multi-hop-topology-contract-global-hub-spoke-hub-leaf).
 - Removing stores and what gets cleaned up: README → *Removing a store — pruning*.
 - Decommissioning the bootstrap entirely (`teardown: true` — removal of the block alone is a
   deliberate no-op): README → *Decommissioning*.

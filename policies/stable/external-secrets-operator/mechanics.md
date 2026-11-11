@@ -2,7 +2,7 @@
 
 The recurring mechanisms this policy set is built from — *how* things work, independent of any
 one configuration. Operational how-tos live in the [README](README.md); the full key-by-key
-variable tables live in [CONFIG-REFERENCE.md](CONFIG-REFERENCE.md); the per-PolicySet /
+variable tables live in [config-reference.md](config-reference.md); the per-PolicySet /
 per-policy / per-ConfigurationPolicy ownership map is
 [responsibilities.md](responsibilities.md); diagnosis is
 [troubleshooting.md](troubleshooting.md); first-time setup is
@@ -311,7 +311,7 @@ back until it is:
 
 ## 6. Failure surfacing — status ConfigMap + inform gate
 
-*Reading these signals in practice: [troubleshooting.md §2](troubleshooting.md#2-signal-sources--where-truth-lives-in-the-order-to-consult-it).*
+*Reading these signals in practice: [troubleshooting.md §2](troubleshooting.md#2-signal-sources-where-truth-lives-in-the-order-to-consult-it).*
 
 Template `fail` is never used: it aborts template processing and buries the real reason in a
 truncated, hundreds-of-lines `template error` envelope. Instead every policy with

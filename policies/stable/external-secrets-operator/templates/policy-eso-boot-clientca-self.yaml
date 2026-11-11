@@ -233,6 +233,7 @@ spec:
                     ##### Per-cluster reader scope: "<ownerNs>|<CN>" -> the hub Secret names THAT cluster declares. #####
                     ##### Drives one narrowly-scoped Role per cluster instead of one namespace-wide Role shared by all. #####
                     {{ "{{-" }} $nsScopes := dict {{ "}}" }}
+                    {{ "{{-" }} $extraFanKeys := dict {{ "}}" }}
                     {{ "{{-" }} $pushScopes := dict {{ "}}" }}
                     {{ "{{-" }} $expectRBAC := dict {{ "}}" }}
                     {{ "{{-" }} $seenNames := dict {{ "}}" }}
@@ -354,6 +355,13 @@ spec:
                             {{ "{{-" }} end {{ "}}" }}
                             {{ "{{-" }} $_ := set $pushScopes (printf "%s|%s|%s" $tenancyNs $certCN $nameSeg) $pushNames {{ "}}" }}
                             {{ "{{-" }} $_ := set $nsScopes (printf "%s|%s|%s|%s" $tenancyNs $certCN $nameSeg $clusterShared) $scopeNames {{ "}}" }}
+                            {{ "{{-" }} range $es := (dig "eso" "hubBootstrap" "extraStores" (list) $scopeCfg) {{ "}}" }}
+                              {{ "{{-" }} $es = ($es | default dict) {{ "}}" }}
+                              {{ "{{-" }} $extraNs := (dig "remoteNamespace" "" $es) {{ "}}" }}
+                              {{ "{{-" }} if and (ne $extraNs "") (ne $extraNs $tenancyNs) {{ "}}" }}
+                                {{ "{{-" }} $_ := set $extraFanKeys (printf "%s|%s" $certCN $extraNs) true {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
                           {{ "{{-" }} end {{ "}}" }}
                         {{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }}
@@ -479,6 +487,14 @@ spec:
                       {{ "{{-" }} if not (has $cn $rbCNs) {{ "}}" }}{{ "{{-" }} $rbCNs = append $rbCNs $cn {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} $_ := set $rollbackNs $ownerNs $rbCNs {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} range $ek, $_ev := $extraFanKeys {{ "}}" }}
+                        {{ "{{-" }} $ep := (splitList "|" $ek) {{ "}}" }}
+                        {{ "{{-" }} $ecn := (index $ep 0) {{ "}}" }}
+                        {{ "{{-" }} $ens := (index $ep 1) {{ "}}" }}
+                        {{ "{{-" }} $fan := (index $sharedFanout $ens | default list) {{ "}}" }}
+                        {{ "{{-" }} if not (has $ecn $fan) {{ "}}" }}{{ "{{-" }} $fan = append $fan $ecn {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} $_ := set $sharedFanout $ens $fan {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} range $sns, $cns := $sharedFanout {{ "}}" }}
                       {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s" $sns "{{ $readerRole }}") true {{ "}}" }}
@@ -870,7 +886,8 @@ spec:
             {{ "{{-" }} $eligible := list {{ "}}" }}
             {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
             {{ "{{-" }} $nsScopes := dict {{ "}}" }}
-                    {{ "{{-" }} $pushScopes := dict {{ "}}" }}
+            {{ "{{-" }} $extraFanKeys := dict {{ "}}" }}
+            {{ "{{-" }} $pushScopes := dict {{ "}}" }}
             {{ "{{-" }} $expectRBAC := dict {{ "}}" }}
             {{ "{{-" }} $seenNames := dict {{ "}}" }}
             ##### This policy owns the selfSigned mode ONLY. In externalCA / externalCAReuseServingCert #####
@@ -982,6 +999,13 @@ spec:
                             {{ "{{-" }} end {{ "}}" }}
                             {{ "{{-" }} $_ := set $pushScopes (printf "%s|%s|%s" $tenancyNs $certCN $nameSeg) $pushNames {{ "}}" }}
                             {{ "{{-" }} $_ := set $nsScopes (printf "%s|%s|%s|%s" $tenancyNs $certCN $nameSeg $clusterShared) $scopeNames {{ "}}" }}
+                            {{ "{{-" }} range $es := (dig "eso" "hubBootstrap" "extraStores" (list) $scopeCfg) {{ "}}" }}
+                              {{ "{{-" }} $es = ($es | default dict) {{ "}}" }}
+                              {{ "{{-" }} $extraNs := (dig "remoteNamespace" "" $es) {{ "}}" }}
+                              {{ "{{-" }} if and (ne $extraNs "") (ne $extraNs $tenancyNs) {{ "}}" }}
+                                {{ "{{-" }} $_ := set $extraFanKeys (printf "%s|%s" $certCN $extraNs) true {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
@@ -1099,6 +1123,14 @@ spec:
               {{ "{{-" }} if not (has $cn $rbCNs) {{ "}}" }}{{ "{{-" }} $rbCNs = append $rbCNs $cn {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} $_ := set $rollbackNs $ownerNs $rbCNs {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} range $ek, $_ev := $extraFanKeys {{ "}}" }}
+                {{ "{{-" }} $ep := (splitList "|" $ek) {{ "}}" }}
+                {{ "{{-" }} $ecn := (index $ep 0) {{ "}}" }}
+                {{ "{{-" }} $ens := (index $ep 1) {{ "}}" }}
+                {{ "{{-" }} $fan := (index $sharedFanout $ens | default list) {{ "}}" }}
+                {{ "{{-" }} if not (has $ecn $fan) {{ "}}" }}{{ "{{-" }} $fan = append $fan $ecn {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $_ := set $sharedFanout $ens $fan {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} range $sns, $cns := $sharedFanout {{ "}}" }}
               {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s" $sns "{{ $readerRole }}") true {{ "}}" }}

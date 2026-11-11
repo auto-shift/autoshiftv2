@@ -877,6 +877,14 @@ hubClusterSets:
           #                                 # apiserver from the propagating hub's ClusterClaim — the right choice in
           #                                 # multi-hop (global hub -> spoke-hub -> leaf) topologies.
           storeName: hub-bootstrap                   # ClusterSecretStore name created on the spoke
+          # Sibling READ ClusterSecretStores that reuse the bootstrap cert, CA, and hubServer /
+          # deriveHubUrl cadence. Only name + remoteNamespace differ from hub-bootstrap. Use for
+          # isolated fan-out namespaces (for example BMC credentials) without replacing
+          # sharedNamespace / eso-shared. Declare the same list on each child that should mint the
+          # store; the parent creates remoteNamespace and grants list/get/watch there.
+          # extraStores:
+          #   - name: hub-bootstrap-bmc
+          #     remoteNamespace: openshift-workload-availability
           # Trust mode — WHO mints the client cert + WHAT the hub clientCA trusts. Default selfSigned
           # (shown below). Pick ONE mode per hub (APIServer.spec.clientCA is a single field). See the
           # chart values.yaml hubBootstrapMode for the full description + the externalCAReuseServingCert
