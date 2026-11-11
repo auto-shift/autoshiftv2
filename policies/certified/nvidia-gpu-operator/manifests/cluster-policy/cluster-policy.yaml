@@ -1,0 +1,120 @@
+# The GPU stack itself: driver, container toolkit, device plugin, DCGM and
+# feature discovery. Without this the operator installs but no node ever
+# advertises nvidia.com/gpu, and anything scheduling on GPUs stays Pending.
+#
+# use_ocp_driver_toolkit lets the driver build against the running RHCOS
+# release rather than a pinned kernel, which is what makes it survive
+# cluster upgrades.
+#
+# The spec is a base of the settings below with config.nvidia-gpu-operator.clusterPolicy
+# from the cluster's rendered-config merged over it, so MIG strategy, driver upgrade
+# policy, vGPU, GPUDirect and any other ClusterPolicy field can be set per clusterset or
+# cluster. Maps merge key by key and config wins; lists replace the base whole. It is the
+# same config.nvidia-gpu-operator key the version pin reads.
+#
+# Every field here, and every field set through config, must exist in the
+# ClusterPolicy CRD that the channel in manifests/operator-install/kustomization.yaml
+# installs. The API server
+# rejects the whole object on the first unknown field, with
+# `strict decoding error: unknown field "spec.<x>"`, and the policy then
+# reports the CR as "missing, and cannot be created" — which reads like a
+# permissions or ordering problem rather than a schema mismatch.
+#
+# Not set because v25.3 does not define them: spec.cdi.nriPluginEnabled,
+# spec.sandboxWorkloads.mode, spec.driver.licensingConfig.secretName,
+# spec.mps, spec.kataSandboxDevicePlugin. All five were set to a default or
+# sat under a disabled feature, so nothing changes behaviourally.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $spec := (`
+  operator:
+    use_ocp_driver_toolkit: true
+  cdi:
+    enabled: false
+  sandboxWorkloads:
+    enabled: false
+    defaultWorkload: container
+  driver:
+    enabled: true
+    useNvidiaDriverCRD: false
+    kernelModuleType: auto
+    upgradePolicy:
+      autoUpgrade: true
+      drain:
+        deleteEmptyDir: false
+        enable: false
+        force: false
+        timeoutSeconds: 300
+      maxParallelUpgrades: 1
+      maxUnavailable: 25%
+      podDeletion:
+        deleteEmptyDir: false
+        force: false
+        timeoutSeconds: 300
+      waitForCompletion:
+        timeoutSeconds: 0
+    repoConfig:
+      configMapName: ''
+    certConfig:
+      name: ''
+    licensingConfig:
+      nlsEnabled: true
+    virtualTopology:
+      config: ''
+    kernelModuleConfig:
+      name: ''
+  dcgmExporter:
+    enabled: true
+    config:
+      name: ''
+    serviceMonitor:
+      enabled: true
+  dcgm:
+    enabled: true
+  daemonsets:
+    updateStrategy: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: '1'
+  devicePlugin:
+    enabled: true
+    config:
+      name: ''
+      default: ''
+  gfd:
+    enabled: true
+  migManager:
+    enabled: true
+  nodeStatusExporter:
+    enabled: true
+  mig:
+    strategy: single
+  toolkit:
+    enabled: true
+  validator:
+    plugin:
+      env: []
+  vgpuManager:
+    enabled: false
+  vgpuDeviceManager:
+    enabled: true
+  sandboxDevicePlugin:
+    enabled: true
+  vfioManager:
+    enabled: true
+  ccManager:
+    enabled: true
+  gds:
+    enabled: false
+  gdrcopy:
+    enabled: false
+  ` | fromYaml) hub}}
+  {{hub- $spec = (mergeOverwrite $spec (dig "nvidia-gpu-operator" "clusterPolicy" (dict) $cfg)) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: nvidia.com/v1
+      kind: ClusterPolicy
+      metadata:
+        name: gpu-cluster-policy
+      spec:
+        {{hub $spec | toYaml | autoindent hub}}
