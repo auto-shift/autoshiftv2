@@ -4,13 +4,22 @@ object-templates-raw: |
   {{- $zones_from_labels := list {{hub range $label, $labelvalue := .ManagedClusterLabels hub}}{{hub if $label | hasPrefix "autoshift.io/storage-nodes-zone" hub}}"{{hub $labelvalue hub}}"{{hub end hub}}{{hub end hub}} }}
   {{- $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName }}
   {{- $worker_ms := dict }}
+  {{- $workers_by_zone := dict }}
   {{- range (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items }}
     {{- if hasPrefix (printf "%s-worker" $infrastructure_id) .metadata.name }}
       {{- $worker_ms = . }}
+      {{- $_ := set $workers_by_zone .spec.template.spec.providerSpec.value.placement.availabilityZone . }}
     {{- end }}
   {{- end }}
   {{- /* Generate the MachineSet for each zone as specified or default to worker az */ -}}
   {{- range $zone := ternary (list $worker_ms.spec.template.spec.providerSpec.value.placement.availabilityZone ) $zones_from_labels (eq 0 (len $zones_from_labels)) }}
+  {{- /* The subnet and security groups come from the worker MachineSet in the same zone: a subnet
+         belongs to one zone, and on a cluster installed into a pre-existing VPC the worker
+         references it by ID, which cannot be derived from the infrastructure ID. */ -}}
+  {{- if not (hasKey $workers_by_zone $zone) }}
+    {{- fail (printf "no worker MachineSet in zone %s to copy the subnet and security groups from, so the storage MachineSet for that zone cannot be built; use a zone that has workers" $zone) }}
+  {{- end }}
+  {{- $zone_provider := (index $workers_by_zone $zone).spec.template.spec.providerSpec.value }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: machine.openshift.io/v1beta1
@@ -64,11 +73,7 @@ object-templates-raw: |
                       {{- end }}
                       volumeSize: {{ $ebs.volumeSize }}
                       volumeType: {{ $ebs.volumeType }}
-                securityGroups:
-                  - filters:
-                      - name: 'tag:Name'
-                        values:
-                          - {{ (index (index (index ($worker_ms.spec.template.spec.providerSpec.value.securityGroups) 0).filters 0).values 0) }}
+                securityGroups: {{ $zone_provider.securityGroups | toJson }}
                 kind: AWSMachineProviderConfig
                 tags:
                   {{- range $tag := $worker_ms.spec.template.spec.providerSpec.value.tags }}
@@ -78,11 +83,7 @@ object-templates-raw: |
                 deviceIndex: 0
                 ami:
                   id: {{ $worker_ms.spec.template.spec.providerSpec.value.ami.id }}
-                subnet:
-                  filters:
-                    - name: 'tag:Name'
-                      values:
-                        - {{ $infrastructure_id }}-subnet-private-{{ $zone }}
+                subnet: {{ $zone_provider.subnet | toJson }}
                 apiVersion: machine.openshift.io/v1beta1
                 iamInstanceProfile:
                   id: {{ $worker_ms.spec.template.spec.providerSpec.value.iamInstanceProfile.id }}
