@@ -1,0 +1,29 @@
+object-templates-raw: |
+  {{- range $pod := (lookup "v1" "Pod" "openshift-monitoring" "").items }}
+  {{- if and $pod.metadata.labels (eq (index $pod.metadata.labels "app.kubernetes.io/name") "node-exporter") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: {{ $pod.metadata.name }}
+        namespace: openshift-monitoring
+        annotations:
+          metrics.dynatrace.com/port: '9100'
+          metrics.dynatrace.com/secure: 'true'
+          metrics.dynatrace.com/scrape: 'true'
+          metrics.dynatrace.com/http.auth: 'secret:dynatrace:dynatrace-activegate-token:token'
+  {{- end }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: node-exporter
+        namespace: openshift-monitoring
+        annotations:
+          metrics.dynatrace.com/port: '9100'
+          metrics.dynatrace.com/secure: 'true'
+          metrics.dynatrace.com/scrape: 'true'
+          metrics.dynatrace.com/http.auth: "secret:dynatrace:dynatrace-activegate-token:token"

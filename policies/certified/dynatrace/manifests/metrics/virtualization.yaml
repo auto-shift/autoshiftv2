@@ -1,0 +1,27 @@
+object-templates-raw: |
+  {{- range $pod := (lookup "v1" "Pod" "openshift-cnv" "").items }}
+  {{- if and $pod.metadata.labels (index $pod.metadata.labels "prometheus.kubevirt.io") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: {{ $pod.metadata.name }}
+        namespace: openshift-cnv
+        annotations:
+          metrics.dynatrace.com/scrape: "true"
+          metrics.dynatrace.com/port: "8443"
+          metrics.dynatrace.com/secure: "true"
+  {{- end }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: kubevirt-prometheus-metrics
+        namespace: openshift-cnv
+        annotations:
+          metrics.dynatrace.com/secure: 'true'
+          metrics.dynatrace.com/port: '8443'
+          metrics.dynatrace.com/scrape: 'true'

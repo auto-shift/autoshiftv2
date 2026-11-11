@@ -1,0 +1,105 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: dynatrace
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# The operator-install policy points at manifests/operator-install/, a nested kustomization that
+# renders the shared components/operator-install chart. Add further CRs as new policies[] entries
+# pointing at their own manifests/<dir> (a wildcarded dir picks up drop-in files automatically).
+# Keep placement.yaml OUT of manifests/ (a Placement inside a wildcarded dir would be wrapped in).
+placementBindingDefaults:
+  name: binding-policy-dynatrace
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # Consolidate the raw Namespace into one generated ConfigurationPolicy; the first-class
+  # OperatorPolicy stays its own policy-template. Net: one Policy, two policy-templates.
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Placement authored by us (placement.yaml at the dir root, full fidelity); PG includes it and
+  # generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-dynatrace-operator-install
+    remediationAction: enforce
+    manifests:
+      - path: manifests/operator-install
+    placement:
+      placementPath: placement.yaml
+
+  - name: policy-dynatrace-api-tokens
+    remediationAction: enforce
+    dependencies:
+      - name: policy-dynatrace-operator-install
+    manifests:
+      - path: manifests/auth/api-token.yaml
+    placement:
+      placementPath: placement.yaml
+
+  - name: policy-dynatrace-ca-bundle
+    remediationAction: enforce
+    dependencies:
+      - name: policy-dynatrace-operator-install
+    manifests:
+      - path: manifests/auth/ca-bundle.yaml
+    placement:
+      placementPath: placement.yaml
+
+  - name: policy-dynatrace-dynakube-deploy
+    remediationAction: enforce
+    dependencies:
+      - name: policy-dynatrace-api-tokens
+    manifests:
+      - path: manifests/dynakube.yaml
+    placement:
+      placementPath: placement.yaml
+      
+  - name: policy-dynatrace-dynakube-deploy-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-dynatrace-dynakube-deploy
+    placement:
+      placementPath: placement.yaml
+    manifests:
+      - path: test/dynakube-check.yaml
+
+  - name: policy-dynatrace-activegate-sa-token
+    remediationAction: enforce
+    dependencies:
+      - name: policy-dynatrace-dynakube-deploy-test
+    placement:
+      placementPath: placement.yaml
+    manifests:
+      - path: manifests/auth/activegate-sa-token.yaml
+
+  - name: policy-dynatrace-node-exporter-metrics
+    remediationAction: enforce
+    dependencies:
+      - name: policy-dynatrace-dynakube-deploy-test
+    placement:
+      placementPath: placement.yaml
+    manifests:
+      - path: manifests/metrics/node-exporter.yaml
+
+  - name: policy-dynatrace-virt-metrics
+    remediationAction: enforce
+    dependencies:
+      - name: policy-dynatrace-dynakube-deploy-test
+    placement:
+      placementPath: placement.yaml
+    manifests:
+      - path: manifests/metrics/virtualization.yaml

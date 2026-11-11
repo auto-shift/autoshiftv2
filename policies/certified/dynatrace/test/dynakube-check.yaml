@@ -1,0 +1,21 @@
+object-templates-raw: |
+  {{hub- $configs := index (index (fromConfigMap .PolicyMetadata.namespace (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "dynatrace" | default dict) hub}}
+  {{hub- if empty ($configs.connection | default list) hub}}
+  {{hub- fail (printf "dynatrace.connection is required in %s.rendered-config" .ManagedClusterName) hub}}
+  {{hub- end hub}}
+  {{- $clusterName := index (splitList "." (index (splitList ":" (replace "https://api." "" (fromClusterClaim "apiserverurl.openshift.io"))) 0)) 0 }}
+  {{- if eq $clusterName "" }}
+    {{- fail "Unable to derive Cluster Name from Cluster Claim: 'apiserverurl.openshift.io'" }}
+  {{- else }}
+  {{hub- range $dynatrace := $configs.connection hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: dynatrace.com/v1beta6
+      kind: DynaKube
+      metadata:
+        name: {{ $clusterName }}
+        namespace: dynatrace
+      status:
+        phase: Running
+  {{hub- end hub}}
+  {{- end }}

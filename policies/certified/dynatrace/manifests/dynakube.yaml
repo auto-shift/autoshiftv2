@@ -1,0 +1,92 @@
+object-templates-raw: |
+  {{hub- $configs := index (index (fromConfigMap .PolicyMetadata.namespace (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "dynatrace" | default dict) hub}}
+  {{hub- if empty ($configs.connection | default list) hub}}
+  {{hub- fail (printf "dynatrace.connection is required in %s.rendered-config" .ManagedClusterName) hub}}
+  {{hub- end hub}}
+  {{hub- $clusterLabels := .ManagedClusterLabels hub}}
+  {{hub- $metadataEnrichment := ($configs.metadataEnrichment | default dict) hub}}
+  {{- $clusterName := index (splitList "." (index (splitList ":" (replace "https://api." "" (fromClusterClaim "apiserverurl.openshift.io"))) 0)) 0 }}
+  {{- if eq $clusterName "" }}
+    {{- fail "Unable to derive Cluster Name from Cluster Claim: 'apiserverurl.openshift.io'" }}
+  {{- else }}
+  {{hub- range $dynatrace := $configs.connection hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: dynatrace.com/v1beta6
+      kind: DynaKube
+      metadata:
+        name: "{{ $clusterName }}"
+        namespace: dynatrace
+      spec:
+        {{hub- if not (empty $dynatrace.networkZone) hub}}
+        networkZone: "{{hub $dynatrace.networkZone hub}}"
+        {{hub- end hub}}
+        tokens: dynakube
+        trustedCAs: cert
+        apiUrl: "{{hub $dynatrace.apiUrl hub}}"
+        metadataEnrichment:
+          enabled: true
+          namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: NotIn
+                values:
+                  {{hub- range ($metadataEnrichment.excludedNamespaces | default list) hub}}
+                  - {{hub . hub}}
+                  {{hub- end hub}}
+        oneAgent:
+          {{hub- if not (empty $dynatrace.hostGroup) hub}}
+          hostGroup: "{{hub $dynatrace.hostGroup hub}}"
+          {{hub- end hub}}
+          cloudNativeFullStack:
+            initResources:
+              requests:
+                cpu: {{hub dig "oneAgent" "resources" "requests" "cpu" "50m" $configs hub}}
+                memory: {{hub dig "oneAgent" "resources" "requests" "memory" "100Mi" $configs hub}}
+              limits:
+                cpu: {{hub dig "oneAgent" "resources" "limits" "cpu" "500m" $configs hub}}
+                memory: {{hub dig "oneAgent" "resources" "limits" "memory" "1Gi" $configs hub}}
+            tolerations:
+              - effect: NoSchedule
+                key: node-role.kubernetes.io/master
+                operator: Exists
+              - effect: NoSchedule
+                key: node-role.kubernetes.io/control-plane
+                operator: Exists
+            {{hub- if not (empty (dig "oneAgent" "excludedNamespaces" (list) $configs)) hub}}
+            namespaceSelector:
+              matchExpressions:
+                - key: kubernetes.io/metadata.name
+                  operator: NotIn
+                  values:
+                    {{hub- range (dig "oneAgent" "excludedNamespaces" (list) $configs) hub}}
+                    - {{hub . hub}}
+                    {{hub- end hub}}
+            {{hub- end hub}}
+            args:
+              {{hub- range (dig "oneAgent" "args" (list) $configs) hub}}
+              - {{hub . hub}}
+              {{hub- end hub}}
+            labels:
+              {{hub- range (dig "oneAgent" "labels" (list) $configs) hub}}
+              {{hub- $kv := split "=" . hub}}
+              {{hub $kv._0 hub}}: "{{hub $kv._1 hub}}"
+              {{hub- end hub}}
+        activeGate:
+          capabilities:
+            {{hub if (empty $configs.activeGate.capabilities) hub}}
+              {{hub fail "activeGate.capabilities is required in %s.rendered-config" .ManagedClusterName hub}}
+            {{hub- else hub}}
+            {{hub- range (dig "activeGate" "capabilities" (list) $configs) hub}}
+            - {{hub . hub}}
+            {{hub- end hub}}
+            {{hub- end hub}}
+          resources:
+            requests:
+              cpu: {{hub dig "activeGate" "resources" "requests" "cpu" "500m" $configs hub}}
+              memory: {{hub dig "activeGate" "resources" "requests" "memory" "512Mi" $configs hub}}
+            limits:
+              cpu: {{hub dig "activeGate" "resources" "limits" "cpu" "1000m" $configs hub}}
+              memory: {{hub dig "activeGate" "resources" "limits" "memory" "1.5Gi" $configs hub}}
+  {{hub- end hub}}
+  {{- end }}
