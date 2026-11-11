@@ -16,8 +16,9 @@ object-templates-raw: |
   {{- $zones_from_labels := list {{hub range $label, $labelvalue := .ManagedClusterLabels hub}}{{hub if $label | hasPrefix "autoshift.io/gpu-nodes-zone" hub}}"{{hub $labelvalue hub}}"{{hub end hub}}{{hub end hub}} }}
   {{- $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName }}
   {{- /* Index every worker MachineSet by its zone, so a GPU set in zone X clones the worker that
-         already lives in zone X and inherits a subnet that actually exists there. $worker_ms is
-         the fallback for a requested zone that has no worker of its own. */ -}}
+         already lives in zone X and inherits a subnet that actually exists there. A subnet belongs
+         to one zone, so a requested zone with no worker of its own fails rather than borrowing
+         another zone's subnet, which AWS would reject when the machine is created. */ -}}
   {{- $worker_ms := dict }}
   {{- $workers_by_zone := dict }}
   {{- range (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items }}
@@ -29,10 +30,10 @@ object-templates-raw: |
   {{- $spot := "{{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes-spot" hub}}" }}
   {{- /* Generate the MachineSet for each zone as specified or default to the worker az */ -}}
   {{- range $zone := ternary (list $worker_ms.spec.template.spec.providerSpec.value.placement.availabilityZone ) $zones_from_labels (eq 0 (len $zones_from_labels)) }}
-  {{- $base := $worker_ms }}
-  {{- if hasKey $workers_by_zone $zone }}
-    {{- $base = index $workers_by_zone $zone }}
+  {{- if not (hasKey $workers_by_zone $zone) }}
+    {{- fail (printf "no worker MachineSet in zone %s to copy the subnet and security groups from, so the GPU MachineSet for that zone cannot be built; use a zone that has workers" $zone) }}
   {{- end }}
+  {{- $base := index $workers_by_zone $zone }}
   {{- $provider := $base.spec.template.spec.providerSpec.value }}
   - complianceType: musthave
     objectDefinition:

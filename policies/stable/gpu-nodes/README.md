@@ -44,7 +44,8 @@ references its subnet by raw ID, and the VPC owner chose the `Name` tags — so 
 filter matches nothing and every machine fails to provision with no subnet found. This policy
 copies `subnet`, `securityGroups` and `blockDevices` verbatim from the base worker, which is
 correct either way. When several zones are requested, each GPU MachineSet clones the worker that
-already lives in that zone.
+already lives in that zone. A requested zone with no worker fails with a message: a subnet belongs to
+one zone, so borrowing another zone's would only fail later, when AWS creates the machine.
 
 **Spot has no fallback.** `autoshift.io/gpu-nodes-spot: 'true'` sets `spotMarketOptions: {}`. If
 spot capacity is unavailable — or denied by a service control policy, which looks identical from
