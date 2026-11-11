@@ -77,8 +77,8 @@ config:
             - '12'
           deviceLabelFields:
             - 'vendor'
-    nodeFeatureRules:        # one NodeFeatureRule per entry, in openshift-nfd
-      - name: 'nvidia-gpu'
+    nodeFeatureRules:        # one NodeFeatureRule per key, in openshift-nfd
+      nvidia-gpu:
         rules:
           - name: 'nvidia gpu present'
             labels:
@@ -96,23 +96,63 @@ config:
 ```
 
 - `workerConfig` replaces the default rather than merging with it. Copy the default and extend it,
-  or a node loses the vendor labels the GPU Operators depend on.
+  or a node loses the vendor labels the GPU Operators depend on. Its lists, `deviceClassWhitelist`
+  and `deviceLabelFields`, are replaced whole by a cluster that sets them, like every list in config.
 - A rule label with no prefix lands in `feature.node.kubernetes.io/`. Any other prefix must be in
   `extraLabelNs`, or `nfd-master` drops the label.
 - The instance and each rule are applied with `mustonlyhave`, so an edited rule replaces the old
   one and a removed `extraLabelNs` entry leaves the cluster. Removing an
   entry from `nodeFeatureRules` does not delete the NodeFeatureRule from the cluster; delete it
   with `oc delete nodefeaturerule <name> -n openshift-nfd`.
-- `nodeFeatureRules[].name` and `rules` are required. The policy fails and names the entry when
-  either is missing.
+- Every rule needs `rules`, and its name must be a lowercase Kubernetes object name. The policy
+  fails and names the entry otherwise.
 - The policy also fails when the cluster's rendered-config ConfigMap is missing, rather than
   applying defaults to a cluster whose configuration never arrived.
+
+### Rules per cluster and per node
+
+NFD labels each node from its own hardware, so one fleet-wide set of rules gives a mixed fleet the
+right labels node by node, with no per-node configuration. What varies by cluster is which rules
+apply, and the form of `nodeFeatureRules` decides how that can be expressed:
+
+| Form | Shape | A cluster that sets it |
+|---|---|---|
+| Map, keyed by NodeFeatureRule name | `<name>: {rules: [...], enabled: true}` | Merges with its clusterset by name: it can add a rule, override one, or switch one off with `enabled: false` |
+| List | `- name: <name>` with `rules: [...]` | Replaces the clusterset's whole list, because config merges replace lists |
+
+Use the map form. The list form is still accepted, for existing values files. Map keys render in
+sorted order, and `enabled` defaults to `true`.
+
+A cluster with no AMD hardware and one extra device, in `clusters/<name>.yaml`:
+
+```yaml
+config:
+  nodeFeatureDiscovery:
+    nodeFeatureRules:
+      amd-gpu:
+        enabled: false
+      fpga-xilinx:
+        rules:
+          - name: 'xilinx fpga present'
+            labels:
+              xilinx-fpga: 'true'
+            matchFeatures:
+              - feature: 'pci.device'
+                matchExpressions:
+                  vendor: {op: 'In', value: ['10ee']}
+```
+
+Switching a rule off with `enabled: false` deletes the NodeFeatureRule from the cluster: the policy
+renders it as `mustnothave`. Removing the entry from config altogether only stops the policy
+managing it, which is why `enabled: false` is the way to turn a clusterset rule off for one cluster.
 
 ### Accelerators other than NVIDIA
 
 AMD Instinct and Intel Gaudi accelerators need NFD installed, and their Operators expect labels
-that the default does not produce. Add the rule each vendor's Operator documents under
-`nodeFeatureRules`.
+that the default does not produce. The clusterset example carries starting rules, `amd-gpu` (PCI
+vendor `1002`, display and accelerator classes) and `intel-gaudi` (vendor `1da3`, accelerator
+class). Check each label against the node selector of the Operator release you install, and
+override the rule by name where it differs.
 
 ## Verifying
 
