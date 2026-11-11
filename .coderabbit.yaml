@@ -1,5 +1,7 @@
 # CodeRabbit review settings: https://docs.coderabbit.ai/reference/configuration
 # Pull requests from forks use the copy of this file on the target branch.
+# Schema: https://coderabbit.ai/integrations/schema.v2.json
+# Check the settings in effect: comment "@coderabbitai configuration" on a pull request.
 language: en-US
 tone_instructions: Direct and specific. Report defects with the failure they cause; skip style nits.
 
@@ -10,6 +12,7 @@ reviews:
   review_status: true
   auto_review:
     enabled: true
+    auto_incremental_review: true
     drafts: false
     base_branches:
       - ^main$
@@ -22,6 +25,28 @@ reviews:
       enabled: false
     markdownlint:
       enabled: false
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    osvScanner:
+      enabled: true
+  pre_merge_checks:
+    custom_checks:
+      - name: no-credentials
+        mode: error
+        instructions: |
+          Fail when the change adds a credential: an API key, token, password, private key, pull
+          secret, a URL with embedded credentials, or a base64 string over 32 characters in values or
+          configuration. Fake values in tools/testdata/ pass only when short and low-entropy.
+      - name: ai-attribution
+        mode: warning
+        instructions: |
+          When the pull request or its commits show that AI tools were used, check that the commits
+          carry an `Assisted-by:` or `Generated-by:` trailer naming the tool. Flag `Co-Authored-By:`
+          trailers that name an AI tool: an AI is not a co-author.
   path_instructions:
     - path: 'policies/**/manifests/**'
       instructions: &policy_templates |
@@ -96,6 +121,13 @@ reviews:
       instructions: |
         This chart is a source-agnostic pass-through. Flag ACM-specific logic added here, and
         OwnNamespace operators installed without `targetNamespaces`.
+    - path: '.github/workflows/**'
+      instructions: |
+        - `GITHUB_TOKEN` permissions are the minimum the job needs.
+        - No `pull_request_target` that checks out or runs the pull request's code.
+        - No secrets echoed to logs.
+        - A new pinned tool version belongs in `versions.yaml` with a `# renovate:` annotation, not
+          inline in a `run:` step.
     - path: '**/*.md'
       instructions: |
         Prose follows the Red Hat style enforced by Vale: present tense, no em dashes, no contractions,
@@ -106,6 +138,9 @@ reviews:
 knowledge_base:
   code_guidelines:
     enabled: true
-    # AGENTS.md and CLAUDE.md are read by default.
+    # AGENTS.md and CLAUDE.md are read by default. A plain entry applies only to its own directory,
+    # so the runtime semantics guide is scoped explicitly to the policies it describes.
     filePatterns:
-      - docs/policy-behavior.md
+      - files: docs/policy-behavior.md
+        applyTo: docs/**, policies/**
+      - CONTRIBUTING.md
