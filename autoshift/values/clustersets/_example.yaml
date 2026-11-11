@@ -1271,6 +1271,45 @@ hubClusterSets:
       #         deviceTypes: [disk]
       #         deviceMechanicalProperties: [NonRotational]
       # =======================================================================
+      # cluster-autoscaler: the ClusterAutoscaler and per-MachineSet MachineAutoscalers
+      # (DATA; the ENABLE flag is the cluster-autoscaler label).
+      # Every key except machineSets is ClusterAutoscaler spec, merged over the policy's base
+      # (podPriorityThreshold -10, scaleDown on with 10m delays and threshold 0.5), so any
+      # ClusterAutoscaler field can be set. resourceLimits is required and is the cost ceiling:
+      # totals for the WHOLE cluster, control plane included. machineSets ranges apply to EACH
+      # MachineSet of a class, so one worker MachineSet per zone gets min x zones workers.
+      # Classes: worker, infra, gpu (storage MachineSets are never autoscaled). See the policy
+      # README for GPU.
+      # =======================================================================
+      clusterAutoscaler:
+        resourceLimits:
+          maxNodesTotal: 12
+          cores:
+            min: 8
+            max: 128
+          memory:                     # GiB
+            min: 4
+            max: 512
+          # gpus:                     # type must match the GPU MachineSet's
+          #   - type: nvidia-l4       # cluster-api/accelerator label
+          #     min: 0
+          #     max: 2
+        # scaleDown:                  # base shown
+        #   enabled: true
+        #   delayAfterAdd: 10m
+        #   unneededTime: 10m
+        #   utilizationThreshold: '0.5'
+        # podPriorityThreshold: -10
+        # balanceSimilarNodeGroups: true
+        machineSets:
+          worker:
+            minReplicas: 3
+            maxReplicas: 6
+          # gpu:
+          #   minReplicas: 1
+          #   maxReplicas: 2
+
+      # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
       # =======================================================================
       workloadPartitioning:
@@ -2070,6 +2109,11 @@ hubClusterSets:
       machine-health-checks-worker: 'true'   # Create MHC for the worker machine pool
       machine-health-checks-infra: 'false'   # Create MHC for the infra machine pool
       machine-health-checks-storage: 'false' # Create MHC for the storage machine pool
+
+      # =======================================================================
+      # Cluster Autoscaler. Reads config.clusterAutoscaler.
+      # =======================================================================
+      cluster-autoscaler: 'false'
 
       # =======================================================================
       # Manual Remediations

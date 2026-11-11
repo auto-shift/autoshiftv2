@@ -1,0 +1,86 @@
+# The cluster autoscaler: one ClusterAutoscaler named `default`, with hard limits, and one
+# MachineAutoscaler per MachineSet of each class the cluster opts into.
+#
+# config.clusterAutoscaler holds the ClusterAutoscaler spec plus one extra key, machineSets.
+# Every key except machineSets is merged over a base spec (podPriorityThreshold -10; scaleDown
+# enabled true, delayAfterAdd 10m, unneededTime 10m, utilizationThreshold "0.5"), the same
+# base-plus-config shape as config.aap.instance. Maps merge key by key and config wins, so any
+# ClusterAutoscaler field can be set: balanceSimilarNodeGroups, maxNodeProvisionTime,
+# logVerbosity, expanders, and so on.
+#   resourceLimits   REQUIRED: maxNodesTotal, cores and memory (GiB) min/max, optional gpus
+#                    [{type, min, max}]. Required so that autoscaling never runs without a cost
+#                    ceiling. Count the control plane: the limits are cluster totals, not totals
+#                    for autoscaled nodes.
+#   machineSets      Per class, {minReplicas, maxReplicas}. A class that is absent gets no
+#                    MachineAutoscaler. Classes: worker, infra, gpu. The range applies to EACH
+#                    MachineSet of that class, so a cluster with a worker MachineSet per zone
+#                    gets min x zones workers.
+#
+# MachineSets are classified on the managed cluster, in this order:
+#   storage  template node labels carry cluster.ocs.openshift.io/openshift-storage. Never
+#            autoscaled: removing a storage node is not something to do automatically.
+#   gpu      template node labels carry node-role.kubernetes.io/gpu or cluster-api/accelerator.
+#            Checked before the role, because a GPU MachineSet usually also has role worker.
+#   infra    machine role infra.
+#   worker   machine role worker.
+#
+# GPU autoscaling needs two things from whatever owns the GPU MachineSet: a
+# cluster-api/accelerator label whose value matches resourceLimits.gpus[].type, and NOT
+# enforcing spec.replicas, or the owner and the autoscaler fight over the count.
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "") hub}}
+  {{hub- $cfg := ($raw | fromYaml | default dict) hub}}
+  {{hub- $ca := (index $cfg "clusterAutoscaler" | default dict) hub}}
+  {{hub- $limits := (index $ca "resourceLimits" | default dict) hub}}
+  {{hub- if not (index $limits "maxNodesTotal") hub}}{{hub fail "cluster-autoscaler: config.clusterAutoscaler.resourceLimits.maxNodesTotal is required; autoscaling never runs without a ceiling" hub}}{{hub- end hub}}
+  {{hub- $spec := (`
+  podPriorityThreshold: -10
+  scaleDown:
+    enabled: true
+    delayAfterAdd: 10m
+    unneededTime: 10m
+    utilizationThreshold: "0.5"` | fromYaml) hub}}
+  {{hub- $spec = (mergeOverwrite $spec (omit $ca "machineSets")) hub}}
+  {{hub- $sets := (index $ca "machineSets" | default dict) hub}}
+  {{hub- range $class, $r := $sets hub}}
+  {{hub- if not (has $class (list "worker" "infra" "gpu")) hub}}{{hub fail (printf "cluster-autoscaler: config.clusterAutoscaler.machineSets.%s: the classes are worker, infra and gpu" $class) hub}}{{hub- end hub}}
+  {{hub- if not (regexMatch "^[0-9]+$" (printf "%v" (dig "minReplicas" "" $r))) hub}}{{hub fail (printf "cluster-autoscaler: machineSets.%s.minReplicas must be a whole number" $class) hub}}{{hub- end hub}}
+  {{hub- if not (regexMatch "^[1-9][0-9]*$" (printf "%v" (dig "maxReplicas" "" $r))) hub}}{{hub fail (printf "cluster-autoscaler: machineSets.%s.maxReplicas must be a whole number above 0" $class) hub}}{{hub- end hub}}
+  {{hub- if gt (atoi (printf "%v" (dig "minReplicas" "" $r))) (atoi (printf "%v" (dig "maxReplicas" "" $r))) hub}}{{hub fail (printf "cluster-autoscaler: machineSets.%s.minReplicas is above maxReplicas" $class) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: autoscaling.openshift.io/v1
+      kind: ClusterAutoscaler
+      metadata:
+        name: default
+      spec:
+        {{hub $spec | toYaml | autoindent hub}}
+  {{- $sets := fromJson `{{hub $sets | toJson hub}}` }}
+  {{- range $ms := (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items }}
+  {{- $nodeLabels := (dig "spec" "template" "spec" "metadata" "labels" dict $ms) }}
+  {{- $role := (dig "spec" "template" "metadata" "labels" "machine.openshift.io/cluster-api-machine-role" "" $ms) }}
+  {{- $class := "" }}
+  {{- if hasKey $nodeLabels "cluster.ocs.openshift.io/openshift-storage" }}{{- $class = "storage" }}
+  {{- else if or (hasKey $nodeLabels "node-role.kubernetes.io/gpu") (hasKey $nodeLabels "cluster-api/accelerator") }}{{- $class = "gpu" }}
+  {{- else if eq $role "infra" }}{{- $class = "infra" }}
+  {{- else if eq $role "worker" }}{{- $class = "worker" }}
+  {{- end }}
+  {{- $r := (index $sets $class | default dict) }}
+  {{- if and (ne $class "storage") (ne $class "") (hasKey $r "maxReplicas") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: autoscaling.openshift.io/v1beta1
+      kind: MachineAutoscaler
+      metadata:
+        name: {{ $ms.metadata.name }}
+        namespace: openshift-machine-api
+      spec:
+        minReplicas: {{ $r.minReplicas }}
+        maxReplicas: {{ $r.maxReplicas }}
+        scaleTargetRef:
+          apiVersion: machine.openshift.io/v1beta1
+          kind: MachineSet
+          name: {{ $ms.metadata.name }}
+  {{- end }}
+  {{- end }}
