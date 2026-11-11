@@ -1273,17 +1273,24 @@ hubClusterSets:
       # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
       # =======================================================================
+      # Simple mode. For full mode (a performanceProfile spec passed through), see
+      # clusters/_example-cluster-install-baremetal.yaml. The profile is always named
+      # workload-partitioning.
       workloadPartitioning:
         reservedCpus: '0-3'
         isolatedCpus: '4-31'
         nodeSelector:
           node-role.kubernetes.io/worker: ''
+        # machineConfigPoolSelector is optional: when unset it is derived from the
+        # nodeSelector role, here pools.operator.machineconfiguration.openshift.io/worker.
         numaTopology: 'restricted'
+        realTimeKernel: false
         hugepages:
           defaultSize: '1G'
           pages:
             - size: '1G'
               count: 4
+              node: 0
       # =======================================================================
       # NMState Networking (clusterset defaults for network interfaces)
       # Example: bond with two ports, VLAN on top, static route, DNS
