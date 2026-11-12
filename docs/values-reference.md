@@ -744,7 +744,7 @@ and optionally provisions its databases through CloudNativePG.
 | `alerts.mirrorUnsyncedFor` | duration | `2h` | How long repositories configured for mirroring can stay unsynced before `QuayMirrorNotSynced` fires |
 | `alerts.scanStalledFor` | duration | `1h` | The window for `QuaySecurityScanStalled`: it fires when images were pushed in this window and none were scanned |
 | `clair` | map | | Non-sensitive Clair settings layered over the Clair configuration, such as `indexer.airgap` and `matcher.disable_updaters`. The Secret's `clair-config.yaml` wins over it. See [Clair settings](../policies/stable/quay/README.md#clair-settings) |
-| `bootstrap.userInitialize` | bool | `false` | `FEATURE_USER_INITIALIZE`. Enables the unauthenticated first user endpoint |
+| `bootstrap.userInitialize` | bool | `false` | `FEATURE_USER_INITIALIZE`. Enables the unauthenticated first user endpoint, which works once: it refuses to run after any user exists |
 | `bootstrap.xhrOnly` | bool | `true` | `BROWSER_API_CALLS_XHR_ONLY`. Restricts the registry API to browser calls |
 | `bootstrap.userCreation` | bool | `false` | `FEATURE_USER_CREATION`. When false, only superusers create users |
 | `bootstrap.programmatic` | bool | `false` | `FEATURE_PROGRAMMATIC_BOOTSTRAP`. Technology Preview in Red Hat Quay 3.18 |

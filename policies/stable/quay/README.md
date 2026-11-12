@@ -609,8 +609,18 @@ curl -X POST "https://${HOST}/api/v1/user/initialize" \
   --data '{"username":"quayadmin","password":"<choose-one>","email":"quayadmin@example.com","access_token":true}'
 ```
 
-Store the returned `access_token` somewhere safe, then set both flags back to their defaults. The
-endpoint refuses to run once any user exists, so it cannot be replayed.
+Store the returned `access_token` somewhere safe. The endpoint works once: it refuses to run after
+any user exists, so leaving `userInitialize` on afterward has no effect. Red Hat's suggested
+configuration for automation also keeps `BROWSER_API_CALLS_XHR_ONLY` false, because `true` blocks API
+calls. See
+[Automation configuration options](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-preconfigure-automation-intro).
+
+The endpoint cannot issue another token. For a new API token, sign in as `quayadmin`, select an
+organization, and open **OAuth Applications**. Create an application, open it, and under **API Access
+Tokens** click **Generate New Token**. Give the token a name, an expiration, and only the scopes it
+needs; the superuser API needs the superuser access scope. Copy the secret then: Red Hat Quay does
+not show it again. See
+[Creating an OAuth 2 access token](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/red_hat_quay_api_guide/oauth2-access-tokens).
 
 ## Pushing to this registry
 
