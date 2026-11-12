@@ -1,0 +1,103 @@
+# The OLSConfig named cluster: which LLM the console assistant uses, and how.
+#
+# Everything comes from config.openshift-lightspeed in the cluster's rendered-config, the same key
+# the version pin reads. There is no default provider, because there is no neutral one: provider.type
+# and model are required, and the policy fails, naming the key, when either is missing.
+#
+#   provider             one LLM provider, written as in the OLSConfig CRD (type, url, and any
+#                        provider-specific field such as deploymentName, projectID or apiVersion),
+#                        plus three conveniences translated here:
+#                          name        default llm
+#                          ingressHost instead of url: builds https://<ingressHost>.<ingress domain><path>
+#                                      on the managed cluster, for a model served behind a Route on
+#                                      the same cluster. path defaults to /v1.
+#                          secretName  the Secret in openshift-lightspeed holding the provider
+#                                      credential, under the key apitoken. Default llm-credentials.
+#                                      Created out of band by an administrator; never in git.
+#   model                the model id the provider serves.
+#   mcpServers           optional, more MCP servers the assistant may call. Renders spec.mcpServers
+#                        and the MCPServer feature gate (Technology Preview). Each entry has url, or
+#                        ingressHost (and path, default /mcp) built as for the provider. timeout
+#                        defaults to 60 seconds here; the CRD's own default of 5 is shorter than a
+#                        documentation search. 'openshift' is refused: it is the built-in server.
+#   toolResultInspection optional, true or false. Unset leaves the operator default, enabled. false
+#                        is the documented workaround when inspection fails at the tool call step
+#                        for a model (OpenShift Lightspeed 1.1.5 known issue).
+#   toolBudgetRatio      optional, 0.1 to 0.5: the share of the model's context window for tool
+#                        results. The CRD default is 0.5.
+#   olsConfig            optional, any other OLSConfig spec field, merged last over what the keys
+#                        above produce. Maps merge key by key and these values win; lists replace.
+#
+# The ingress domain comes from the cluster Ingress config (ingresses.config.openshift.io/cluster),
+# which is always populated. The default IngressController's spec.domain is set only when someone
+# configures it, and a nil lookup renders as "%!s(<nil>)", a valid string the API server accepts.
+#
+# musthave never removes a list entry: deleting an MCP server from config leaves it in the OLSConfig,
+# and unsetting toolResultInspection leaves the last value. Set the value you want rather than
+# removing it, and remove a server by hand:
+#   oc patch olsconfigs.ols.openshift.io cluster --type=json \
+#     -p '[{"op":"remove","path":"/spec/mcpServers/<index>"}]'
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "") hub}}
+  {{hub- $cfg := (index ($raw | fromYaml | default dict) "openshift-lightspeed" | default dict) hub}}
+  {{hub- $p := (dig "provider" (dict) $cfg) hub}}
+  {{hub- $model := (printf "%v" (dig "model" "" $cfg)) hub}}
+  {{hub- if not (dig "type" "" $p) hub}}{{hub fail "openshift-lightspeed: config.openshift-lightspeed.provider.type is required, for example rhoai_vllm, openai, azure_openai or watsonx" hub}}{{hub- end hub}}
+  {{hub- if not $model hub}}{{hub fail "openshift-lightspeed: config.openshift-lightspeed.model is required; set it to a model id the provider serves" hub}}{{hub- end hub}}
+  {{hub- $purl := (dig "url" "" $p) hub}}
+  {{hub- $pih := (dig "ingressHost" "" $p) hub}}
+  {{hub- if or (and $purl $pih) (not (or $purl $pih)) hub}}{{hub fail "openshift-lightspeed: config.openshift-lightspeed.provider needs exactly one of url and ingressHost" hub}}{{hub- end hub}}
+  {{hub- if and $pih (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $pih)) hub}}{{hub fail "openshift-lightspeed: config.openshift-lightspeed.provider.ingressHost must be a single DNS label, such as models" hub}}{{hub- end hub}}
+  {{hub- $tri := (printf "%v" (dig "toolResultInspection" "" $cfg)) hub}}
+  {{hub- if not (has $tri (list "" "true" "false")) hub}}{{hub fail (printf "openshift-lightspeed: config.openshift-lightspeed.toolResultInspection %s must be true or false" $tri) hub}}{{hub- end hub}}
+  {{hub- $tbr := (printf "%v" (dig "toolBudgetRatio" "" $cfg)) hub}}
+  {{hub- if and $tbr (not (regexMatch "^0?\\.([1-4][0-9]*|50*)$" $tbr)) hub}}{{hub fail (printf "openshift-lightspeed: config.openshift-lightspeed.toolBudgetRatio %s must be from 0.1 to 0.5" $tbr) hub}}{{hub- end hub}}
+  {{hub- $pname := (dig "name" "llm" $p) hub}}
+  {{hub- $modelEntry := (dict "name" $model) hub}}
+  {{hub- if $tbr hub}}{{hub- $_ := set $modelEntry "parameters" (dict "toolBudgetRatio" (float64 $tbr)) hub}}{{hub- end hub}}
+  {{hub- $provider := (omit $p "ingressHost" "path" "secretName") hub}}
+  {{hub- $_ := set $provider "name" $pname hub}}
+  {{hub- if $pih hub}}{{hub- $_ := set $provider "url" (printf "https://%s.{{ $domain }}%s" $pih (dig "path" "/v1" $p)) hub}}{{hub- end hub}}
+  {{hub- $_ := set $provider "credentialsSecretRef" (dict "name" (dig "secretName" "llm-credentials" $p)) hub}}
+  {{hub- $_ := set $provider "models" (list $modelEntry) hub}}
+  {{hub- $ols := (dict "defaultProvider" $pname "defaultModel" $model) hub}}
+  {{hub- if $tri hub}}{{hub- $_ := set $ols "guardrails" (dict "toolResultInspection" (dict "enabled" (eq $tri "true"))) hub}}{{hub- end hub}}
+  {{hub- $spec := (dict "llm" (dict "providers" (list $provider)) "ols" $ols) hub}}
+  {{hub- $mcp := (dig "mcpServers" (list) $cfg) hub}}
+  {{hub- $names := (list) hub}}
+  {{hub- $servers := (list) hub}}
+  {{hub- range $m := $mcp hub}}
+  {{hub- $n := (dig "name" "" $m) hub}}
+  {{hub- if not $n hub}}{{hub fail "openshift-lightspeed: every config.openshift-lightspeed.mcpServers entry needs a name" hub}}{{hub- end hub}}
+  {{hub- if eq $n "openshift" hub}}{{hub fail "openshift-lightspeed: mcpServers name openshift is the operator's built-in server; choose another name" hub}}{{hub- end hub}}
+  {{hub- if has $n $names hub}}{{hub fail (printf "openshift-lightspeed: mcpServers name %s is listed twice" $n) hub}}{{hub- end hub}}
+  {{hub- $names = (append $names $n) hub}}
+  {{hub- $url := (dig "url" "" $m) hub}}
+  {{hub- $ih := (dig "ingressHost" "" $m) hub}}
+  {{hub- if or (and $url $ih) (not (or $url $ih)) hub}}{{hub fail (printf "openshift-lightspeed: mcpServers entry %s needs exactly one of url and ingressHost" $n) hub}}{{hub- end hub}}
+  {{hub- if and $url (not (regexMatch "^https?://" $url)) hub}}{{hub fail (printf "openshift-lightspeed: mcpServers entry %s: url must start with http:// or https://" $n) hub}}{{hub- end hub}}
+  {{hub- if and $ih (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $ih)) hub}}{{hub fail (printf "openshift-lightspeed: mcpServers entry %s: ingressHost must be a single DNS label, such as mcp" $n) hub}}{{hub- end hub}}
+  {{hub- $to := (printf "%v" (dig "timeout" 60 $m)) hub}}
+  {{hub- if not (regexMatch "^[1-9][0-9]*$" $to) hub}}{{hub fail (printf "openshift-lightspeed: mcpServers entry %s: timeout must be a whole number of seconds" $n) hub}}{{hub- end hub}}
+  {{hub- range $h := (dig "headers" (list) $m) hub}}
+  {{hub- $t := (dig "valueFrom" "type" "" $h) hub}}
+  {{hub- if not (and (dig "name" "" $h) (has $t (list "secret" "kubernetes" "client"))) hub}}{{hub fail (printf "openshift-lightspeed: mcpServers entry %s: every header needs a name and valueFrom.type secret, kubernetes or client" $n) hub}}{{hub- end hub}}
+  {{hub- if and (eq $t "secret") (not (dig "valueFrom" "secretRef" "name" "" $h)) hub}}{{hub fail (printf "openshift-lightspeed: mcpServers entry %s: a secret header needs valueFrom.secretRef.name, a Secret in openshift-lightspeed" $n) hub}}{{hub- end hub}}
+  {{hub- if and (ne $t "secret") (dig "valueFrom" "secretRef" "name" "" $h) hub}}{{hub fail (printf "openshift-lightspeed: mcpServers entry %s: only a secret header takes secretRef" $n) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $s := (dict "name" $n "timeout" (int $to)) hub}}
+  {{hub- if $url hub}}{{hub- $_ := set $s "url" $url hub}}{{hub- else hub}}{{hub- $_ := set $s "url" (printf "https://%s.{{ $domain }}%s" $ih (dig "path" "/mcp" $m)) hub}}{{hub- end hub}}
+  {{hub- if (dig "headers" (list) $m) hub}}{{hub- $_ := set $s "headers" (dig "headers" (list) $m) hub}}{{hub- end hub}}
+  {{hub- $servers = (append $servers $s) hub}}
+  {{hub- end hub}}
+  {{hub- if $servers hub}}{{hub- $_ := set $spec "featureGates" (list "MCPServer") hub}}{{hub- $_ := set $spec "mcpServers" $servers hub}}{{hub- end hub}}
+  {{hub- $spec = (mergeOverwrite $spec (dig "olsConfig" (dict) $cfg)) hub}}
+  {{- $domain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: ols.openshift.io/v1alpha1
+      kind: OLSConfig
+      metadata:
+        name: cluster
+      spec:
+        {{hub $spec | toYaml | autoindent hub}}

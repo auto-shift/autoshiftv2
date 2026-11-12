@@ -45,6 +45,24 @@ clusters:
       #   cli: 'registry.example.com:5000/openshift4/ose-cli:latest'
 
       # =====================================================================
+      # Zero Trust Workload Identity Manager — per-cluster SPIRE overrides
+      # =====================================================================
+      # Merged over the clusterset's config.ztwim. Keys are documented in
+      # autoshift/values/clustersets/_example.yaml.
+      ztwim:
+        datastore:
+          # PostgreSQL through the CloudNativePG cluster AutoShift runs. Needs
+          # autoshift.io/cloudnative-pg: 'true'. Destructive to switch later.
+          databaseType: 'postgres'
+        # Foreign trust domains (needs the ztwim-federation label).
+        federatedTrustDomains:
+          - trustDomain: 'other.example.com'
+            bundleEndpointURL: 'https://spire-federation.apps.other.example.com'
+            bundleEndpointProfile:
+              type: 'https_spiffe'
+              endpointSPIFFEID: 'spiffe://other.example.com/spire/server'
+
+      # =====================================================================
       # Networking — shared with other policies (e.g., nmstate)
       # =====================================================================
       networking:
@@ -240,11 +258,36 @@ clusters:
       # Requires autoshift.io/workload-partitioning: 'true' label on the cluster.
       # For full platform pod pinning, also set cpuPartitioning: 'AllNodes'
       # in clusterInstall (install-time only).
-      # workloadPartitioning:
+      #
+      # Two modes, one per values block. The profile is always named
+      # workload-partitioning. Full mode passes performanceProfile.spec through
+      # unchanged (spec.cpu.reserved, spec.cpu.isolated and spec.nodeSelector are
+      # required) and wins over simple-mode keys inherited from the clusterset.
+      workloadPartitioning:
+        performanceProfile:
+          annotations:                     # Optional
+            kubeletconfig.experimental: '{"topologyManagerScope": "pod"}'
+          spec:
+            cpu:
+              reserved: '0-1,32-33'
+              isolated: '2-31,34-63'
+            nodeSelector:
+              node-role.kubernetes.io/master: ''
+            machineConfigPoolSelector:
+              pools.operator.machineconfiguration.openshift.io/master: ''
+            numa:
+              topologyPolicy: 'single-numa-node'
+            workloadHints:
+              realTime: false
+              highPowerConsumption: false
+              perPodPowerManagement: false
+      # Simple mode instead: replace performanceProfile above with these keys.
       #   reservedCpus: '0-3'              # CPUs for control plane / OS / platform
       #   isolatedCpus: '4-31'            # CPUs available for user workloads
       #   nodeSelector:                    # Optional: which nodes (default: masters)
       #     node-role.kubernetes.io/master: ''
+      #   machineConfigPoolSelector:       # Optional: derived from the nodeSelector role
+      #     pools.operator.machineconfiguration.openshift.io/master: ''
       #   numaTopology: 'single-numa-node' # Optional: 'single-numa-node', 'best-effort', 'restricted'
       #   realTimeKernel: false            # Optional: enable real-time kernel
       #   hugepages:                       # Optional: huge pages config

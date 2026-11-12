@@ -31,7 +31,7 @@ hubClusterSets:
               - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
     labels:
       # OpenShift version for cluster deployment and image mirroring
-      openshift-version: '4.22.8'
+      openshift-version: '4.22.18'
       self-managed: 'false'
       ### OpenShift Gitops
       gitops: 'true' # is expected to be installed on all hub clusters
@@ -41,6 +41,12 @@ hubClusterSets:
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
       # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
+      # Infra Argo CD agent. This managed hub's infra-gitops reports to the infra principal on the
+      # hub above, which also delivers this hub's AutoShift Application (policy-managed-autoshift-agent).
+      gitops-infra: 'agent-managed'
+      # Infra Argo CD principal for THIS hub's own spokes, which enroll through the gitops-infra
+      # label in its nested AutoShift's values (clustersets/managed.yaml).
+      gitops-agent: 'true'
       ### AutoShift Console Plugin
       autoshift-console: 'true'
       ### Advanced Cluster Management
@@ -109,7 +115,7 @@ hubClusterSets:
       ### OpenShift Pipelines
       pipelines: 'true'
       pipelines-subscription-name: openshift-pipelines-operator-rh
-      pipelines-channel: pipelines-1.23
+      pipelines-channel: pipelines-1.24
       pipelines-source: redhat-operators
       pipelines-source-namespace: openshift-marketplace
       ### Trusted Artifact Signer

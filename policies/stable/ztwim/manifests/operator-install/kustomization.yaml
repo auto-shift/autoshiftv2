@@ -1,0 +1,60 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Renders the shared components/operator-install chart, which owns the OperatorPolicy structure and
+# creates the namespace (with the cluster-monitoring label). The per-operator ACM lookups below are the
+# visible, greppable inputs: every autoshift.io/ztwim-* label this operator consumes is here.
+# ${REMEDIATION} is substituted by the CMP before kustomize runs.
+helmGlobals:
+  chartHome: ../../../../../components/
+helmCharts:
+  - name: operator-install
+    releaseName: ztwim
+    valuesInline:
+      name: ztwim
+      namespace: zero-trust-workload-identity-manager
+      remediation: ${REMEDIATION}
+      # UPGRADE APPROVAL IS DERIVED, not configured. A nested cluster pins itself to the installed
+      # version (None = never approve an InstallPlan); a standalone cluster keeps Automatic.
+      #
+      # The reason is CREATE_ONLY_MODE. Nested clusters run the operator in create-only mode, where
+      # it creates absent objects but never updates existing ones. An automatic operator upgrade
+      # there leaves every SPIRE workload on the PREVIOUS release's images indefinitely, and nothing
+      # reports it: the CSV is Succeeded and the operand CRs still say "All components are ready".
+      # AutoShift also owns hand-patched content inside the operator-generated server.conf, which is
+      # written against a specific release's shape. Both make an unattended upgrade a bad trade on
+      # exactly the clusters that opt into nesting.
+      #
+      # Override with autoshift.io/ztwim-upgrade-approval. test/operand-image-drift.yaml reports the
+      # drift if an upgrade does happen; manifests/operand-reconcile/ can repair it on request.
+      upgradeApproval: '{{hub $nestedRole := (index .ManagedClusterLabels "autoshift.io/ztwim-nested-role" | default "") hub}}{{hub index .ManagedClusterLabels "autoshift.io/ztwim-upgrade-approval" | default (ternary "None" "Automatic" (ne $nestedRole "")) hub}}'
+      subscription:
+        name: '{{hub index .ManagedClusterLabels "autoshift.io/ztwim-subscription-name" | default "openshift-zero-trust-workload-identity-manager" hub}}'
+        channel: '{{hub index .ManagedClusterLabels "autoshift.io/ztwim-channel" | default "stable-v1" hub}}'
+        source: '{{hub $base := (index .ManagedClusterLabels "autoshift.io/ztwim-source" | default "redhat-operators") hub}}{{hub ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}'
+        sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/ztwim-source-namespace" | default "openshift-marketplace" hub}}'
+        # Version resolution (config lives in the rendered-config ConfigMap on the hub):
+        #   config mode (config.ztwim.versions set): versions = that list; startingCSV = config.ztwim.startingCSV
+        #     (explicit: the list says what is ALLOWED, not where to START; default "" = let OLM pick).
+        #   label mode (no config): versions = [ztwim-version label]; startingCSV = that same version.
+        # $vers is computed here and reused by `versions` below.
+        startingCSV: |-
+          {{hub- $cfg := (index (index (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+          {{hub- $cfgVers := (dig "versions" (list) $cfg) hub}}
+          {{hub- $isCfg := (not (empty $cfgVers)) hub}}
+          {{hub- $labelVer := (index .ManagedClusterLabels "autoshift.io/ztwim-version" | default "") hub}}
+          {{hub- $vers := (ternary $cfgVers (ternary (list) (list $labelVer) (empty $labelVer)) $isCfg) hub}}
+          {{hub- (ternary (dig "startingCSV" "" $cfg) $labelVer $isCfg) hub}}
+        # CREATE_ONLY_MODE is set HERE, on the OperatorPolicy that owns this Subscription, rather
+        # than by a second policy patching spec.config afterwards. It stops the operator reverting
+        # the hand-edited server.conf that nested SPIRE depends on, and it must be in effect before
+        # anything patches that file, and setting it at install time makes that ordering automatic.
+        #
+        # 'true' on any cluster with ztwim-nested-role set, 'false' everywhere else. Writing false
+        # explicitly rather than omitting the variable keeps the Subscription identical in shape on
+        # every cluster, so enabling nesting later is a value change rather than a structural one.
+        config:
+          env:
+            - name: CREATE_ONLY_MODE
+              value: '{{hub ternary "true" "false" (ne (index .ManagedClusterLabels "autoshift.io/ztwim-nested-role" | default "") "") hub}}'
+      # versions reuses $vers set in startingCSV above (same policy, resolves after it).
+      versions: '{{hub $vers | toRawJson | toLiteral hub}}'

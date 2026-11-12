@@ -86,7 +86,9 @@ usage() {
     echo "  --target TARGET          Placement target: hub, spoke, both, all (default: prompted)"
     echo "  --label LABEL            Label predicate key without autoshift.io/ prefix"
     echo "                           (default: directory basename; ignored for hub/all targets)"
-    echo "  --dependency POLICY      Policy dependency name (repeatable)"
+    echo "  --dependency POLICY      Policy this one depends on (repeatable). Takes the policy name"
+    echo "                           with or without its 'policy-' prefix: 'lvm-operator-install'"
+    echo "                           and 'policy-lvm-operator-install' both name the same policy"
     echo "  --add-to-autoshift       Add enable label to AutoShift values files (spoke/both targets)"
     echo "  --values-files FILES     Comma-separated list of values files to update (e.g., 'hub,sbx')"
     echo "  --help                   Show this help message"
@@ -115,7 +117,9 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --dependency)
-            DEPENDENCIES+=("$2")
+            # Accept the full policy name as well as the unprefixed form; without this,
+            # --dependency policy-foo generated a dependency on policy-policy-foo.
+            DEPENDENCIES+=("${2#policy-}")
             shift 2
             ;;
         --add-to-autoshift)
@@ -164,6 +168,19 @@ fi
 if [[ ! "$POLICY_NAME" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
     log_error "Policy name must be lowercase alphanumeric with hyphens only (no leading/trailing hyphens)"
     echo "Examples: my-config, dns-tolerations, set-max-pods"
+    exit 1
+fi
+
+# Longest Policy name the validation suite accepts (tools/internal/resolver/policy_name_test.go).
+# With a 20-character policy namespace it reaches ACM's 62-character limit for the replicated
+# policy name on a managed cluster.
+MAX_POLICY_NAME_LEN=40
+if (( ${#POLICY_NAME} + 7 > MAX_POLICY_NAME_LEN )); then
+    log_error "Policy name 'policy-${POLICY_NAME}' is $(( ${#POLICY_NAME} + 7 )) characters; the limit is $MAX_POLICY_NAME_LEN"
+    echo "ACM replicates each policy to managed clusters as <policy-namespace>.<policy-name>, which must"
+    echo "fit in 62 characters, and the validation suite (make test) rejects longer names."
+    echo "Choose a policy name of at most $(( MAX_POLICY_NAME_LEN - 7 )) characters. Abbreviate the component, as existing"
+    echo "policies do (acs, virt, nfd, rhtas); the directory can keep its full name."
     exit 1
 fi
 
@@ -340,7 +357,8 @@ EOF
 }
 
 # Build the PolicyGenerator dependencies block for a policies[] entry (4-space indent).
-# Emits nothing when there are no dependencies.
+# Emits nothing when there are no dependencies. DEPENDENCIES is normalised to the unprefixed
+# form at parse time, so the prefix is added back exactly once here.
 build_dependency_block() {
     if [[ ${#DEPENDENCIES[@]} -eq 0 ]]; then
         return
@@ -349,6 +367,48 @@ build_dependency_block() {
     for dep in "${DEPENDENCIES[@]}"; do
         echo "      - name: policy-${dep}"
     done
+}
+
+# One paragraph for the generated README describing which clusters the placement selects.
+placement_summary() {
+    case "$TARGET" in
+        hub)
+            echo "Hub clusters only: the placement selects \`autoshift.io/cluster-type: hub\`."
+            ;;
+        spoke)
+            echo "Managed clusters only, and only those with the label \`autoshift.io/${LABEL}: 'true'\`."
+            echo "The placement also requires \`autoshift.io/cluster-type: spoke\`, so a self-managed hub never matches."
+            echo "Set the label in the values files, never directly on a cluster."
+            ;;
+        both)
+            echo "Every cluster, hub or managed, with the label \`autoshift.io/${LABEL}: 'true'\`."
+            echo "Set the label in the values files, never directly on a cluster."
+            ;;
+        all)
+            echo "Every cluster bound to the policy namespace. No label selects it."
+            ;;
+    esac
+}
+
+# Write README.md for a new directory from the configuration-policy template. The structure test
+# (tools/internal/resolver/policy_structure_test.go) fails a new policy directory without one.
+write_readme() {
+    local summary
+    summary="$(placement_summary)"
+    while IFS= read -r line; do
+        case "$line" in
+            '{{PLACEMENT_SUMMARY}}')
+                echo "$summary"
+                ;;
+            *)
+                line="${line//\{\{DIR_BASENAME\}\}/$DIR_BASENAME}"
+                line="${line//\{\{POLICY_NAME\}\}/$POLICY_NAME}"
+                line="${line//\{\{POLICY_DIR\}\}/$POLICY_DIR}"
+                echo "$line"
+                ;;
+        esac
+    done < "$TEMPLATE_DIR/README-config.md.template" > "$POLICY_DIR/README.md"
+    log_success "Created README.md (complete the TODOs)"
 }
 
 # --- AutoShift values file integration ---
@@ -726,6 +786,9 @@ if [[ "$IS_NEW_DIR" == "true" ]]; then
 
     # bare manifest
     write_manifest
+
+    # README.md
+    write_readme
 else
     log_step "Appending policy to existing PolicyGenerator directory: $POLICY_DIR"
 
@@ -803,7 +866,7 @@ if [[ "$TARGET" != "all" ]]; then
     echo "  Label:     autoshift.io/${LABEL}"
 fi
 if [[ ${#DEPENDENCIES[@]} -gt 0 ]]; then
-    echo "  Depends:   ${DEPENDENCIES[*]}"
+    echo "  Depends:   ${DEPENDENCIES[*]/#/policy-}"
 fi
 echo ""
 
@@ -812,6 +875,11 @@ echo -e "${BLUE}📋 Next Steps:${NC}"
 echo "1. Edit $OUTPUT_FILE"
 echo "   - Replace the placeholder ConfigMap with your actual bare resource (no ConfigurationPolicy wrapper)"
 echo "   - For hub templates / loops / conditionals, use a bare 'object-templates-raw:' manifest instead"
+if [[ "$IS_NEW_DIR" == "true" ]]; then
+    echo "   Complete the TODOs in $POLICY_DIR/README.md"
+else
+    echo "   Add policy-${POLICY_NAME} to $POLICY_DIR/README.md"
+fi
 echo "2. Validate: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
 echo "   Full validation: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
 if [[ "$TARGET" != "all" ]]; then

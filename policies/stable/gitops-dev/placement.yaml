@@ -8,6 +8,8 @@ spec:
   # namespace (bound by the top autoshift chart) filtered by the predicate.
   # Team presence + mode are handled INSIDE the policy by ranging the
   # gitops-dev-team-<team> labels; this predicate just gates on gitops-dev.
+  # Two predicates are ORed. The second reaches a cluster running infra standalone, whose only
+  # relevant label is gitops-infra.
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -16,6 +18,13 @@ spec:
               operator: In
               values:
                 - 'true'
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops-infra'
+              operator: In
+              values:
+                - 'standalone'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

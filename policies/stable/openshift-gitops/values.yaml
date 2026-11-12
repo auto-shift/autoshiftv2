@@ -86,16 +86,13 @@ gitops:
         - ComplianceCheckResult
         - ComplianceRemediation
   controller:
-    # Scaling: raise processors for environments with many Applications. AutoShift generates an
-    # Application per policy directory, so even a minimal hub carries dozens.
+    # Concurrency, left at the Argo CD defaults. AutoShift generates an Application per policy
+    # directory, so even a minimal hub carries dozens.
     #
-    # These sit at the Argo CD defaults. An earlier 50/25 was measured at 141s for a full refresh
-    # against 225s at 20/10 on a 51-Application hub, which looked like a free win, but concurrency
-    # multiplies peak memory: each in-flight comparison holds that Application's rendered and live
-    # state at once. A hub running 58 Applications and 299 Policies then hit OOMKilled repeatedly at
-    # the previous 4Gi ceiling, crash looping every few minutes and leaving objects half applied.
-    # Faster refreshes are worth nothing from a controller that cannot finish one. Raise these only
-    # together with limits.memory below, and re-measure.
+    # Raising these shortens a full refresh but multiplies peak memory, because each in-flight
+    # comparison holds an Application's rendered and live state at once. Set too high for
+    # limits.memory, the controller is OOMKilled mid-sync and leaves objects half applied. Raise
+    # them only together with limits.memory below, and re-measure.
     statusProcessors: 20        # concurrent status reconciliations (Argo CD default: 20)
     operationProcessors: 10     # concurrent sync operations (Argo CD default: 10)
     # GOMEMLIMIT is DERIVED as this percentage of limits.memory below, so the two cannot drift.
@@ -156,12 +153,12 @@ gitops:
       memory: 512Mi
   # PolicyGenerator ConfigManagementPlugin (CMP) for rendering kustomize/PolicyGenerator
   # policies in the hub repo-server. Required for GIT/source deployments. Adds an init
-  # container (stages the PG binary from the ACM subscription image) and a CMP sidecar that
+  # container (stages the PG binary from the acm-cli-downloads image) and a CMP sidecar that
   # runs `kustomize build --enable-alpha-plugins` after substituting the per-deployment
   # ${...} placeholders. Defined in templates/policy-gitops-systems-argocd.yaml.
   # Gated by gitops.policyGenerator.enabled (above): OCI-only deployments consume prerendered Helm
   # charts and set it false to omit the sidecar. Its init/sidecar images are resolved at enforcement
-  # time by spoke-side lookups of the running repo-server and ACM subscription deployments, so they
+  # time by spoke-side lookups of the running repo-server and acm-cli-downloads deployments, so they
   # always match the versions on the cluster.
   server:
     autoscale:
