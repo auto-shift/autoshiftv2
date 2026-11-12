@@ -102,9 +102,12 @@ Red Hat Advanced Cluster Management version rather than on the validation suite.
 - **Version skew can hide a failure.** The validation suite links its own copy of the template
   library, pinned in `tools/go.mod`, rather than the one the hub runs. When that pin is newer than
   the target hub, a function the suite resolves cleanly can still fail on the cluster.
-- **`lookup` calls are restricted to the policy namespace** unless the policy service account has
-  been granted wider access. A cross-namespace lookup that works when tested by hand can return
-  nothing when the policy runs.
+- **The hub limits hub-template `lookup` calls to the policy namespace** and the target's own
+  `ManagedCluster`, unless the policy entry sets `hubTemplateOptions.serviceAccountName:
+  autoshift-policy-service-account`. Any other hub lookup, including a list of `ManagedCluster`
+  objects or a `fromConfigMap` in another namespace, fails with "the namespace argument is
+  restricted to" or "lookup of cluster-scoped resource ... is not allowed". The validation suite
+  applies the same limit.
 - **`lookup` returns a Go map, not a string.** A missing resource returns nil, so an optional lookup
   needs `| default dict` before anything indexes into it. Do not reach for that on a lookup the
   policy cannot work without: see [Failing on missing input](#failing-on-missing-input).

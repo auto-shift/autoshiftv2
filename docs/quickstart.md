@@ -304,8 +304,8 @@ oc get applications.argoproj.io -n openshift-gitops | grep autoshift
 # Check ACM policies
 oc get policies -A
 
-# View policy compliance
-oc get policies -n open-cluster-policies
+# View policy compliance (the namespace is policies-<Application name>; APP_NAME is set in Step 4)
+oc get policies -n policies-$APP_NAME
 ```
 
 that is it. Welcome to OpenShift Platform Plus and all of its many capabilities!
@@ -508,15 +508,21 @@ oc get pods -n open-cluster-management
 ```
 
 ### Policies not applying
+
+The policy namespace is `policies-` followed by the name of the AutoShift Application. In a new
+shell, set `APP_NAME` to the name you installed with before you run these commands.
+
 ```bash
+export APP_NAME="autoshift"
+
 # Check cluster labels
 oc get managedcluster local-cluster --show-labels
 
 # Check placement
-oc get placement -n open-cluster-policies
+oc get placement -n policies-$APP_NAME
 
 # Check policy status
-oc describe policy <policy-name> -n open-cluster-policies
+oc describe policy <policy-name> -n policies-$APP_NAME
 ```
 
 ### ArgoCD application not syncing

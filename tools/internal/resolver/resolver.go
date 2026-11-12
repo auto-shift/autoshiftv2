@@ -26,6 +26,9 @@ type Resolver struct {
 	// ManagedCluster) would otherwise leak into every later resolution. A live API server returns
 	// a fresh object per lookup; refreshLocal gives each resolution its own copy to match.
 	local []unstructured.Unstructured
+	// fresh is this resolution's copy of local; namespaced is the subset with a namespace.
+	fresh      []unstructured.Unstructured
+	namespaced []unstructured.Unstructured
 }
 
 // refreshLocal hands the inner resolver a deep copy of the seeded resources.
@@ -33,11 +36,31 @@ func (r *Resolver) refreshLocal() {
 	if len(r.local) == 0 {
 		return
 	}
-	fresh := make([]unstructured.Unstructured, len(r.local))
+	r.fresh = make([]unstructured.Unstructured, len(r.local))
+	r.namespaced = r.namespaced[:0]
 	for i := range r.local {
-		fresh[i] = *r.local[i].DeepCopy()
+		r.fresh[i] = *r.local[i].DeepCopy()
+		if r.fresh[i].GetNamespace() != "" {
+			// Shares the object map with fresh, so a mutation is seen through both.
+			r.namespaced = append(r.namespaced, r.fresh[i])
+		}
 	}
-	r.inner.WithLocalResources(fresh)
+	r.inner.WithLocalResources(r.fresh)
+}
+
+// useLocal selects the local resources for one Policy. go-template-utils answers a lookup from local
+// resources before it checks ClusterScopedAllowList, so a restricted Policy gets only the namespaced
+// ones. Its cluster-scoped lookups fall through to the fake dynamic client, which holds the same seed
+// and applies the allowlist as the hub does.
+func (r *Resolver) useLocal(restricted bool) {
+	if len(r.local) == 0 {
+		return
+	}
+	if restricted {
+		r.inner.WithLocalResources(r.namespaced)
+	} else {
+		r.inner.WithLocalResources(r.fresh)
+	}
 }
 
 // kindToResource converts a Kind to its lowercase plural resource name.
@@ -270,7 +293,9 @@ func (r *Resolver) ResolvePolicy(rawYAML string, ctx HubContext) ResolvePolicyRe
 			"labels":      mapOrEmpty(metadata, "labels"),
 		}
 
-		result, err := r.inner.ResolveTemplate(jsonBytes, docCtx, &templates.ResolveOptions{})
+		opts := hubResolveOptions(obj, policyNamespace, ctx.ManagedClusterName)
+		r.useLocal(opts.LookupNamespace != "")
+		result, err := r.inner.ResolveTemplate(jsonBytes, docCtx, opts)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", policyName, err))
 			resolved = append(resolved, doc) // pass through the original
@@ -291,6 +316,27 @@ func (r *Resolver) ResolvePolicy(rawYAML string, ctx HubContext) ResolvePolicyRe
 	return ResolvePolicyResult{
 		Resolved: joinYAMLDocuments(resolved),
 		Errors:   errs,
+	}
+}
+
+// hubResolveOptions applies the lookup restriction the ACM policy propagator applies on the hub.
+// A Policy without spec.hubTemplateOptions.serviceAccountName may only look up objects in its own
+// namespace and the target's own ManagedCluster; any other lookup fails with "the namespace
+// argument is restricted to" or "lookup of cluster-scoped resource ... is not allowed". A Policy
+// with a service account is limited only by that account's RBAC, which this suite does not model.
+func hubResolveOptions(policy map[string]interface{}, policyNamespace, clusterName string) *templates.ResolveOptions {
+	if sa, _ := nestedString(policy, "spec", "hubTemplateOptions", "serviceAccountName"); sa != "" {
+		return &templates.ResolveOptions{}
+	}
+	return &templates.ResolveOptions{
+		LookupNamespace: policyNamespace,
+		ClusterScopedAllowList: []templates.ClusterScopedObjectIdentifier{
+			{
+				Group: "cluster.open-cluster-management.io",
+				Kind:  "ManagedCluster",
+				Name:  clusterName,
+			},
+		},
 	}
 }
 
