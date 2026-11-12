@@ -1157,6 +1157,55 @@ hubClusterSets:
       #   versions:
       #     - 'openshift-external-secrets-operator.vX.Y.Z'
       #   startingCSV: 'openshift-external-secrets-operator.vX.Y.Z'
+      far:
+        # copy (default): policy copies FAR-shaped Secrets (--username/--password) from
+        #                 sharedSecretNamespace into openshift-workload-availability.
+        # external: ESO or out-of-band lands the same FAR-shaped Secrets there directly;
+        #           policy-far-secrets-ready informs until they exist and gates remediation templates.
+        secretsMode: copy
+        # Shared secret defaults (source on managed cluster -> copied target in FAR namespace)
+        sharedSecretNamespace: eso-shared
+        sourceSecretName: bmc-shared-creds
+        sharedSecretName: bmc-shared-creds
+        templates:
+          # Redfish: per-node BMC hosts in nodeparameters.--ip
+          - name: far-template-redfish
+            agent: fence_redfish
+            retrycount: 15 # integer (unquoted)
+            retryinterval: '5s'
+            timeout: '60s'
+            sharedparameters:
+              '--action': reboot
+              '--ssl-insecure': ''
+              '--systems-uri': '/redfish/v1/Systems/1'
+            nodeparameters:
+              '--ip':
+                worker-0: '10.0.0.11'
+                worker-1: '10.0.0.12'
+              # Optional per-node ports when endpoint is not default 443
+              # '--ipport':
+              #   worker-0: '8443'
+            # Optional per-node credential override map
+            # nodeSecretNames:
+            #   worker-0: bmc-worker-0-creds
+            # sourceNodeSecrets:
+            #   worker-0: eso-worker-0-creds
+            # Optional: omit nodeparameters.--ip and set autoNodeIPsFromBMH: true
+            # to fill --ip from BareMetalHost data. See policies/stable/far/README.md.
+          # Cisco UCS: shared UCS Manager IP, per-node plugs
+          - name: far-template-cisco-ucs
+            agent: fence_cisco_ucs
+            retrycount: 15
+            retryinterval: '5s'
+            timeout: '60s'
+            sharedparameters:
+              '--action': reboot
+              '--ip': ucs-manager.example.com
+              '--ssl-insecure': ''
+            nodeparameters:
+              '--plug':
+                worker-0: 'org-root/ls-worker-0'
+                worker-1: 'org-root/ls-worker-1'
       # gitlab-runner:
       #   versions:
       #     - 'gitlab-runner-operator.vX.Y.Z'
@@ -2666,6 +2715,15 @@ hubClusterSets:
       trident-source-namespace: openshift-marketplace
       trident-channel: stable
       trident-version: 'trident-operator.v25.06.0'   # optional CSV version pin
+      # =======================================================================
+      # Far
+      # =======================================================================
+      far: 'false'
+      far-subscription-name: fence-agents-remediation
+      far-channel: stable
+      far-source: redhat-operators
+      far-source-namespace: openshift-marketplace
+      far-version: 'fence-agents-remediation.v0.8.1'
 
       # Zero Trust Workload Identity Manager (SPIRE)
       # =======================================================================
