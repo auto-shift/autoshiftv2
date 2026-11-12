@@ -3,7 +3,8 @@
 # /home/argocd/cmp-server/config/plugin.yaml.
 #
 # Mechanics mirror the proven feature/policy-generator branch:
-#   discover -> only dirs containing policy-generator-config.yaml match this plugin
+#   no discover: every Application names this plugin, and a discover rule makes Argo CD stream
+#               the whole repository to the sidecar (MatchRepository) before every render
 #   init     -> copy the PG binary (staged into the shared /policy-generator volume by the
 #               repo initContainer) into the sidecar's kustomize plugin home
 #   generate -> substitute the per-deployment ${...} placeholders, then kustomize build
@@ -21,9 +22,6 @@ data:
       # Do NOT add spec.version — that would register it as `policy-generator-<version>`.
       name: policy-generator
     spec:
-      discover:
-        find:
-          glob: "**/policy-generator-config.yaml"
       generate:
         command: [/bin/sh, -c]
         args:
