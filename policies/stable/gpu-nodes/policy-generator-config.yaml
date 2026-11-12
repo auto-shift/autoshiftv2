@@ -1,0 +1,54 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: gpu-nodes
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement-*.yaml — never in manifests/ or test/,
+# whose hub templates contain `$vars` that substitution would clobber.
+#
+# AWS only for now. vSphere and bare metal GPU nodes are possible but have not been built or
+# tested, so there is deliberately no placement-vmware.yaml / placement-baremetal.yaml to match:
+# a cluster labelled with an unsupported gpu-nodes-provider simply matches no placement rather
+# than silently getting the wrong MachineSet shape.
+placementBindingDefaults:
+  name: binding-policy-gpu-nodes
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+policies:
+  - name: policy-gpu-nodes-aws
+    pruneObjectBehavior: None
+    manifests:
+      - path: manifests/create-gpu-nodes-aws.yaml
+    placement:
+      placementPath: placement-aws.yaml
+  # test/ holds inform-only status assertions (a status can only be observed).
+  - name: policy-gpu-nodes-test
+    remediationAction: inform
+    consolidateManifests: false
+    manifests:
+      - path: test/check-cluster-gpu-machineset.yaml
+        customMessage:
+          noncompliant: >
+            ❌ GPU MachineSet has not reached the requested replica count;
+            Expected: {{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes" hub}}
+      - path: test/check-cluster-gpu-node-capacity.yaml
+        customMessage:
+          noncompliant: >
+            ❌ A GPU node is not Ready, or reports no nvidia.com/gpu capacity — the instance
+            booted but the NVIDIA driver stack did not finish. Check the
+            NVIDIA GPU Operator ClusterPolicy.
+    placement:
+      placementPath: placement-test.yaml

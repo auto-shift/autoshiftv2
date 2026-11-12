@@ -197,3 +197,52 @@ metadata:
   name: infra
   labels:
     pools.operator.machineconfiguration.openshift.io/infra: ''
+---
+# GPU worker for gpu-nodes/test/check-cluster-gpu-node-capacity.yaml. The nvidia.com/gpu entry in
+# allocatable is the point of the fixture: the policy's whole job is to tell "the instance booted"
+# apart from "the GPU is usable", so without a node that actually reports GPU capacity the check
+# resolves to nothing and silently proves nothing.
+apiVersion: v1
+kind: Node
+metadata:
+  labels:
+    beta.kubernetes.io/arch: amd64
+    beta.kubernetes.io/instance-type: g6.xlarge
+    beta.kubernetes.io/os: linux
+    failure-domain.beta.kubernetes.io/region: us-east-2
+    failure-domain.beta.kubernetes.io/zone: us-east-2a
+    kubernetes.io/arch: amd64
+    kubernetes.io/hostname: gpu-0.test-cluster.test.example.com
+    kubernetes.io/os: linux
+    node-role.kubernetes.io/gpu: ""
+    node-role.kubernetes.io/worker: ""
+    node.kubernetes.io/instance-type: g6.xlarge
+    node.openshift.io/os_id: rhcos
+    topology.kubernetes.io/region: us-east-2
+    topology.kubernetes.io/zone: us-east-2a
+  name: gpu-0.test-cluster.test.example.com
+spec:
+  providerID: aws:///us-east-2a/i-0fake000000000020
+  taints:
+  - effect: NoSchedule
+    key: nvidia.com/gpu
+status:
+  addresses:
+  - address: 10.0.0.20
+    type: InternalIP
+  - address: gpu-0.test-cluster.test.example.com
+    type: InternalDNS
+  allocatable:
+    cpu: 3500m
+    memory: 14595124Ki
+    nvidia.com/gpu: "1"
+    pods: "250"
+  capacity:
+    cpu: "4"
+    memory: 16679988Ki
+    nvidia.com/gpu: "1"
+    pods: "250"
+  conditions:
+  - reason: KubeletReady
+    status: "True"
+    type: Ready

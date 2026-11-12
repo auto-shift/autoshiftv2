@@ -1,0 +1,30 @@
+# Does each GPU node actually expose a GPU to the scheduler?
+#
+# A Ready node is not enough. The failure that matters here is the machine coming up fine while the
+# NVIDIA driver stack never finishes: the node joins, looks healthy, and reports no nvidia.com/gpu in
+# status.allocatable, so every GPU workload sits Pending with no obvious cause. Checking allocatable
+# is what separates "the instance booted" from "the GPU is usable".
+#
+# Each GPU node must be Ready and must list nvidia.com/gpu in status.allocatable. The second is a
+# check for a key being present, which musthave cannot express, so the policy calls fail and names
+# the node. The placement selects only clusters with a non-zero autoshift.io/gpu-nodes, so a cluster
+# with no GPU node yet is still coming up, and the policy fails rather than rendering an empty check
+# that would report Compliant.
+object-templates-raw: |
+  {{- $gpu_nodes := (lookup "v1" "Node" "" "" "node-role.kubernetes.io/gpu").items }}
+  {{- if eq 0 (len $gpu_nodes) }}{{ fail "no node carries node-role.kubernetes.io/gpu yet; the GPU MachineSet has not produced a node" }}{{- end }}
+  {{- range $gpu_nodes }}
+    {{- if not (hasKey (.status.allocatable | default dict) "nvidia.com/gpu") }}
+      {{- fail (printf "GPU node %s reports no nvidia.com/gpu in status.allocatable; the NVIDIA driver stack has not finished on it" .metadata.name) }}
+    {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ .metadata.name }}
+      status:
+        conditions:
+          - type: Ready
+            status: 'True'
+  {{- end }}

@@ -1,0 +1,37 @@
+# Did the GPU MachineSets actually bring machines up?
+#
+# The placement selects only clusters whose autoshift.io/gpu-nodes is set and not 0, so the replica
+# count is always a real target here. A GPU MachineSet parked at 0 is a normal resting state (it costs
+# nothing and lets the cluster scale up on demand), and such a cluster is simply not placed.
+#
+# The label has no default: if it is missing anyway, the policy fails and says so, rather than
+# checking against a made-up value. The same goes for the zones. With no autoshift.io/gpu-nodes-zone-N
+# label and no worker MachineSet to take the zone from, there is nothing to check, and an empty
+# check would report Compliant, so it fails instead.
+object-templates-raw: |
+  {{- $want := "{{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes" hub}}" }}
+  {{- if eq $want "" }}{{ fail "autoshift.io/gpu-nodes is not set on this cluster" }}{{- end }}
+  {{- $machineset_role := "gpu" }}
+  {{- $zones := list {{hub range $label, $labelvalue := .ManagedClusterLabels hub}}{{hub if $label | hasPrefix "autoshift.io/gpu-nodes-zone" hub}}"{{hub $labelvalue hub}}"{{hub end hub}}{{hub end hub}} }}
+  {{- $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName }}
+  {{- if eq 0 (len $zones) }}
+    {{- range (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items }}
+      {{- if and (eq 0 (len $zones)) (hasPrefix (printf "%s-worker" $infrastructure_id) .metadata.name) }}
+        {{- $zones = list .spec.template.spec.providerSpec.value.placement.availabilityZone }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- if eq 0 (len $zones) }}{{ fail "no autoshift.io/gpu-nodes-zone-N label and no worker MachineSet to take the zone from" }}{{- end }}
+  {{- range $zone := $zones }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: machine.openshift.io/v1beta1
+      kind: MachineSet
+      metadata:
+        labels:
+          machine.openshift.io/cluster-api-cluster: {{ $infrastructure_id }}
+        name: {{ $infrastructure_id }}-{{ $machineset_role }}-{{ $zone }}
+        namespace: openshift-machine-api
+      status:
+        readyReplicas: {{ $want }}
+  {{- end }}
