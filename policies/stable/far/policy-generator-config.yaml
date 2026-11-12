@@ -45,10 +45,11 @@ policies:
     customMessage:
       noncompliant: >
         {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}.
-        For secretsMode=copy, verify far.sharedSecretNamespace/sourceSecretName/sharedSecretName
-        (or per-template overrides) and confirm the source Secret exists on the managed cluster.
-        For secretsMode=external, the copy policy only asserts the FAR namespace; see
-        policy-far-secrets-ready for the Secret gate.
+        far.templates must list at least one entry. For secretsMode=copy, verify
+        far.sharedSecretNamespace/sourceSecretName/sharedSecretName (or per-template overrides)
+        and confirm the source Secret exists on the managed cluster with non-empty --username and
+        --password keys (a missing key is rejected before copy). For secretsMode=external,
+        this policy only asserts the FAR namespace; see policy-far-secrets-ready for the Secret gate.
   # Inform gate: target Secrets must exist in openshift-workload-availability with FAR keys.
   # Blocks remediation templates until copy or external delivery has landed them.
   - name: policy-far-secrets-ready
@@ -61,9 +62,10 @@ policies:
       noncompliant: >
         {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}.
         Confirm far.sharedSecretName (and nodeSecretNames) exist in openshift-workload-availability
-        with --username and --password keys. Missing keys fail this inform gate. For secretsMode=copy
-        the enforce secrets policy writes them; for secretsMode=external, External Secrets Operator
-        or another out-of-band process must land Secrets with those FAR keys there.
+        with non-empty --username and --password keys. Missing or empty keys fail this inform gate.
+        For secretsMode=copy the enforce secrets policy writes them; for secretsMode=external,
+        External Secrets Operator or another out-of-band process must land Secrets with those FAR
+        keys there.
   # Inform: surfaces active FenceAgentsRemediation objects (Node Health Check fencing a node).
   # Does not gate remediation templates.
   - name: policy-far-active-remediations
@@ -102,8 +104,8 @@ policies:
     customMessage:
       noncompliant: >-
         {{- $msg := (regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim) -}}
-        {{- if regexMatch "autoNodeIPsFromBMH=true but no BMC IPs" $msg -}}
-        {{ $msg }} autoNodeIPsFromBMH looks up BareMetalHosts on the hub in the managed-cluster namespace first, then falls back to openshift-machine-api on the managed cluster. Both require readable spec.bmc.address values. Otherwise, set nodeparameters.--ip explicitly or set autoNodeIPsFromBMH=false.
+        {{- if or (regexMatch "autoNodeIPsFromBMH=true but no BMC IPs" $msg) (regexMatch "autoNodeIPsFromBMH=true but .*BareMetalHost data is incomplete" $msg) -}}
+        {{ $msg }} autoNodeIPsFromBMH requires a BMC address for every discovered BareMetalHost before it accepts the --ip map. Hub looks in the managed-cluster namespace (CRs then bmh-* ConfigMaps) and only then falls back to openshift-machine-api on the managed cluster. Otherwise, set nodeparameters.--ip explicitly or set autoNodeIPsFromBMH=false.
         {{- else -}}
         {{ $msg }}
         {{- end -}}

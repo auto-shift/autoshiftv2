@@ -13,7 +13,7 @@ Enable the policy with `far: 'true'` on the clusterset or cluster that should ru
 
 | You need | Where | Notes |
 |---|---|---|
-| Agent credentials | A Secret on each target cluster | `secretsMode=copy` reads `sharedSecretNamespace` / `sourceSecretName` and writes into `openshift-workload-availability`; `secretsMode=external` expects FAR-shaped Secrets already there |
+| Agent credentials | A Secret on each target cluster with `--username` / `--password` | `secretsMode=copy` copies from `sharedSecretNamespace` / `sourceSecretName` into `openshift-workload-availability`; `secretsMode=external` expects the same keys already there |
 | Agent parameters | `config.far.templates[].sharedparameters` and `nodeparameters` | Passed through to the FAR template; shape depends on the agent |
 | `far: 'true'` label | Clusterset or per-cluster values | Labels are defined in values only; never set `autoshift.io/*` on a `ManagedCluster` by hand |
 
@@ -44,13 +44,14 @@ Choose how those Secrets get there with `far.secretsMode`.
 
 #### `secretsMode: copy` (default)
 
-Create a Secret with `username` and `password` keys on each cluster. The policy copies it into
-`openshift-workload-availability` and remaps the keys to the FAR shape.
+Create a Secret with FAR keys `--username` and `--password` on each cluster. The policy copies it
+into `openshift-workload-availability` without changing the key names. Use the same key shape for
+`copy` and `external`.
 
 ```bash
 oc create secret generic bmc-shared-creds -n eso-shared \
-  --from-literal=username='<bmc-user>' \
-  --from-literal=password='<bmc-password>'
+  --from-literal=--username='<bmc-user>' \
+  --from-literal=--password='<bmc-password>'
 ```
 
 ```yaml
@@ -135,7 +136,7 @@ Use one template entry per agent configuration you need on the cluster. Agent fl
 
 | Field | Purpose |
 |---|---|
-| `secretsMode` | `copy` (default) remaps from a source namespace; `external` expects FAR-shaped Secrets already in `openshift-workload-availability` |
+| `secretsMode` | `copy` (default) copies FAR-shaped Secrets (`--username` / `--password`) from a source namespace; `external` expects those same keys already in `openshift-workload-availability` |
 | `agent` | Fence agent binary name (default `fence_redfish`) |
 | `sharedparameters` | Cluster-wide agent flags |
 | `nodeparameters` | Per-node agent flags; nested maps use Kubernetes `Node` names as keys |
@@ -153,8 +154,8 @@ continue to use the shared Secret. Under `secretsMode: external`, land each per-
 
 ```bash
 oc create secret generic eso-worker-0-creds -n eso-shared \
-  --from-literal=username='<bmc-user-worker-0>' \
-  --from-literal=password='<bmc-password-worker-0>'
+  --from-literal=--username='<bmc-user-worker-0>' \
+  --from-literal=--password='<bmc-password-worker-0>'
 ```
 
 ```yaml
@@ -206,7 +207,10 @@ oc get baremetalhost -n <cluster-name>
 oc get baremetalhost -n <cluster-name> -o jsonpath='{.items[*].spec.bmc.address}{"\n"}'
 ```
 
-If that list is empty, or `spec.bmc.address` is missing, set `nodeparameters.--ip` instead.
+If that list is empty, or any BareMetalHost is missing `spec.bmc.address`, set
+`nodeparameters.--ip` instead. Auto-fill only accepts a complete map: a partial hub result
+does not skip the managed-cluster fallback, and a partial final result fails rather than
+omitting nodes from `--ip`.
 
 ## Observability
 

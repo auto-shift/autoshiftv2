@@ -6,6 +6,9 @@ object-templates-raw: |
     {{ fail "Fence Agents Remediation is set to true but config is not detected. Please ensure the config is set, refer to documentation. " }}
   {{hub- end hub}}
   {{hub- $templates := (dig "templates" (list) $far) hub}}
+  {{hub- if not $templates hub}}
+    {{ fail "far.templates must contain at least one entry" }}
+  {{hub- end hub}}
   {{hub- $defaultTargetSecret := (dig "sharedSecretName" "" $far) hub}}
   {{hub- range $t := $templates hub}}
   {{hub- $tplName := (dig "name" "" $t) hub}}
@@ -38,10 +41,26 @@ object-templates-raw: |
   {{hub- $_ := set $tplSpec "nodeSecretNames" $nodeSecretNames hub}}
   {{hub- end hub}}
   {{hub- if not (empty $sharedparameters) hub}}
-  {{hub- $_ := set $tplSpec "sharedparameters" $sharedparameters hub}}
+  {{hub- $sharedparametersStr := dict hub}}
+  {{hub- range $k, $v := $sharedparameters hub}}
+  {{hub- $_ := set $sharedparametersStr $k (printf "%v" $v) hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $tplSpec "sharedparameters" $sharedparametersStr hub}}
   {{hub- end hub}}
   {{hub- if not (empty $nodeparameters) hub}}
-  {{hub- $_ := set $tplSpec "nodeparameters" $nodeparameters hub}}
+  {{hub- $nodeparametersStr := dict hub}}
+  {{hub- range $k, $v := $nodeparameters hub}}
+  {{hub- if kindIs "map" $v hub}}
+  {{hub- $inner := dict hub}}
+  {{hub- range $nk, $nv := $v hub}}
+  {{hub- $_ := set $inner $nk (printf "%v" $nv) hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $nodeparametersStr $k $inner hub}}
+  {{hub- else hub}}
+  {{hub- $_ := set $nodeparametersStr $k (printf "%v" $v) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $tplSpec "nodeparameters" $nodeparametersStr hub}}
   {{hub- end hub}}
   {{hub- if not $fillAutoIP hub}}
   - complianceType: musthave
@@ -65,24 +84,37 @@ object-templates-raw: |
         namespace: openshift-workload-availability
       spec:
         template:
-          spec: {{- $tplSpec := ({{hub $tplSpec | toRawJson | quote hub}} | fromJson) -}}
+          spec: {{ $tplSpec := ({{hub $tplSpec | toRawJson | quote hub}} | fromJson) -}}
             {{- $bmhs := (lookup "metal3.io/v1alpha1" "BareMetalHost" "openshift-machine-api" "").items | default (list) -}}
             {{- $autoIPs := dict -}}
+            {{- $expectedNodes := dict -}}
             {{- range $bmh := $bmhs -}}
             {{- $nodeName := dig "metadata" "annotations" "bmac.agent-install.openshift.io/hostname" "" $bmh -}}
             {{- if empty $nodeName -}}
             {{- $nodeName = dig "metadata" "name" "" $bmh -}}
             {{- end -}}
+            {{- if not (empty $nodeName) -}}
+            {{- $_ := set $expectedNodes $nodeName true -}}
             {{- $bmcAddr := dig "spec" "bmc" "address" "" $bmh -}}
             {{- $withoutScheme := regexReplaceAll "^[a-zA-Z0-9+.-]+://([^@/]+@)?" $bmcAddr "" -}}
             {{- $hostPort := regexReplaceAll "/.*$" $withoutScheme "" -}}
             {{- $host := regexReplaceAll ":([0-9]+)$" $hostPort "" -}}
-            {{- if and $nodeName $host -}}
+            {{- if not (empty $host) -}}
             {{- $_ := set $autoIPs $nodeName $host -}}
             {{- end -}}
             {{- end -}}
-            {{- if empty $autoIPs -}}
+            {{- end -}}
+            {{- $missingNodes := list -}}
+            {{- range $nodeName, $_ := $expectedNodes -}}
+            {{- if not (hasKey $autoIPs $nodeName) -}}
+            {{- $missingNodes = append $missingNodes $nodeName -}}
+            {{- end -}}
+            {{- end -}}
+            {{- if empty $expectedNodes -}}
             {{- fail "FAR: autoNodeIPsFromBMH=true but no BMC IPs were detected from BareMetalHost objects in openshift-machine-api. Set nodeparameters.--ip explicitly or set autoNodeIPsFromBMH=false." -}}
+            {{- end -}}
+            {{- if not (empty $missingNodes) -}}
+            {{- fail (printf "FAR: autoNodeIPsFromBMH=true but spoke BareMetalHost data is incomplete: BMC address missing for node(s) %s (found IPs for %d of %d). Fill those addresses, set nodeparameters.--ip explicitly, or set autoNodeIPsFromBMH=false." (join ", " $missingNodes) (len $autoIPs) (len $expectedNodes)) -}}
             {{- end -}}
             {{- $np := (index $tplSpec "nodeparameters" | default dict) -}}
             {{- if not (kindIs "map" $np) -}}{{- $np = dict -}}{{- end -}}
