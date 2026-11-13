@@ -1,0 +1,13 @@
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $trustedCA := (index $config "proxy" "trustedCA" | default "") hub}}
+
+  - complianceType: musthave
+    recordDiff: InStatus
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: {{hub $trustedCA hub}}
+        namespace: openshift-config
