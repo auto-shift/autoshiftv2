@@ -42,6 +42,32 @@ policy propagates them, and this policy's `placement.yaml` selects clusters with
 # In autoshift/values/clustersets/hub.yaml (or another clusterset / per-cluster file)
 hubClusterSets:
   hub:
+  --- "a/policies/stable/nhc/README.md"
++++ "b/policies/stable/nhc/README.md"
+@@ -40,10 +40,28 @@
+ 
+ ```yaml
+ # In autoshift/values/clustersets/hub.yaml (or another clusterset / per-cluster file)
+ hubClusterSets:
+   hub:
+    config:
+      nhc:
+        templates:
+          - name: nodehealthcheck-default-test
+            spec:
+              selector:
+                matchLabels:
+                  beta.kubernetes.io/os: linux
+                matchExpressions:
+                  - {key: node-role.kubernetes.io/worker, operator: Exists}
+              minHealthy: 2
+              unhealthyConditions:
+                - {type: Ready, status: "False", duration: 300s}
+              remediationTemplate:
+                apiVersion: fence-agents-remediation.medik8s.io/v1alpha1
+                kind: FenceAgentsRemediationTemplate
+                name: fenceagentsremediationtemplate-default
+                namespace: openshift-workload-availability
     labels:
       nhc: 'true'
       nhc-subscription-name: 'node-healthcheck-operator'
