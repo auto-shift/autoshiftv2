@@ -299,6 +299,7 @@ generate-imageset: ## Generate the release ImageSetConfiguration: every operator
 	@printf "$(BLUE)[INFO]$(NC) Values files: $(IMAGESET_VALUES)\n"
 	@command -v oc >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) oc CLI is required. Install from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/\n"; exit 1; }
 	@command -v jq >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) jq is required. Install: brew install jq\n"; exit 1; }
+	@command -v yq >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) yq v4 is required to read version pins. Install: brew install yq\n"; exit 1; }
 	@mkdir -p $(ARTIFACTS_DIR)
 	@bash scripts/generate-imageset-config.sh $(IMAGESET_VALUES) \
 		--all-operators \
