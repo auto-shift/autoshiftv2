@@ -165,10 +165,10 @@ values profile, a mutation sweep proving those checks catch a deliberate defect,
 length, `versions.yaml` agreement, and the unit tests. Policy charts resolve against the primary hub
 plus one profile per `autoshift/values/clusters/_example-cluster-install-*.yaml`.
 
-**The suite renders only what the example values declare.** A branch gated on a config key that no
-`_example*.yaml` sets never renders, so it is never checked. Declare the key rather than leaving it
-commented out when you add a branch that reads a Secret, a ConfigMap or a trust bundle. Real bugs
-have hidden in commented-out branches while every gate passed.
+**The suite renders only what the example values declare.** A branch gated on a key that no example
+sets is never checked, so declare the key rather than commenting it out. A value the example cannot
+hold at the same time, such as a second `*-db-mode`, needs a scenario: input values, a fake cluster and
+expected output in `tools/testdata/scenarios/`, run end to end. Real bugs have hidden in both while every gate passed.
 
 It validates rendering and resolution, not enforcement semantics, and cannot model policy
 dependencies: every policy resolves regardless of `dependencies`, so a policy reading an object

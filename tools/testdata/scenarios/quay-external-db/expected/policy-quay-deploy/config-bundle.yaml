@@ -1,0 +1,24 @@
+# The bundle carries the administrator's DB_URI, Clair connection and CA. The Quay Operator requires
+# clair-config.yaml with an unmanaged clairpostgres, and without it Clair is blocked while every
+# enforcing policy reports Compliant. The CloudNativePG application Secrets are still in the fake
+# cluster, and must not move either database back onto CloudNativePG.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: quay-registry-config-bundle
+  namespace: quay-enterprise
+data:
+  config.yaml:
+    DB_URI: postgresql://quay:testtest@external-quay-pg:5432/quay?sslmode=require
+  clair-config.yaml:
+    indexer:
+      connstring: host=external-clair-pg port=5432 dbname=clair user=clair password=testtest sslmode=verify-ca sslrootcert=/run/certs/db-ca.pem
+    matcher:
+      connstring: host=external-clair-pg port=5432 dbname=clair user=clair password=testtest sslmode=verify-ca sslrootcert=/run/certs/db-ca.pem
+  extra_ca_cert_db-ca.pem: |
+    -----BEGIN CERTIFICATE-----
+    dGVzdA==
+    -----END CERTIFICATE-----
+  # Only clair-config.yaml and extra_ca_cert_* files are copied, so ssl.cert cannot take over TLS
+  # from config.quay.tls.
+  ssl.cert: null

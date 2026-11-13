@@ -1,0 +1,20 @@
+# Both connections come from the CloudNativePG application Secrets, not the leftover external
+# configSecretRef Secret. disable_updaters is a legitimate overlay setting and survives the merge.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: quay-registry-config-bundle
+  namespace: quay-enterprise
+data:
+  config.yaml:
+    DB_URI: postgresql://quay:testtest@quay-db-rw:5432/quay
+  clair-config.yaml:
+    indexer:
+      connstring: host=clair-db-rw port=5432 dbname=clair user=clair password=testtest sslmode=require
+    matcher:
+      connstring: host=clair-db-rw port=5432 dbname=clair user=clair password=testtest sslmode=require
+      disable_updaters: true
+    notifier:
+      connstring: host=clair-db-rw port=5432 dbname=clair user=clair password=testtest sslmode=require
+    metrics:
+      name: prometheus
