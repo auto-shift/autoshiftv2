@@ -126,12 +126,16 @@ open-cluster-management   multiclusterhub   Running      6m28s   2.13.2         
 >   tool: do not run the following command. Follow
 >   [If Red Hat OpenShift GitOps is already installed](#if-red-hat-openshift-gitops-is-already-installed)
 >   instead.
-> - An `openshift-gitops` release is listed: that release already owns the `Subscription`, so keep
->   using the following command, in the release's namespace and without `skipOperatorInstall` or
->   `--take-ownership`. First complete steps 1 to 3 of
+> - An `openshift-gitops` release is listed: upgrade that release with its own values instead of
+>   adopting the operator again. Save the values it was installed with:
+>   `helm get values openshift-gitops -n <release-namespace> -o yaml > openshift-gitops-values.yaml`.
+>   Complete steps 1 to 3 of
 >   [If Red Hat OpenShift GitOps is already installed](#if-red-hat-openshift-gitops-is-already-installed),
->   add `--set` options for the `gitops.clusterScopedNamespaces` and `gitops.disableDefaultArgoCD`
->   values chosen there, and verify the result with step 5.
+>   then run the following command with `-n <release-namespace>`, add
+>   `-f openshift-gitops-values.yaml` after the existing `-f` option, and add `--set` options for the
+>   `gitops.clusterScopedNamespaces` and `gitops.disableDefaultArgoCD` values chosen there. The
+>   saved values keep the release's other settings, including `gitops.argoNamespace` and
+>   `skipOperatorInstall`. Do not add `--take-ownership`. Verify the result with step 5.
 
 Using helm, install OpenShift GitOps:
 
@@ -196,10 +200,11 @@ through the `openshift-gitops` policy. Make every decision in steps 1 to 3 befor
      --take-ownership
    ```
 
-   Run `skipOperatorInstall` mode only when no `openshift-gitops` Helm release exists yet. Do not
-   switch an existing release to it: Helm removes the fields the earlier release owned, and that
-   breaks the `Subscription`. An existing release keeps the standard command, as the note before
-   it describes.
+   Run this step only when no `openshift-gitops` Helm release exists yet. Never change the
+   `skipOperatorInstall` setting of an existing release in either direction: switching it on makes
+   Helm remove the fields the earlier release owned and breaks the `Subscription`, and switching it
+   off adds the chart's channel and source settings to an adopted `Subscription`. Upgrade an
+   existing release with its saved values, as the note before the standard command describes.
 
 5. Verify the result. Run the `oc get subscription` command from step 1 again and compare it with
    what you requested:
