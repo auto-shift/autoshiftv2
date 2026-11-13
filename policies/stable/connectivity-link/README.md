@@ -155,9 +155,16 @@ oc-mirror brings all of them. Two things to cover in the mirror configuration:
   `registry.redhat.io`. An `ImageDigestMirrorSet` that covers only `registry.redhat.io` misses it,
   and the pod sits in `ImagePullBackOff`. The `config.disconnected.mirrors` example in the
   [developer guide](../../../docs/developer-guide.md) lists both registries.
-- The Istio images behind the OpenShift Gateway API provider are not in the Connectivity Link
-  catalog. They come from the cluster's release image set, so they need to be in the platform
-  mirror.
+- The Gateway API provider is OpenShift Service Mesh 3, and its Istio images are in neither the
+  Connectivity Link catalog nor the OpenShift release payload. The cluster ingress operator
+  installs the `servicemeshoperator3` package itself, at the exact version it names in its
+  `GATEWAY_API_OPERATOR_VERSION` setting (`servicemeshoperator3.v3.3.1` on OpenShift 4.22.18), and
+  no Subscription or CSV for it appears that a mirror check would notice. Mirror that package at
+  that version from `redhat-operator-index`: a channel-head-only mirror skips it once the
+  `stable` head moves on, and without it there is no `istiod` and no Gateway. Read the version
+  from the running cluster with
+  `oc get deployment ingress-operator -n openshift-ingress-operator -o yaml | grep -A1 GATEWAY_API_OPERATOR`,
+  and check it again after every OpenShift z-stream update.
 
 ## Verifying
 
