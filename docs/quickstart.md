@@ -135,7 +135,9 @@ open-cluster-management   multiclusterhub   Running      6m28s   2.13.2         
 >   `-f openshift-gitops-values.yaml` after the existing `-f` option, and add `--set` options for the
 >   `gitops.clusterScopedNamespaces` and `gitops.disableDefaultArgoCD` values chosen there. The
 >   saved values keep the release's other settings, including `gitops.argoNamespace` and
->   `skipOperatorInstall`. Do not add `--take-ownership`. Verify the result with step 5.
+>   `skipOperatorInstall`. Do not add `--take-ownership`. Verify the result with step 5 and carry the
+>   choices into AutoShift with step 6. If the saved values set `gitops.name` or `gitops.namespace`,
+>   use those values in the step 1 and step 5 commands.
 
 Using helm, install OpenShift GitOps:
 
@@ -159,7 +161,13 @@ AutoShift manages the whole `Subscription` environment variable list and sets on
 `DISABLE_DEFAULT_ARGOCD_INSTANCE` and `ARGOCD_CLUSTER_CONFIG_NAMESPACES`, at installation and later
 through the `openshift-gitops` policy. Make every decision in steps 1 to 3 before you install.
 
-1. Inspect the existing installation. List the variables the `Subscription` sets:
+1. Inspect the existing installation. The commands in this section use the default `Subscription`
+   name and namespace, both `openshift-gitops-operator`. If the existing operator uses others, find
+   them with `oc get subscriptions.operators.coreos.com -A | grep openshift-gitops-operator`, use
+   them in the commands in steps 1 and 5, and pass them to step 4 as `--set gitops.name=<name>` and
+   `--set gitops.namespace=<namespace>`, so the chart adopts that `Subscription`.
+
+   List the variables the `Subscription` sets:
 
    ```console
    oc get subscription openshift-gitops-operator -n openshift-gitops-operator -o jsonpath='{.spec.config.env}'
