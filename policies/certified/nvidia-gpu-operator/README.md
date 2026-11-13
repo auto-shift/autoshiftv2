@@ -82,6 +82,24 @@ oc apply --dry-run=server -f <rendered ClusterPolicy>
 `operator.use_ocp_driver_toolkit: true` builds the driver against the running Red Hat Enterprise
 Linux CoreOS release rather than a pinned kernel, which is what lets it survive cluster upgrades.
 
+## Disconnected
+
+`gpu-operator-certified` comes from `registry.redhat.io/redhat/certified-operator-index`, not
+`redhat-operator-index`, so the mirror needs that catalog too. `v25.3` is not the package's default
+channel (`v26.7` is), so an oc-mirror ImageSetConfiguration that filters to `v25.3` must also set
+`defaultChannel: v25.3`, or the mirrored catalog is invalid.
+
+The driver images the Operator uses by default are in the bundle's related images
+(`driver-image`, plus `driver-image-535` and `driver-image-570` in `v25.3.4`), so mirroring the
+package brings them. With `use_ocp_driver_toolkit: true` the driver is built with the Driver
+Toolkit image from the OpenShift release payload, which the platform mirror already carries. A
+driver set through `config.nvidia-gpu-operator.clusterPolicy` (`driver.repository`, `driver.image`
+or `driver.version`) is a different image that no catalog lists: mirror it yourself, and add its
+registry to the cluster's mirror configuration.
+
+The Operator also needs Node Feature Discovery (`nfd`, from `redhat-operator-index`) in the mirror;
+see the preceding section on Node Feature Discovery.
+
 ## Install mode
 
 The Operator's CSV declares `OwnNamespace=True`, `SingleNamespace=True` and `AllNamespaces=False`.
