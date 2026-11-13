@@ -1,0 +1,20 @@
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $proxy := (index $config "proxy" | default dict) hub}}
+  {{hub- $httpProxy := (index $proxy "httpProxy" | default "httpProxy") hub}}
+  {{hub- $httpsProxy := (index $proxy "httpsProxy" | default "httpsProxy") hub}}
+  {{hub- $noProxy := (index $proxy "noProxy" | default "noProxy") hub}}
+  {{hub- $trustedCA := (index $proxy "trustedCA" | default "user-ca-bundle") hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: Proxy
+      metadata:
+        name: cluster
+      spec:
+        httpProxy: '{{hub $httpProxy hub}}'
+        httpsProxy: '{{hub $httpsProxy hub}}'
+        noProxy: '{{hub $noProxy hub}}'
+        trustedCA:
+          name: '{{hub $trustedCA hub}}'
