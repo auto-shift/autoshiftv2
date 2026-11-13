@@ -117,6 +117,12 @@ open-cluster-management   multiclusterhub   Running      6m28s   2.13.2         
 > PolicyGenerator binary from the `acm-cli-downloads` image, so that deployment must already exist (see the ordering
 > note there).
 
+> [!IMPORTANT]
+> If Red Hat OpenShift GitOps is already installed on the cluster, by any method including an earlier
+> Helm release, do not run the following command. Follow
+> [If Red Hat OpenShift GitOps is already installed](#if-red-hat-openshift-gitops-is-already-installed)
+> instead, which records the existing configuration before anything changes.
+
 Using helm, install OpenShift GitOps:
 
 ```console
@@ -201,7 +207,12 @@ through the `openshift-gitops` policy. Make every decision in steps 1 to 3 befor
      `config.gitops.namespace` on the self-managed hub cluster set, to `<argo-namespace>`. AutoShift
      deploys into this namespace, and the policy lists it first in
      `ARGOCD_CLUSTER_CONFIG_NAMESPACES`. A different value leaves the instance from step 4 without
-     cluster scope.
+     cluster scope. The `gitops-namespace` label overrides both settings, so if the cluster set
+     sets it, set it to `<argo-namespace>` or remove it.
+   - AutoShift Application: when you create it in
+     [Step 4: install AutoShift](#step-4-install-autoshift), set `GITOPS_NAMESPACE` to
+     `<argo-namespace>`. The Argo CD instance installed in this section reconciles Applications only
+     in its own namespace, so it ignores an Application left in `openshift-gitops`.
    - Cluster scope: set `config.gitops.clusterScopedNamespaces` on the hub cluster set to the list
      from step 2.
    - Default instance, matching step 3. The `gitops-disable-default-argocd` label overrides
