@@ -742,7 +742,7 @@ and optionally provisions its databases through CloudNativePG.
 | `alerts.severity` | string | `warning` | `severity` label on every alert |
 | `alerts.garbageCollectionStalledFor` | duration | `6h` | How long a garbage collection queue must hold items before `QuayGarbageCollectionStalled` fires |
 | `alerts.mirrorUnsyncedFor` | duration | `2h` | How long repositories configured for mirroring can stay unsynced before `QuayMirrorNotSynced` fires |
-| `alerts.scanStalledFor` | duration | `1h` | The window for `QuaySecurityScanStalled`: it fires when images were pushed in this window and none were scanned |
+| `alerts.scanStalledFor` | duration | `1h` | The window for `QuaySecurityScanStalled`: it fires when images were pushed in this window and none were scanned. The alert waits 15 minutes before firing, so set at least `15m` |
 | `clair` | map | | Non-sensitive Clair settings layered over the Clair configuration, such as `indexer.airgap` and `matcher.disable_updaters`. The Secret's `clair-config.yaml` wins over it. See [Clair settings](../policies/stable/quay/README.md#clair-settings) |
 | `bootstrap.userInitialize` | bool | `false` | `FEATURE_USER_INITIALIZE`. Enables the unauthenticated first user endpoint, which works once: it refuses to run after any user exists |
 | `bootstrap.xhrOnly` | bool | `true` | `BROWSER_API_CALLS_XHR_ONLY`. Restricts the registry API to browser calls |

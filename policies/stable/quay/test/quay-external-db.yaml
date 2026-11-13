@@ -24,15 +24,17 @@ object-templates-raw: |
   {{- end }}
   {{- if $secretName }}
   {{- /* An absent Secret is not an error here: the musthave below reports it by name. */}}
-  {{- $data := (index ((lookup "v1" "Secret" $secretNs $secretName) | default dict) "data" | default dict) }}
-  {{- if and $external $data }}
+  {{- $secret := (lookup "v1" "Secret" $secretNs $secretName) | default dict }}
+  {{- if and $external $secret }}
+  {{-   $data := (index $secret "data" | default dict) }}
   {{-   $missing := list }}
   {{-   $cfg := (index $data $secretKey | default "" | base64dec | fromYaml | default dict) }}
   {{-   if not (index $cfg "DB_URI") }}
   {{-     $missing = append $missing (printf "DB_URI under key %s" $secretKey) }}
   {{-   end }}
-  {{-   if and $clairManaged (not (hasKey $data "clair-config.yaml")) }}
-  {{-     $missing = append $missing "key clair-config.yaml" }}
+  {{-   $clairCfg := (index $data "clair-config.yaml" | default "" | base64dec | fromYaml | default dict) }}
+  {{-   if and $clairManaged (not $clairCfg) }}
+  {{-     $missing = append $missing "Clair configuration under key clair-config.yaml" }}
   {{-   end }}
   {{-   if $missing }}
   {{-     fail (printf "quay-db-mode is external but Secret %s/%s has no %s" $secretNs $secretName (join " and no " $missing)) }}

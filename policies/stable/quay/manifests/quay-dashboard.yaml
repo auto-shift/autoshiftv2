@@ -1,8 +1,8 @@
 # Red Hat Quay health dashboard, served by the Cluster Observability Operator's Perses under
 # Observe > Dashboards (Perses), project quay-enterprise. The monitoring UIPlugin turns Perses on;
 # musthave adds perses.enabled to an existing plugin without touching its other settings.
-# Request and per-worker series are reported once per mirror pod, keyed by host, so queries
-# dedupe with max by (host) before summing. Perses series name formats are escaped from ACM templating.
+# Every mirror pod re-exports the same per-process series, so queries drop the scrape labels with
+# max without (instance, pod) before summing. Perses series name formats are escaped from ACM templating.
 apiVersion: observability.openshift.io/v1alpha1
 kind: UIPlugin
 metadata:
@@ -144,7 +144,7 @@ spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: sum by (status) (max by (host, route, method, status) (rate(quay_request_duration_seconds_count{namespace="quay-enterprise"}[5m])))
+                    query: sum by (status) (max without (instance, pod) (rate(quay_request_duration_seconds_count{namespace="quay-enterprise"}[5m])))
                     seriesNameFormat: '{{ "{{" }}status{{ "}}" }}'
       latency:
         kind: Panel
@@ -160,7 +160,7 @@ spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: histogram_quantile(0.95, sum by (le) (max by (host, route, method, status, le) (rate(quay_request_duration_seconds_bucket{namespace="quay-enterprise"}[5m]))))
+                    query: histogram_quantile(0.95, sum by (le) (max without (instance, pod) (rate(quay_request_duration_seconds_bucket{namespace="quay-enterprise"}[5m]))))
                     seriesNameFormat: p95
       pushBytes:
         kind: Panel
@@ -176,7 +176,7 @@ spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: sum(max by (host) (rate(quay_registry_image_pushed_bytes_total{namespace="quay-enterprise"}[5m])))
+                    query: sum(max without (instance, pod) (rate(quay_registry_image_pushed_bytes_total{namespace="quay-enterprise"}[5m])))
                     seriesNameFormat: pushed
       gcQueues:
         kind: Panel
@@ -208,14 +208,14 @@ spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: sum(max by (host) (rate(quay_gc_iterations_total{namespace="quay-enterprise"}[5m]))) * 60
+                    query: sum(max without (instance, pod) (rate(quay_gc_iterations_total{namespace="quay-enterprise"}[5m]))) * 60
                     seriesNameFormat: iterations
             - kind: TimeSeriesQuery
               spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: sum(max by (host) (rate(quay_gc_storage_blobs_deleted_total{namespace="quay-enterprise"}[5m]))) * 60
+                    query: sum(max without (instance, pod) (rate(quay_gc_storage_blobs_deleted_total{namespace="quay-enterprise"}[5m]))) * 60
                     seriesNameFormat: blobs deleted
       scanRate:
         kind: Panel
@@ -233,7 +233,7 @@ spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: sum by (action) (max by (host, action) (rate(quay_secscan_request_duration_seconds_count{namespace="quay-enterprise",action=~"Index|GetVulnerabilityReport"}[15m]))) * 60
+                    query: sum by (action) (max without (instance, pod) (rate(quay_secscan_request_duration_seconds_count{namespace="quay-enterprise",action=~"Index|GetVulnerabilityReport"}[15m]))) * 60
                     seriesNameFormat: '{{ "{{" }}action{{ "}}" }}'
       scanLatency:
         kind: Panel
@@ -249,7 +249,7 @@ spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: histogram_quantile(0.95, sum by (le, action) (max by (host, action, le) (rate(quay_secscan_request_duration_seconds_bucket{namespace="quay-enterprise",action=~"Index|GetVulnerabilityReport"}[15m]))))
+                    query: histogram_quantile(0.95, sum by (le, action) (max without (instance, pod) (rate(quay_secscan_request_duration_seconds_bucket{namespace="quay-enterprise",action=~"Index|GetVulnerabilityReport"}[15m]))))
                     seriesNameFormat: '{{ "{{" }}action{{ "}}" }}'
       scanQueue:
         kind: Panel
@@ -305,7 +305,7 @@ spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: sum(max by (host) (quay_repository_mirror_workers_active{namespace="quay-enterprise"}))
+                    query: sum(max without (instance, pod) (quay_repository_mirror_workers_active{namespace="quay-enterprise"}))
       dbPool:
         kind: Panel
         spec:
@@ -320,14 +320,14 @@ spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: sum(max by (host, pid) (quay_db_pooled_connections_in_use{namespace="quay-enterprise"}))
+                    query: sum(max without (instance, pod) (quay_db_pooled_connections_in_use{namespace="quay-enterprise"}))
                     seriesNameFormat: in use
             - kind: TimeSeriesQuery
               spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: sum(max by (host, pid) (quay_db_pooled_connections_available{namespace="quay-enterprise"}))
+                    query: sum(max without (instance, pod) (quay_db_pooled_connections_available{namespace="quay-enterprise"}))
                     seriesNameFormat: available
     layouts:
       - kind: Grid

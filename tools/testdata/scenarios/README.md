@@ -1,8 +1,8 @@
 # Scenarios
 
 The end-to-end suite resolves every policy against the values the example files declare, so each
-label is tested with one value. A scenario adds another: a deployment of its own, written as the
-values file a user would write, with a statement of what it must render.
+label is tested with one value. A scenario adds another: a deployment of its own, written as input
+values, a fake cluster, and the output that deployment must render.
 
 `TestScenarios` in `tools/internal/resolver/scenario_test.go` runs every directory here as part of
 `make test`. Adding coverage is a new directory, with no Go changes.
@@ -20,9 +20,12 @@ value. A scenario is for the values it cannot hold at the same time.
 
 ```text
 scenarios/<name>/
-  values.yaml     a values file, layered on autoshift/values/clustersets/_example.yaml
-  scenario.yaml   what the deployment must render
-  stubs/*.yaml    optional cluster objects the policies look up
+  values.yaml                      input: a values file, layered on _example.yaml
+  cluster/*.yaml                   optional: objects already on the fake cluster
+  expected/*.yaml                  output: objects any policy must render
+  expected/<policy-name>/*.yaml    output: objects that Policy must render
+  absent/*.yaml                    optional: objects no policy may render
+  absent/<policy-name>/*.yaml      optional: objects that Policy may not render
 ```
 
 ## How it runs
@@ -30,23 +33,32 @@ scenarios/<name>/
 1. The top-level chart renders `global.yaml`, `_example.yaml` and `values.yaml` together, exactly as
    an Argo CD Application renders a per-cluster override. Its validation templates run.
 2. The labels and config in `values.yaml` are applied over the example's. Clusterset config is the
-   base and cluster config is merged over it, as in a cluster's rendered-config ConfigMap.
-3. Stubs come from `tools/testdata/`, minus any listed under `drop`, with the scenario's `stubs/`
-   replacing any object of the same kind, namespace and name.
+   base and cluster config is merged over it, as in a cluster's rendered-config ConfigMap. A cluster
+   label overrides the same clusterset label.
+3. The fake cluster is `tools/testdata/`, with the scenario's `cluster/` objects replacing any object
+   of the same kind, namespace and name.
 4. Every policy chart resolves against that, with the same hard failures as the end-to-end suite:
    render errors, hub and spoke resolution errors, and invalid resolved YAML.
-5. A `ConfigurationPolicy` in one of the scenario's `policies` that applies nothing fails. It would
-   report Compliant while enforcing nothing. There is no allowlist.
-6. Each `expect` entry is checked against the objects the resolved policies would apply.
+5. Each Placement is evaluated against the scenario's labels. A Policy whose Placement does not
+   select the cluster never reaches it, so its objects are left out of every check below. A Policy
+   no PlacementBinding names counts as placed.
+6. Each object in `expected/` is compared with the objects the placed policies would apply, and no
+   object in `absent/` may be among them.
+7. In each chart an expected object came from, a placed `ConfigurationPolicy` that applies nothing
+   fails. It would report Compliant while enforcing nothing. There is no allowlist.
 
 Scenarios resolve against the hub profile. To model a managed cluster, set `self-managed: 'false'`
 in the scenario's labels.
 
 ## values.yaml
 
-Use the same shape as a file under `autoshift/values/`. Set only what differs from the example:
+Use the same shape as a file under `autoshift/values/`, and set only what differs from the example.
+Open the file with a comment saying what deployment this is and what it guards. The comment is
+required, because a scenario nobody can explain is one nobody can safely change.
 
 ```yaml
+# Red Hat Quay on databases run outside the cluster. The credentials come from the
+# quay-config-extra Secret in cluster/.
 clusters:
   quay-external-db:
     labels:
@@ -65,72 +77,63 @@ policy pass would not read it, and the scenario would only appear to test it.
 A label that no `_example*.yaml` declares fails the load, so a misspelled label cannot quietly test
 the default. Quote label values: labels are strings.
 
-As in any values file, no credentials. Put them in `stubs/`.
+As in any values file, no credentials. Put them in `cluster/`.
 
-## scenario.yaml
+## cluster/
 
-```yaml
-description: >-
-  What deployment this is and what it guards. Required.
-
-# The policies this scenario is about. Every chart resolves either way. These are the ones
-# whose ConfigurationPolicies must not render empty, and each must exist.
-policies:
-  - stable/quay
-
-# Stubs to remove from tools/testdata/ for this scenario. Each must match one.
-drop:
-  - {kind: Secret, namespace: quay-enterprise, name: quay-db-app}
-
-expect:
-  - policy: policy-quay-deploy    # the enclosing Policy; optional
-    kind: Secret                  # required
-    namespace: quay-enterprise    # optional
-    name: quay-registry-config-bundle  # optional
-    # count: 1                    # exact number of matches; omitted means at least one,
-    #                             # and count: 0 asserts the object is not rendered
-    fields:                       # checked on every match
-      - path: stringData["clair-config.yaml"]
-        contains: host=external-clair-pg
-      - path: spec.components[kind=postgres].managed
-        equals: false
-```
-
-Unknown keys fail the load, so a misspelled `equal:` cannot assert nothing.
-
-An expectation is matched against every object a policy would apply: each top-level document, each
-policy template, and each object in a `ConfigurationPolicy`'s `object-templates` or
-`object-templates-raw`.
-
-### Paths
-
-| Form | Meaning |
-|---|---|
-| `spec.replicas` | Map keys, separated by dots |
-| `spec.containers[0]` | List index |
-| `spec.components[kind=postgres]` | The list entry whose `kind` is `postgres`. It must be the only one, so a duplicated entry fails |
-| `stringData["clair-config.yaml"]` | A key that contains dots |
-
-### Field checks
-
-Each entry has a `path` and exactly one of:
-
-| Check | Passes when |
-|---|---|
-| `equals: <value>` | The value is present and equal, including type: `false` is not `'false'` |
-| `contains: <text>` | The value is a string containing the text |
-| `notContains: <text>` | The value is a string without the text. A missing value fails |
-| `present: true` | The path exists |
-| `absent: true` | The path does not exist |
-
-## stubs/
-
-Cluster objects the policies look up, in the format of `tools/testdata/`. A stub replaces the
-object of the same kind, namespace and name there. Secrets may use `stringData`, which is encoded to
-`data` before the policies read it, so stubs stay readable.
+Objects the policies look up, in the format of `tools/testdata/`. Secrets may use `stringData`,
+which is encoded to `data` before the policies read it, so the files stay readable.
 
 `tools/testdata/` is not allowlisted in `.gitleaks.toml`, so use low-entropy placeholder values such
 as `testtest`.
+
+## expected/
+
+Each document is part of an object the deployment must render. Write only the fields that matter.
+`kind` and `metadata.name` are required and select the rendered object, with `metadata.namespace`
+when it is set. A file under `expected/<policy-name>/` matches only objects that Policy applies,
+which matters when two policies render the same object, as the managed and bundled Quay policies do.
+
+```yaml
+apiVersion: quay.redhat.com/v1
+kind: QuayRegistry
+metadata:
+  name: registry
+  namespace: quay-enterprise
+spec:
+  components:
+    - kind: postgres
+      managed: false
+```
+
+At least one rendered object must be selected, and every selected one must contain the expected
+object. Containment follows ACM `musthave`, with three additions for tests:
+
+| Expected | Passes when the rendered object |
+|---|---|
+| A map | Has every key, each containing the expected value |
+| A list | Has, for each expected entry, some entry that contains it, in any order |
+| A scalar | Has the same value and type: `false` is not `'false'` |
+| `{}` | Has the key, with any map |
+| `null` | Does not have the key |
+| A map, where the rendered value is a string | Holds YAML that contains the map, so an embedded file such as a Secret's `config.yaml` is checked by key |
+
+A Secret's `data` values are base64-decoded before the comparison, so expected values are written as
+text. Every policy template and every object in a `ConfigurationPolicy`'s `object-templates` or
+`object-templates-raw` is compared. A resolved `object-templates-raw` block that does not parse as
+YAML fails the scenario.
+
+A failure names the expected file, the rendered object, and each difference by path, such as
+`data.ssl.cert: expected absent, found testtest`.
+
+## absent/
+
+Objects the deployment must not render, in the same layout as `expected/`. Only `kind`,
+`metadata.name` and `metadata.namespace` select; other fields are ignored. Any placed policy that
+renders a matching object fails the scenario, or, under `absent/<policy-name>/`, only that Policy.
+
+Use it for what a mode must omit, such as the CloudNativePG clusters in external mode, or for
+two policies that must not both write one object.
 
 ## Proving a scenario works
 

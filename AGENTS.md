@@ -167,8 +167,8 @@ plus one profile per `autoshift/values/clusters/_example-cluster-install-*.yaml`
 
 **The suite renders only what the example values declare.** A branch gated on a key that no example
 sets is never checked, so declare the key rather than commenting it out. A value the example cannot
-hold at the same time, such as a second `*-db-mode`, needs a scenario: a values file and expectations
-in `tools/testdata/scenarios/`, run end to end. Real bugs have hidden in both while every gate passed.
+hold at the same time, such as a second `*-db-mode`, needs a scenario: input values, a fake cluster and
+expected output in `tools/testdata/scenarios/`, run end to end. Real bugs have hidden in both while every gate passed.
 
 It validates rendering and resolution, not enforcement semantics, and cannot model policy
 dependencies: every policy resolves regardless of `dependencies`, so a policy reading an object

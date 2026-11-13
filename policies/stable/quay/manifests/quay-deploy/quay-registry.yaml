@@ -141,7 +141,10 @@ object-templates-raw: |
   {{- end }}
   {{- end }}
   {{- $tlsSecretReady := and (ne $tlsSecretName "") (not (empty ((lookup "v1" "Secret" "quay-enterprise" $tlsSecretName) | default dict))) }}
-  - complianceType: musthave
+  {{- /* mustonlyhave on data, not stringData: the API server merges stringData into the existing
+       data, so a file dropped from the bundle, such as clair-config.yaml after config.quay.clair is
+       removed, would stay. The Operator copies this Secret and adds no keys to it. */}}
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: v1
       kind: Secret
@@ -149,12 +152,10 @@ object-templates-raw: |
         name: quay-registry-config-bundle
         namespace: quay-enterprise
       type: Opaque
-      stringData:
-        config.yaml: |
-          {{ $base | toYaml | autoindent }}
+      data:
+        config.yaml: {{ $base | toYaml | b64enc }}
         {{- range $k, $v := $bundleFiles }}
-        {{ $k }}: |
-          {{ $v | autoindent }}
+        {{ $k }}: {{ $v | b64enc }}
         {{- end }}
   {{- if and $issuerName $issuerFound }}
   - complianceType: musthave

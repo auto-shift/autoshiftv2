@@ -3,20 +3,29 @@
 package resolver
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8slabels "k8s.io/apimachinery/pkg/labels"
 )
 
-// This file holds the assertion half of the scenario suite (scenario_test.go): it turns resolved
-// policy output into the objects a cluster would receive, and checks scenario expectations against
-// them. Assertions match parsed objects rather than text, so they survive reformatting and can tell
-// a missing key from an empty one.
+// This file holds the checking half of the scenario suite (scenario_test.go): it turns resolved
+// policy output into the objects a cluster would receive, and compares the scenario's expected
+// objects with them. Comparison is on parsed objects rather than text, so it survives reformatting
+// and can tell a missing key from an empty one.
 
 // renderedObject is one object a resolved chart would put on a cluster, or the policy wrapper
 // around it.
@@ -47,8 +56,9 @@ func (o renderedObject) String() string {
 // collectRenderedObjects walks a chart's resolved stream: every top-level document, every policy
 // template inside a Policy, and every object inside a ConfigurationPolicy's object-templates or
 // object-templates-raw. A raw block still holding template markers did not resolve, so its objects
-// are reported in unresolved rather than guessed at.
-func collectRenderedObjects(chart, resolved string) (objs []renderedObject, unresolved []string) {
+// are reported in unresolved rather than guessed at. A resolved raw block that does not parse is
+// returned in errs: its objects were never collected, so an expected object could look absent.
+func collectRenderedObjects(chart, resolved string) (objs []renderedObject, unresolved, errs []string) {
 	dec := yaml.NewDecoder(strings.NewReader(resolved))
 	for {
 		var doc map[string]any
@@ -78,7 +88,8 @@ func collectRenderedObjects(chart, resolved string) (objs []renderedObject, unre
 				}
 				var items []any
 				if err := yaml.Unmarshal([]byte(raw), &items); err != nil {
-					continue // reported by TestObjectTemplatesRaw_ParsesAsYAML
+					errs = append(errs, fmt.Sprintf("%s: object-templates-raw does not parse as YAML: %v", policyName, err))
+					continue
 				}
 				objs = appendTemplateObjects(objs, chart, policyName, items)
 			}
@@ -87,16 +98,41 @@ func collectRenderedObjects(chart, resolved string) (objs []renderedObject, unre
 			}
 		}
 	}
-	return objs, unresolved
+	return objs, unresolved, errs
 }
 
 func appendTemplateObjects(objs []renderedObject, chart, policy string, items []any) []renderedObject {
 	for _, it := range items {
 		if od, ok := asMap(it)["objectDefinition"].(map[string]any); ok {
-			objs = append(objs, renderedObject{chart, policy, od})
+			objs = append(objs, renderedObject{chart, policy, decodeSecretData(od)})
 		}
 	}
 	return objs
+}
+
+// decodeSecretData returns a Secret with its data values base64-decoded, as `oc extract` shows them,
+// so an expected object compares data values as text. A value that is not valid base64 is left as it is,
+// and any other object is returned unchanged.
+func decodeSecretData(od map[string]any) map[string]any {
+	data, ok := od["data"].(map[string]any)
+	if od["kind"] != "Secret" || !ok {
+		return od
+	}
+	decoded := make(map[string]any, len(data))
+	for k, v := range data {
+		decoded[k] = v
+		if s, ok := v.(string); ok {
+			if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+				decoded[k] = string(b)
+			}
+		}
+	}
+	out := make(map[string]any, len(od))
+	for k, v := range od {
+		out[k] = v
+	}
+	out["data"] = decoded
+	return out
 }
 
 func asMap(v any) map[string]any {
@@ -104,126 +140,198 @@ func asMap(v any) map[string]any {
 	return m
 }
 
-// expectation selects rendered objects and checks fields on each of them.
-type expectation struct {
-	Policy    string       `yaml:"policy"`    // enclosing Policy name; empty matches any
-	Kind      string       `yaml:"kind"`      // required
-	Name      string       `yaml:"name"`      // empty matches any
-	Namespace string       `yaml:"namespace"` // empty matches any
-	Count     *int         `yaml:"count"`     // exact number of matches; omitted means at least one
-	Fields    []fieldCheck `yaml:"fields"`    // checked on every match
+// expectedObject is one document from a scenario's expected/ directory: part of an object the
+// policies must render. A file directly under expected/ matches an object from any policy; a file
+// under expected/<policy-name>/ matches only objects that Policy applies.
+type expectedObject struct {
+	File   string         // path relative to the scenario, for messages
+	Policy string         // enclosing Policy name; empty matches any
+	Object map[string]any // the partial object
 }
 
-func (e expectation) String() string {
-	s := e.Kind
-	if e.Namespace != "" {
-		s += "/" + e.Namespace
-	}
-	if e.Name != "" {
-		s += "/" + e.Name
-	}
-	if e.Policy != "" {
-		s += " in " + e.Policy
-	}
+func (e expectedObject) kind() string { s, _ := e.Object["kind"].(string); return s }
+func (e expectedObject) name() string {
+	s, _ := nested(e.Object, "metadata", "name").(string)
+	return s
+}
+func (e expectedObject) namespace() string {
+	s, _ := nested(e.Object, "metadata", "namespace").(string)
 	return s
 }
 
-func (e expectation) selects(o renderedObject) bool {
-	return o.kind() == e.Kind &&
-		(e.Name == "" || o.name() == e.Name) &&
-		(e.Namespace == "" || o.namespace() == e.Namespace) &&
+func (e expectedObject) String() string {
+	id := e.kind() + "/" + e.name()
+	if ns := e.namespace(); ns != "" {
+		id = e.kind() + "/" + ns + "/" + e.name()
+	}
+	return fmt.Sprintf("%s (%s)", id, e.File)
+}
+
+func (e expectedObject) selects(o renderedObject) bool {
+	return o.kind() == e.kind() && o.name() == e.name() &&
+		(e.namespace() == "" || o.namespace() == e.namespace()) &&
 		(e.Policy == "" || o.Policy == e.Policy)
 }
 
-// fieldCheck is one assertion on the value at Path. Exactly one operator is set.
-type fieldCheck struct {
-	Path string
-	op   string // equals, contains, notContains, absent, present
-	want any
-}
-
-var fieldOps = map[string]bool{"equals": true, "contains": true, "notContains": true, "absent": true, "present": true}
-
-// UnmarshalYAML rejects unknown keys and a missing or doubled operator, so a typo such as
-// `equal:` fails the scenario instead of asserting nothing.
-func (f *fieldCheck) UnmarshalYAML(n *yaml.Node) error {
-	var raw map[string]any
-	if err := n.Decode(&raw); err != nil {
-		return err
+// loadExpected reads the objects the deployment must render, from dir/expected. It is required.
+func loadExpected(t *testing.T, dir string) []expectedObject {
+	t.Helper()
+	out, err := loadObjectDir(dir, "expected")
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("%s: no expected/ directory; say what the deployment must render", dir)
 	}
-	for k, v := range raw {
-		switch {
-		case k == "path":
-			s, ok := v.(string)
-			if !ok || s == "" {
-				return fmt.Errorf("line %d: path must be a non-empty string", n.Line)
-			}
-			f.Path = s
-		case fieldOps[k]:
-			if f.op != "" {
-				return fmt.Errorf("line %d: field check sets both %s and %s; use one per entry", n.Line, f.op, k)
-			}
-			f.op, f.want = k, v
-		default:
-			return fmt.Errorf("line %d: unknown field check key %q (want path plus one of equals, contains, notContains, absent, present)", n.Line, k)
-		}
-	}
-	if f.Path == "" || f.op == "" {
-		return fmt.Errorf("line %d: a field check needs path and one of equals, contains, notContains, absent, present", n.Line)
-	}
-	if f.op == "contains" || f.op == "notContains" {
-		if _, ok := f.want.(string); !ok {
-			return fmt.Errorf("line %d: %s takes a string", n.Line, f.op)
-		}
-	}
-	if f.op == "absent" || f.op == "present" {
-		if b, ok := f.want.(bool); !ok || !b {
-			return fmt.Errorf("line %d: %s takes true", n.Line, f.op)
-		}
-	}
-	if _, err := parsePath(f.Path); err != nil {
-		return fmt.Errorf("line %d: %w", n.Line, err)
-	}
-	return nil
-}
-
-// check returns "" when the object satisfies the field check, otherwise why it does not.
-func (f fieldCheck) check(obj map[string]any) string {
-	steps, _ := parsePath(f.Path) // validated at load
-	got, found, err := lookupPath(obj, steps)
 	if err != nil {
-		return fmt.Sprintf("%s: %v", f.Path, err)
+		t.Fatal(err)
 	}
-	switch f.op {
-	case "absent":
-		if found {
-			return fmt.Sprintf("%s: expected absent, found %s", f.Path, brief(got))
-		}
-		return ""
-	case "present":
-		if !found {
-			return fmt.Sprintf("%s: expected present, not found", f.Path)
-		}
-		return ""
+	if len(out) == 0 {
+		t.Fatalf("%s: expected/ holds no objects; say what the deployment must render", dir)
 	}
-	if !found {
-		return fmt.Sprintf("%s: not found (expected %s %s)", f.Path, f.op, brief(f.want))
+	return out
+}
+
+// loadAbsent reads the objects the deployment must not render, from dir/absent. It is optional.
+func loadAbsent(t *testing.T, dir string) []expectedObject {
+	t.Helper()
+	out, err := loadObjectDir(dir, "absent")
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
 	}
-	switch f.op {
-	case "equals":
-		if !reflect.DeepEqual(got, f.want) {
-			return fmt.Sprintf("%s: expected %s (%T), got %s (%T)", f.Path, brief(f.want), f.want, brief(got), got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// loadObjectDir reads every YAML document under dir/sub, which holds files or one level of
+// <policy-name>/ directories. Each document needs a kind and metadata.name, because those select
+// the rendered objects it is compared with.
+func loadObjectDir(dir, sub string) ([]expectedObject, error) {
+	root := filepath.Join(dir, sub)
+	var out []expectedObject
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-	case "contains", "notContains":
-		s, ok := got.(string)
+		if d.IsDir() {
+			if rel, _ := filepath.Rel(root, path); strings.Count(rel, string(filepath.Separator)) > 0 {
+				return fmt.Errorf("%s: %s/ holds files or one level of <policy-name>/ directories", path, sub)
+			}
+			return nil
+		}
+		if ext := filepath.Ext(path); ext != ".yaml" && ext != ".yml" {
+			return fmt.Errorf("%s: %s/ holds only .yaml files", path, sub)
+		}
+		rel, _ := filepath.Rel(dir, path)
+		policy := ""
+		if sub := filepath.Dir(path); sub != root {
+			policy = filepath.Base(sub)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		for {
+			var doc map[string]any
+			if err := dec.Decode(&doc); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				return fmt.Errorf("%s: %w", rel, err)
+			}
+			if doc == nil {
+				continue
+			}
+			e := expectedObject{File: rel, Policy: policy, Object: doc}
+			if e.kind() == "" || e.name() == "" {
+				return fmt.Errorf("%s: every object needs kind and metadata.name, which select the rendered object", rel)
+			}
+			out = append(out, e)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// subsetMismatches compares a partial expected value with a rendered one, the way an ACM musthave
+// object template compares with a live object, and returns every difference. Maps match by key and
+// lists of objects by any entry that contains the expected one; scalars must be equal, including
+// type. Two additions for tests: a null expected value asserts the key is absent, and an expected
+// map compared with a string parses the string as YAML, so an embedded config file such as a
+// Secret's config.yaml can be checked by key.
+func subsetMismatches(want, got any, path string) []string {
+	switch w := want.(type) {
+	case map[string]any:
+		g, ok := got.(map[string]any)
+		if s, isStr := got.(string); isStr {
+			var parsed map[string]any
+			if err := yaml.Unmarshal([]byte(s), &parsed); err == nil && parsed != nil {
+				g, ok = parsed, true
+			}
+		}
 		if !ok {
-			return fmt.Sprintf("%s: %s needs a string, got %T", f.Path, f.op, got)
+			return []string{fmt.Sprintf("%s: expected a map, got %s", path, brief(got))}
 		}
-		if has := strings.Contains(s, f.want.(string)); has != (f.op == "contains") {
-			return fmt.Sprintf("%s: expected it to %s %q\n--- value ---\n%s", f.Path, map[bool]string{true: "contain", false: "not contain"}[f.op == "contains"], f.want, indent(s))
+		var out []string
+		for _, k := range sortedKeys(w) {
+			kp := path + "." + k
+			if path == "" {
+				kp = k
+			}
+			gv, has := g[k]
+			if w[k] == nil {
+				if has && gv != nil {
+					out = append(out, fmt.Sprintf("%s: expected absent, found %s", kp, brief(gv)))
+				}
+				continue
+			}
+			if !has {
+				out = append(out, fmt.Sprintf("%s: missing (expected %s)", kp, brief(w[k])))
+				continue
+			}
+			out = append(out, subsetMismatches(w[k], gv, kp)...)
 		}
+		return out
+	case []any:
+		g, ok := got.([]any)
+		if !ok {
+			return []string{fmt.Sprintf("%s: expected a list, got %s", path, brief(got))}
+		}
+		var out []string
+		for i, wi := range w {
+			// Report how the closest entry differs, rather than every entry in the list.
+			var closest []string
+			found := false
+			for _, gi := range g {
+				diffs := subsetMismatches(wi, gi, "")
+				if len(diffs) == 0 {
+					found = true
+					break
+				}
+				if closest == nil || len(diffs) < len(closest) {
+					closest = diffs
+				}
+			}
+			if found {
+				continue
+			}
+			if closest == nil {
+				out = append(out, fmt.Sprintf("%s[%d]: the list is empty", path, i))
+				continue
+			}
+			out = append(out, fmt.Sprintf("%s[%d]: no entry matches; closest: %s", path, i, strings.Join(closest, "; ")))
+		}
+		return out
+	default:
+		if !reflect.DeepEqual(want, got) {
+			msg := fmt.Sprintf("expected %s (%T), got %s (%T)", brief(want), want, brief(got), got)
+			if path != "" {
+				msg = path + ": " + msg
+			}
+			return []string{msg}
+		}
+		return nil
 	}
-	return ""
 }
 
 func brief(v any) string {
@@ -232,53 +340,59 @@ func brief(v any) string {
 		return fmt.Sprint(v)
 	}
 	s := strings.TrimSpace(string(b))
-	if len(s) > 200 {
-		s = s[:200] + "..."
+	if len(s) > 300 {
+		s = s[:300] + "..."
 	}
 	return s
 }
 
-// evaluateExpectations checks every expectation against the scenario's rendered objects.
-func evaluateExpectations(t *testing.T, expects []expectation, objs []renderedObject, unresolved []string) {
+// evaluateExpected checks every expected object against the scenario's rendered objects. At least
+// one rendered object must be selected, and every selected one must contain the expected object.
+// It returns the charts an expected object was found in, which are the charts the scenario is about.
+func evaluateExpected(t *testing.T, expected []expectedObject, objs []renderedObject, unresolved []string) map[string]bool {
 	t.Helper()
-	for _, e := range expects {
+	charts := map[string]bool{}
+	for _, e := range expected {
 		var matched []renderedObject
 		for _, o := range objs {
 			if e.selects(o) {
 				matched = append(matched, o)
+				charts[o.Chart] = true
 			}
 		}
-		switch {
-		case e.Count != nil && len(matched) != *e.Count:
-			t.Errorf("expect %s: matched %d objects, want %d%s", e, len(matched), *e.Count, candidates(e, objs, matched, unresolved))
-			continue
-		case e.Count == nil && len(matched) == 0:
-			t.Errorf("expect %s: matched no rendered object%s", e, candidates(e, objs, nil, unresolved))
+		if len(matched) == 0 {
+			t.Errorf("expected %s: no policy renders it%s", e, candidates(e, objs, unresolved))
 			continue
 		}
 		for _, o := range matched {
-			for _, f := range e.Fields {
-				if why := f.check(o.Object); why != "" {
-					t.Errorf("expect %s: %s\n  object: %s", e, why, o)
-				}
+			if diffs := subsetMismatches(e.Object, o.Object, ""); len(diffs) > 0 {
+				t.Errorf("expected %s differs from %s:\n  %s", e, o, strings.Join(diffs, "\n  "))
+			}
+		}
+	}
+	return charts
+}
+
+// evaluateAbsent fails for every rendered object an absent/ entry selects. Only kind, name,
+// namespace and the policy directory select; any other field in the entry is ignored.
+func evaluateAbsent(t *testing.T, absent []expectedObject, objs []renderedObject) {
+	t.Helper()
+	for _, e := range absent {
+		for _, o := range objs {
+			if e.selects(o) {
+				t.Errorf("absent %s: rendered by %s", e, o)
 			}
 		}
 	}
 }
 
-// candidates names what the expectation could have meant, so a renamed object or a policy that
-// rendered nothing is diagnosable from the failure alone.
-func candidates(e expectation, objs, matched []renderedObject, unresolved []string) string {
+// candidates lists rendered objects of the same kind, so a renamed object or a policy that rendered
+// nothing is diagnosable from the failure alone.
+func candidates(e expectedObject, objs []renderedObject, unresolved []string) string {
 	var lines []string
-	if len(matched) > 0 {
-		for _, o := range matched {
-			lines = append(lines, "matched  "+o.String())
-		}
-	} else {
-		for _, o := range objs {
-			if o.kind() == e.Kind {
-				lines = append(lines, "same kind  "+o.String())
-			}
+	for _, o := range objs {
+		if o.kind() == e.kind() {
+			lines = append(lines, "same kind  "+o.String())
 		}
 	}
 	for _, p := range unresolved {
@@ -291,180 +405,232 @@ func candidates(e expectation, objs, matched []renderedObject, unresolved []stri
 	return "\n  " + strings.Join(lines, "\n  ")
 }
 
-// --- paths ---------------------------------------------------------------------------------------
-//
-// A path is dot-separated keys with bracketed steps:
-//
-//	spec.components[kind=postgres].managed   first list element whose kind is postgres; it must be
-//	                                         the only one, so a duplicated entry fails
-//	spec.containers[0].image                 list index
-//	stringData["clair-config.yaml"]          a key holding dots, quoted
-
-type pathStep struct {
-	key    string // map key
-	index  int    // list index, when isIndex
-	selKey string // list selector key, when selVal is set
-	selVal string
-	kind   int
-}
-
-const (
-	stepKey = iota
-	stepIndex
-	stepSelect
-)
-
-func parsePath(p string) ([]pathStep, error) {
-	var steps []pathStep
-	for i := 0; i < len(p); {
-		switch {
-		case p[i] == '.':
-			if i == 0 || i == len(p)-1 || p[i+1] == '.' || p[i+1] == '[' {
-				return nil, fmt.Errorf("path %q: misplaced '.' at %d", p, i)
-			}
-			i++
-		case p[i] == '[':
-			end := strings.IndexByte(p[i:], ']')
-			if strings.HasPrefix(p[i:], `["`) {
-				end = strings.Index(p[i:], `"]`)
-				if end < 0 {
-					return nil, fmt.Errorf("path %q: unterminated [\"...\"] at %d", p, i)
+// unplacedPolicies returns the Policies whose PlacementBinding points at a Placement that does not
+// select a cluster with clusterLabels. Every policy resolves in the suite whatever its placement,
+// so without this a scenario would compare objects a real cluster never receives, such as the
+// managed-mode CloudNativePG clusters in an external-mode deployment. A Policy no binding names is
+// treated as placed. Placement predicates are ORed, and a Placement with none selects every cluster.
+func unplacedPolicies(objs []renderedObject, clusterLabels map[string]string) (map[string]bool, error) {
+	placements := map[string]map[string]any{}
+	type binding struct{ placement, policy string }
+	var bindings []binding
+	for _, o := range objs {
+		switch o.kind() {
+		case "Placement":
+			placements[o.name()] = o.Object
+		case "PlacementBinding":
+			ref, _ := nested(o.Object, "placementRef", "name").(string)
+			subjects, _ := o.Object["subjects"].([]any)
+			for _, sub := range subjects {
+				m := asMap(sub)
+				if m["kind"] == "Policy" {
+					name, _ := m["name"].(string)
+					bindings = append(bindings, binding{ref, name})
 				}
-				steps = append(steps, pathStep{key: p[i+2 : i+end], kind: stepKey})
-				i += end + 2
-				continue
-			}
-			if end < 0 {
-				return nil, fmt.Errorf("path %q: unterminated [ at %d", p, i)
-			}
-			inner := p[i+1 : i+end]
-			if k, v, ok := strings.Cut(inner, "="); ok {
-				if k == "" {
-					return nil, fmt.Errorf("path %q: empty selector key at %d", p, i)
-				}
-				steps = append(steps, pathStep{selKey: k, selVal: v, kind: stepSelect})
-			} else if n, err := strconv.Atoi(inner); err == nil && n >= 0 {
-				steps = append(steps, pathStep{index: n, kind: stepIndex})
-			} else {
-				return nil, fmt.Errorf("path %q: [%s] is neither an index, a key=value selector nor a quoted key", p, inner)
-			}
-			i += end + 1
-		default:
-			j := i
-			for j < len(p) && p[j] != '.' && p[j] != '[' {
-				j++
-			}
-			steps = append(steps, pathStep{key: p[i:j], kind: stepKey})
-			i = j
-		}
-	}
-	if len(steps) == 0 {
-		return nil, fmt.Errorf("path %q is empty", p)
-	}
-	return steps, nil
-}
-
-// lookupPath reports the value at steps and whether it exists. A step that meets the wrong type is
-// "not found", since that is what the object says; an ambiguous selector is an error.
-func lookupPath(v any, steps []pathStep) (any, bool, error) {
-	cur := v
-	for _, s := range steps {
-		switch s.kind {
-		case stepKey:
-			m, ok := cur.(map[string]any)
-			if !ok {
-				return nil, false, nil
-			}
-			if cur, ok = m[s.key]; !ok {
-				return nil, false, nil
-			}
-		case stepIndex:
-			l, ok := cur.([]any)
-			if !ok || s.index >= len(l) {
-				return nil, false, nil
-			}
-			cur = l[s.index]
-		case stepSelect:
-			l, ok := cur.([]any)
-			if !ok {
-				return nil, false, nil
-			}
-			var hits []any
-			for _, el := range l {
-				if m, ok := el.(map[string]any); ok {
-					if got, has := m[s.selKey]; has && fmt.Sprint(got) == s.selVal {
-						hits = append(hits, el)
-					}
-				}
-			}
-			switch len(hits) {
-			case 0:
-				return nil, false, nil
-			case 1:
-				cur = hits[0]
-			default:
-				return nil, false, fmt.Errorf("[%s=%s] matches %d list entries; a selector must match exactly one", s.selKey, s.selVal, len(hits))
 			}
 		}
 	}
-	return cur, true, nil
+	set := k8slabels.Set(clusterLabels)
+	selected := map[string]bool{}
+	for name, pl := range placements {
+		preds, _ := nested(pl, "spec", "predicates").([]any)
+		ok := len(preds) == 0
+		for _, pr := range preds {
+			raw := nested(asMap(pr), "requiredClusterSelector", "labelSelector")
+			b, err := json.Marshal(raw)
+			if err != nil {
+				return nil, err
+			}
+			var ls metav1.LabelSelector
+			if err := json.Unmarshal(b, &ls); err != nil {
+				return nil, fmt.Errorf("Placement %s: %w", name, err)
+			}
+			sel, err := metav1.LabelSelectorAsSelector(&ls)
+			if err != nil {
+				return nil, fmt.Errorf("Placement %s: %w", name, err)
+			}
+			if sel.Matches(set) {
+				ok = true
+				break
+			}
+		}
+		selected[name] = ok
+	}
+	placed := map[string]bool{}
+	bound := map[string]bool{}
+	for _, b := range bindings {
+		bound[b.policy] = true
+		if selected[b.placement] {
+			placed[b.policy] = true
+		}
+	}
+	out := map[string]bool{}
+	for p := range bound {
+		if !placed[p] {
+			out[p] = true
+		}
+	}
+	return out, nil
 }
 
-func TestScenarioPaths(t *testing.T) {
-	var obj map[string]any
+// TestUnplacedPolicies checks predicate evaluation against cluster labels.
+func TestUnplacedPolicies(t *testing.T) {
+	var objs []renderedObject
+	for _, doc := range []string{
+		`{kind: Placement, metadata: {name: pl-managed}, spec: {predicates: [{requiredClusterSelector: {labelSelector: {matchExpressions: [{key: autoshift.io/quay-db-mode, operator: In, values: [managed]}]}}}]}}`,
+		`{kind: Placement, metadata: {name: pl-quay}, spec: {predicates: [{requiredClusterSelector: {labelSelector: {matchExpressions: [{key: autoshift.io/quay, operator: In, values: ['true']}, {key: autoshift.io/quay-db-mode, operator: NotIn, values: [managed]}]}}}]}}`,
+		`{kind: Placement, metadata: {name: pl-all}, spec: {}}`,
+		`{kind: PlacementBinding, metadata: {name: b1}, placementRef: {name: pl-managed}, subjects: [{kind: Policy, name: policy-cnpg}]}`,
+		`{kind: PlacementBinding, metadata: {name: b2}, placementRef: {name: pl-quay}, subjects: [{kind: Policy, name: policy-deploy}, {kind: Policy, name: policy-check}]}`,
+		`{kind: PlacementBinding, metadata: {name: b3}, placementRef: {name: pl-all}, subjects: [{kind: Policy, name: policy-everywhere}]}`,
+	} {
+		var m map[string]any
+		if err := yaml.Unmarshal([]byte(doc), &m); err != nil {
+			t.Fatal(err)
+		}
+		objs = append(objs, renderedObject{"stable/test", "", m})
+	}
+	got, err := unplacedPolicies(objs, map[string]string{"autoshift.io/quay": "true", "autoshift.io/quay-db-mode": "external"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"policy-cnpg": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("unplaced = %v; want %v", got, want)
+	}
+}
+
+// TestSubsetMismatches covers the comparison rules expected/ files rely on.
+func TestSubsetMismatches(t *testing.T) {
+	var got map[string]any
 	if err := yaml.Unmarshal([]byte(`
+kind: QuayRegistry
 spec:
+  flag: false
   components:
     - {kind: postgres, managed: false}
-    - {kind: redis, managed: true}
-    - {kind: redis, managed: false}
-  list: [a, b]
-stringData:
-  clair-config.yaml: "indexer: {}"
-`), &obj); err != nil {
+    - {kind: redis, managed: true, overrides: {replicas: 2}}
+data:
+  config.yaml: "DB_URI: postgresql://db\nFEATURE_X: true\n"
+`), &got); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {
-		path    string
-		want    any
-		found   bool
-		wantErr bool
+		name, want string
+		ok         bool
 	}{
-		{"spec.components[kind=postgres].managed", false, true, false},
-		{"spec.components[kind=clair].managed", nil, false, false},
-		{"spec.components[kind=redis]", nil, false, true}, // duplicated entry
-		{"spec.list[1]", "b", true, false},
-		{"spec.list[2]", nil, false, false},
-		{`stringData["clair-config.yaml"]`, "indexer: {}", true, false},
-		{"stringData.clair-config", nil, false, false},
-		{"spec.list.foo", nil, false, false}, // key step on a list
+		{"scalar equal", "spec: {flag: false}", true},
+		{"scalar type differs", "spec: {flag: 'false'}", false},
+		{"list entry contained", "spec: {components: [{kind: postgres, managed: false}]}", true},
+		{"list entry differs", "spec: {components: [{kind: postgres, managed: true}]}", false},
+		{"empty map means exists", "spec: {components: [{kind: redis, overrides: {}}]}", true},
+		{"null means absent", "spec: {missing: null}", true},
+		{"null on a present key", "spec: {flag: null}", false},
+		{"missing key", "spec: {other: 1}", false},
+		{"embedded YAML by key", "data: {config.yaml: {DB_URI: postgresql://db}}", true},
+		{"embedded YAML key differs", "data: {config.yaml: {DB_URI: postgresql://other}}", false},
+		{"embedded YAML absent key", "data: {config.yaml: {SSL: null}}", true},
 	}
 	for _, c := range cases {
-		steps, err := parsePath(c.path)
-		if err != nil {
-			t.Errorf("parsePath(%q): %v", c.path, err)
-			continue
+		var want map[string]any
+		if err := yaml.Unmarshal([]byte(c.want), &want); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
 		}
-		got, found, err := lookupPath(obj, steps)
-		if (err != nil) != c.wantErr || found != c.found || !reflect.DeepEqual(got, c.want) {
-			t.Errorf("lookupPath(%q) = %v, %v, %v; want %v, %v, err=%v", c.path, got, found, err, c.want, c.found, c.wantErr)
-		}
-	}
-	for _, bad := range []string{"", ".a", "a.", "a..b", "a[", `a["b`, "a[x]", "a[=b]", "a.[0]"} {
-		if _, err := parsePath(bad); err == nil {
-			t.Errorf("parsePath(%q): expected an error", bad)
+		diffs := subsetMismatches(want, got, "")
+		if (len(diffs) == 0) != c.ok {
+			t.Errorf("%s: mismatches %v; want ok=%v", c.name, diffs, c.ok)
 		}
 	}
-	for _, bad := range []string{
-		"path: a\nequal: 1",                // typo
-		"path: a\nequals: 1\nabsent: true", // two operators
-		"equals: 1",                        // no path
-		"path: a\ncontains: 3",             // non-string
-		"path: a\nabsent: false",
-	} {
-		var f fieldCheck
-		if err := yaml.Unmarshal([]byte(bad), &f); err == nil {
-			t.Errorf("fieldCheck %q: expected an error", bad)
+}
+
+// TestCollectRenderedObjects covers the collector's two transformations: a Secret's data is
+// decoded for checks, and a resolved raw block that does not parse is an error, not skipped.
+func TestCollectRenderedObjects(t *testing.T) {
+	resolved := `apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-good
+spec:
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: good
+        spec:
+          object-templates-raw: |
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: bundle
+                data:
+                  config.yaml: REJfVVJJOiB4
+                  raw: not-base64!
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-bad
+spec:
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: bad
+        spec:
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition: {kind: Secret
+`
+	objs, unresolved, errs := collectRenderedObjects("stable/test", resolved)
+	if len(unresolved) != 0 {
+		t.Errorf("unresolved = %v; want none", unresolved)
+	}
+	if len(errs) != 1 || !strings.Contains(errs[0], "policy-bad") {
+		t.Errorf("errs = %v; want one error naming policy-bad", errs)
+	}
+	var secret map[string]any
+	for _, o := range objs {
+		if o.kind() == "Secret" && o.name() == "bundle" {
+			secret = o.Object
 		}
+	}
+	if secret == nil {
+		t.Fatal("Secret bundle was not collected")
+	}
+	data := asMap(secret["data"])
+	if got := data["config.yaml"]; got != "DB_URI: x" {
+		t.Errorf(`data["config.yaml"] = %q; want the decoded "DB_URI: x"`, got)
+	}
+	if got := data["raw"]; got != "not-base64!" {
+		t.Errorf(`data["raw"] = %q; want the value left as it is`, got)
+	}
+}
+
+// TestLoadScenarioValues_ClusterLabelWins checks the documented precedence: a cluster label
+// overrides the same label set on its clusterset, whatever order the keys sort in.
+func TestLoadScenarioValues_ClusterLabelWins(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	values := `clusters:
+  one:
+    labels:
+      quay-db-mode: external
+hubClusterSets:
+  hub:
+    labels:
+      quay-db-mode: managed
+managedClusterSets:
+  managed:
+    labels:
+      quay-db-mode: bundled
+`
+	if err := os.WriteFile(path, []byte(values), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadScenarioValues(t, path).labels["quay-db-mode"]; got != "external" {
+		t.Errorf("quay-db-mode = %q; want the cluster's external", got)
 	}
 }

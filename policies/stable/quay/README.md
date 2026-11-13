@@ -476,7 +476,7 @@ Day 2 failures that otherwise go unnoticed:
 |---|---|---|---|
 | `QuayGarbageCollectionStalled` | A namespace or repository garbage collection queue has held items for the threshold | `garbageCollectionStalledFor` | `6h` |
 | `QuayMirrorNotSynced` | Repositories configured for repository or organization mirroring have stayed unsynced for the threshold | `mirrorUnsyncedFor` | `2h` |
-| `QuaySecurityScanStalled` | Images were pushed within the threshold and none were scanned. An idle registry does not fire it | `scanStalledFor` | `1h` |
+| `QuaySecurityScanStalled` | Images were pushed within the threshold and none were scanned. An idle registry does not fire it. Set at least `15m`, the time the alert waits before firing | `scanStalledFor` | `1h` |
 
 Each threshold is a Prometheus duration under `config.quay.alerts`, and `severity` sets the label on
 all three:
@@ -621,6 +621,13 @@ Tokens** click **Generate New Token**. Give the token a name, an expiration, and
 needs; the superuser API needs the superuser access scope. Copy the secret then: Red Hat Quay does
 not show it again. See
 [Creating an OAuth 2 access token](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/red_hat_quay_api_guide/oauth2-access-tokens).
+
+To get a token without the console, set `config.quay.bootstrap.programmatic: true`, a Technology
+Preview feature in Red Hat Quay 3.18. On each start, Red Hat Quay writes an OAuth token for the first
+user in `superUsers` to the Secret `registry-bootstrap-token`, under the key `token.json`. The token
+expires after one hour by default. The user must already exist, so this does not replace the
+first-user step. See
+[Programmatic OAuth token provisioning](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/programmatic-oauth-token-provisioning).
 
 ## Pushing to this registry
 

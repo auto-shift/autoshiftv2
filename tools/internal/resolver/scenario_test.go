@@ -3,7 +3,6 @@
 package resolver
 
 import (
-	"bytes"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -24,14 +23,18 @@ import (
 // label has exactly one tested value: quay-db-mode is always bundled there, and the managed and
 // external branches never render. A scenario is the missing second value. It is a values file in
 // the same shape a user writes, layered on autoshift/values/clustersets/_example.yaml the way a
-// per-cluster file is, and it carries the expectations for what that deployment must render.
+// per-cluster file is, with the objects that deployment must render beside it.
 //
-// Each scenario is:
+// Each scenario is input, a fake cluster, and expected output:
 //
-//	values.yaml    a clusterset or per-cluster override, as under autoshift/values/
-//	scenario.yaml  which policies to resolve, testdata changes, and expectations
-//	stubs/*.yaml   optional cluster objects the policies look up; replaces any stub of the same
-//	               kind, namespace and name in tools/testdata/. Secrets may use stringData.
+//	values.yaml      a clusterset or per-cluster override, as under autoshift/values/. Its leading
+//	                 comment says what deployment this is and what it guards, and is required.
+//	cluster/*.yaml   optional cluster objects the policies look up; replaces any object of the same
+//	                 kind, namespace and name in tools/testdata/. Secrets may use stringData.
+//	expected/*.yaml  partial objects the policies must render, compared the way ACM musthave
+//	                 compares. Under expected/<policy-name>/ they must come from that Policy.
+//	absent/*.yaml    optional objects no policy may render, selected by kind, name and namespace,
+//	                 with the same <policy-name>/ directories.
 //
 // The run mirrors deployment: the top-level chart renders global.yaml, _example.yaml and the
 // scenario together, so its validation templates run, then the scenario's labels and config are
@@ -44,7 +47,7 @@ import (
 func TestScenarios(t *testing.T) {
 	root := repoRoot(t)
 	scenariosDir := filepath.Join(root, "tools", "testdata", "scenarios")
-	specs, err := filepath.Glob(filepath.Join(scenariosDir, "*", "scenario.yaml"))
+	specs, err := filepath.Glob(filepath.Join(scenariosDir, "*", "values.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,37 +69,14 @@ func TestScenarios(t *testing.T) {
 	}
 }
 
-// scenarioSpec is scenario.yaml. Unknown keys fail the load.
-type scenarioSpec struct {
-	// Description says what deployment this is and what it guards. Required, because a scenario
-	// nobody can explain is one nobody can safely change.
-	Description string `yaml:"description"`
-	// Policies this scenario is about, as <tier>/<name>. Each must exist. Every chart resolves either
-	// way; these are the ones whose ConfigurationPolicies must not render empty. Empty means all.
-	Policies []string `yaml:"policies"`
-	// Drop removes stubs from tools/testdata/. Each entry must match one, so a renamed stub
-	// cannot leave a scenario quietly testing the wrong thing.
-	Drop []stubRef `yaml:"drop"`
-	// Expect is what the deployment must render.
-	Expect []expectation `yaml:"expect"`
-}
-
-type stubRef struct {
-	Kind      string `yaml:"kind"`
-	Namespace string `yaml:"namespace"`
-	Name      string `yaml:"name"`
-}
-
-func (s stubRef) matches(u unstructured.Unstructured) bool {
-	return u.GetKind() == s.Kind && u.GetNamespace() == s.Namespace && u.GetName() == s.Name
-}
-
 func runScenario(t *testing.T, root, dir string, declared map[string]*labels.Declared) {
 	valuesDir := filepath.Join(root, "autoshift", "values")
 	policiesDir := filepath.Join(root, "policies")
 	valuesFile := filepath.Join(dir, "values.yaml")
 
-	spec := loadScenarioSpec(t, filepath.Join(dir, "scenario.yaml"))
+	requireDescription(t, valuesFile)
+	expected := loadExpected(t, dir)
+	absent := loadAbsent(t, dir)
 
 	// 1. The top-level chart, exactly as an Application renders a per-cluster override.
 	renderChart(t, filepath.Join(root, "autoshift"),
@@ -133,39 +113,21 @@ func runScenario(t *testing.T, root, dir string, declared map[string]*labels.Dec
 	deepMerge(configs.ClusterInstallConfig, ov.clusterConfig)
 	ctx := HubContext{ManagedClusterName: "lint-cluster", ManagedClusterLabels: lbls}
 
-	// 3. Stubs: tools/testdata/, minus Drop, with the scenario's own laid over it.
+	// 3. The fake cluster: tools/testdata/, with the scenario's cluster/ objects laid over it.
 	base, err := LoadTestResources(filepath.Join(root, "tools", "testdata"))
 	if err != nil {
 		t.Fatalf("LoadTestResources: %v", err)
 	}
-	kept := base[:0:0]
-	dropped := make([]bool, len(spec.Drop))
-	for _, res := range base {
-		drop := false
-		for i, d := range spec.Drop {
-			if d.matches(res) {
-				drop, dropped[i] = true, true
-			}
-		}
-		if !drop {
-			kept = append(kept, res)
-		}
-	}
-	for i, d := range spec.Drop {
-		if !dropped[i] {
-			t.Errorf("drop %s/%s/%s matches no stub in tools/testdata/", d.Kind, d.Namespace, d.Name)
-		}
-	}
-	stubs, err := LoadTestResources(filepath.Join(dir, "stubs"))
+	stubs, err := LoadTestResources(filepath.Join(dir, "cluster"))
 	if err != nil {
-		t.Fatalf("load stubs: %v", err)
+		t.Fatalf("load cluster/: %v", err)
 	}
 	for i := range stubs {
 		if err := stringDataToData(&stubs[i]); err != nil {
-			t.Fatalf("stub %s/%s: %v", stubs[i].GetKind(), stubs[i].GetName(), err)
+			t.Fatalf("cluster/ %s/%s: %v", stubs[i].GetKind(), stubs[i].GetName(), err)
 		}
 	}
-	resources := deduplicateResources(kept, stubs)
+	resources := deduplicateResources(base, stubs)
 
 	// 4. Resolve.
 	syntheticCMs, err := GenerateSyntheticConfigMaps(configs, ctx.ManagedClusterName, "policies-autoshift")
@@ -187,24 +149,11 @@ func runScenario(t *testing.T, root, dir string, declared map[string]*labels.Dec
 		t.Fatalf("RunPipeline: %v", err)
 	}
 	t.Logf("resolved %d policy charts", len(results))
-	charts := map[string]bool{}
-	for _, res := range results {
-		charts[res.Policy] = true
-	}
-	for _, p := range spec.Policies {
-		if !charts[p] {
-			t.Errorf("policies: no policy chart %s under policies/", p)
-		}
-	}
 
 	// 5. The same hard failures TestPipeline_EndToEnd reports.
-	subject := map[string]bool{}
-	for _, p := range spec.Policies {
-		subject[p] = true
-	}
 	var objs []renderedObject
 	var unresolved []string
-	empty := map[string]string{}
+	empty := map[string]map[string]string{} // chart -> policy -> finding
 	for _, res := range results {
 		switch {
 		case res.Err != nil:
@@ -221,58 +170,79 @@ func runScenario(t *testing.T, root, dir string, declared map[string]*labels.Dec
 		for _, w := range res.YAMLErrors {
 			t.Errorf("%s: invalid resolved YAML: %s", res.Policy, w)
 		}
-		o, u := collectRenderedObjects(res.Policy, res.ResolvedYAML)
+		o, u, errs := collectRenderedObjects(res.Policy, res.ResolvedYAML)
 		objs, unresolved = append(objs, o...), append(unresolved, u...)
-		// Emptiness is judged only for the policies the scenario is about. The rest were not
-		// written for this deployment, and the end-to-end suite judges them across every profile.
-		if len(subject) == 0 || subject[res.Policy] {
-			for _, f := range scanForEmptyPolicies(res.Policy, "scenario", res.ResolvedYAML) {
-				m := pgManifests(policiesDir, f.Chart)[f.Policy]
-				if !assertionOnlyGate(policiesDir, f.Chart, m) {
-					empty[f.Policy] = f.String()
+		for _, e := range errs {
+			t.Errorf("%s", e)
+		}
+		for _, f := range scanForEmptyPolicies(res.Policy, "scenario", res.ResolvedYAML) {
+			m := pgManifests(policiesDir, f.Chart)[f.Policy]
+			if !assertionOnlyGate(policiesDir, f.Chart, m) {
+				if empty[res.Policy] == nil {
+					empty[res.Policy] = map[string]string{}
 				}
+				empty[res.Policy][f.Policy] = f.String()
 			}
 		}
 	}
 
-	// 6. Empty ConfigurationPolicies report Compliant while enforcing nothing. As in the
-	// end-to-end check there is no allowlist: in a deployment that selects the policy, applying
-	// nothing is the defect, or the policy repeats its placement gate as a conditional.
-	for _, f := range sortedValues(empty) {
-		t.Errorf("FAIL  %s\n\t       In this deployment the policy applies no objects, so it reports Compliant while\n\t       enforcing nothing.", f)
+	// 6. Placement: only the policies whose Placement selects this cluster reach it.
+	unplaced, err := unplacedPolicies(objs, lbls)
+	if err != nil {
+		t.Fatalf("placement: %v", err)
+	}
+	placed := objs[:0:0]
+	for _, o := range objs {
+		if !unplaced[o.Policy] {
+			placed = append(placed, o)
+		}
 	}
 
-	// 7. The scenario's own expectations.
-	evaluateExpectations(t, spec.Expect, objs, unresolved)
+	// 7. The expected output, and what must not be rendered.
+	subject := evaluateExpected(t, expected, placed, unresolved)
+	evaluateAbsent(t, absent, placed)
+
+	// 8. Empty ConfigurationPolicies report Compliant while enforcing nothing. As in the
+	// end-to-end check there is no allowlist: in a deployment that selects the policy, applying
+	// nothing is the defect, or the policy repeats its placement gate as a conditional. Only the
+	// charts an expected object came from are judged. The rest were not written for this
+	// deployment, and the end-to-end suite judges them across every profile.
+	for _, chart := range sortedKeys(toAnyMap(subject)) {
+		for policy := range unplaced {
+			delete(empty[chart], policy)
+		}
+		for _, f := range sortedValues(empty[chart]) {
+			t.Errorf("FAIL  %s\n\t       In this deployment the policy applies no objects, so it reports Compliant while\n\t       enforcing nothing.", f)
+		}
+	}
 }
 
-func loadScenarioSpec(t *testing.T, path string) scenarioSpec {
+// requireDescription fails a scenario whose values.yaml does not open with a comment saying what
+// deployment it is and what it guards: a scenario nobody can explain is one nobody can safely change.
+func requireDescription(t *testing.T, path string) {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var spec scenarioSpec
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
-	if err := dec.Decode(&spec); err != nil {
-		t.Fatalf("%s: %v", path, err)
-	}
-	if strings.TrimSpace(spec.Description) == "" {
-		t.Fatalf("%s: description is required", path)
-	}
-	if len(spec.Expect) == 0 {
-		t.Fatalf("%s: a scenario with no expect entries only proves the policies resolve; say what the deployment must render", path)
-	}
-	for i, e := range spec.Expect {
-		if e.Kind == "" {
-			t.Fatalf("%s: expect[%d] needs a kind", path, i)
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
 		}
-		if e.Count != nil && *e.Count == 0 && len(e.Fields) > 0 {
-			t.Fatalf("%s: expect[%d] has count 0 and fields, which can never be checked", path, i)
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			t.Fatalf("%s: open with a comment saying what deployment this is and what it guards", path)
 		}
+		return
 	}
-	return spec
+	t.Fatalf("%s: empty", path)
+}
+
+func toAnyMap(m map[string]bool) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // scenarioValues is what a values.yaml contributes: labels, config applied at clusterset level,
@@ -319,7 +289,11 @@ func loadScenarioValues(t *testing.T, path string) scenarioValues {
 		}
 	}
 	clusters := 0
-	for _, top := range sortedKeys(raw) {
+	// Clusters are read last so a cluster label overrides the same clusterset label, as it does in
+	// the cluster-labels policy.
+	tops := sortedKeys(raw)
+	sort.SliceStable(tops, func(i, j int) bool { return tops[i] != "clusters" && tops[j] == "clusters" })
+	for _, top := range tops {
 		switch top {
 		case "hubClusterSets", "managedClusterSets":
 			for _, name := range sortedKeys(asMap(raw[top])) {
@@ -395,7 +369,7 @@ func sortedValues(m map[string]string) []string {
 func scenarioHint(errMsg string) string {
 	switch {
 	case strings.Contains(errMsg, "Secret") || strings.Contains(errMsg, "ConfigMap"):
-		return "hint: add the object to this scenario's stubs/, or to tools/testdata/ if every profile needs it"
+		return "hint: add the object to this scenario's cluster/, or to tools/testdata/ if every profile needs it"
 	case strings.Contains(errMsg, "lookup"):
 		return lookupHint(errMsg)
 	default:
