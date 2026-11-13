@@ -1,0 +1,54 @@
+  object-templates-raw: |
+    {{hub- /* Load <cluster>.rendered-config and parse it */hub}}
+    {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+    {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+    {{hub- if hasKey $config "Error" hub}}
+    {{hub- fail (printf "nhc config error: rendered-config YAML parse error: %v" (index $config "Error")) hub}}
+    {{hub- end hub}}
+    {{hub- $templates := (index (index $config "nhc" | default dict) "templates") | default list hub}}
+    {{hub- if not $templates hub}}
+    {{hub- fail "no nhc.templates found in config" hub}}
+    {{hub- end hub}}
+    {{- /* Problems are collected and reported together; $seen avoids emitting the same template check twice */}}
+    {{- $problems := list }}
+    {{- $seen := dict }}
+    {{hub- range $t := $templates hub}}
+    {{hub- /* Collect this NHC's remediation template references: single remediationTemplate and every escalatingRemediations entry */hub}}
+    {{hub- $spec := (index $t "spec" | default dict) hub}}
+    {{hub- $refs := list hub}}
+    {{hub- with (index $spec "remediationTemplate") hub}}{{hub- $refs = append $refs . hub}}{{hub- end hub}}
+    {{hub- range $e := ((index $spec "escalatingRemediations") | default list) hub}}
+    {{hub- $refs = append $refs (index $e "remediationTemplate") hub}}
+    {{hub- end hub}}
+    {{hub- if not $refs hub}}
+    {{hub- fail (printf "nhc config error for %v: no remediationTemplate or escalatingRemediations found in spec" (index $t "name")) hub}}
+    {{hub- end hub}}
+    {{hub- range $ref := $refs hub}}
+    {{hub- if not (and $ref.apiVersion $ref.kind $ref.name $ref.namespace) hub}}
+    {{hub- fail (printf "nhc config error for %v: every remediationTemplate needs apiVersion, kind, name and namespace, got %v" (index $t "name") $ref) hub}}
+    {{hub- end hub}}
+    {{hub- /* CRD name = lowercase kind + s + . + API group (true for the Medik8s and Metal3 template kinds) */hub}}
+    {{hub- $crdName := printf "%ss.%s" (lower $ref.kind) (index (splitList "/" $ref.apiVersion) 0) hub}}
+    {{- /* Check the CRD first, because looking up a kind that does not exist would error */}}
+    {{- if not (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "{{hub $crdName hub}}") }}
+    {{- $problems = append $problems (printf "NHC %s: cannot check %s %s/%s because CRD %s is not installed (is the remediation operator installed?)" "{{hub index $t "name" hub}}" "{{hub $ref.kind hub}}" "{{hub $ref.namespace hub}}" "{{hub $ref.name hub}}" "{{hub $crdName hub}}") }}
+    {{- else if not (lookup "{{hub $ref.apiVersion hub}}" "{{hub $ref.kind hub}}" "{{hub $ref.namespace hub}}" "{{hub $ref.name hub}}") }}
+    {{- $problems = append $problems (printf "NHC %s: remediation template %s %s/%s does not exist" "{{hub index $t "name" hub}}" "{{hub $ref.kind hub}}" "{{hub $ref.namespace hub}}" "{{hub $ref.name hub}}") }}
+    {{- else }}
+    {{- $key := printf "%s/%s/%s" "{{hub $ref.namespace hub}}" "{{hub $ref.kind hub}}" "{{hub $ref.name hub}}" }}
+    {{- if not (hasKey $seen $key) }}
+    {{- $_ := set $seen $key true }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: {{hub $ref.apiVersion hub}}
+        kind: {{hub $ref.kind hub}}
+        metadata:
+          name: {{hub $ref.name hub}}
+          namespace: {{hub $ref.namespace hub}}
+    {{- end }}
+    {{- end }}
+    {{hub- end hub}}
+    {{hub- end hub}}
+    {{- if $problems }}
+    {{- fail (printf "Remediation template check failed: %s" (join "; " $problems)) }}
+    {{- end }}

@@ -1,0 +1,23 @@
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- if hasKey $config "Error" hub}}
+  {{hub- fail (printf "nhc config error: rendered-config YAML parse error: %v" (index $config "Error")) hub}}
+  {{hub- end hub}}
+  {{hub- $list := (index (index $config "nhc" | default dict) "templates") | default list hub}}
+  {{hub- if not $list hub}}
+  {{hub- fail "nhc config error: nhc.templates must contain at least one entry" hub}}
+  {{hub- end hub}}
+  {{hub- /* One NodeHealthCheck per entry. The entry spec is passed through unchanged, so any NHC field works */hub}}
+  {{hub- range $nhc := $list hub}}
+  {{hub- if not (and $nhc.name $nhc.spec) hub}}
+  {{hub- fail (printf "nhc config error: every entry needs a name and a spec, got %v" $nhc) hub}}
+  {{hub- end hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: remediation.medik8s.io/v1alpha1
+      kind: NodeHealthCheck
+      metadata:
+        name: {{hub $nhc.name hub}}
+      spec: {{hub toRawJson $nhc.spec hub}}
+  {{hub- end hub}}

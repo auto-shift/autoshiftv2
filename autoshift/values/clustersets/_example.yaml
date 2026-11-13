@@ -493,6 +493,27 @@ hubClusterSets:
             userWorkload:
               names:
                 - sample_metrics
+      # Node Health Check Operator
+      nhc:
+        versions:
+          - 'node-healthcheck-operator.v0.12.1'
+        startingCSV: 'node-healthcheck-operator.v0.12.1'
+        templates:
+        - name: nodehealthcheck-default-test
+          spec:
+            selector:
+              matchLabels:
+                beta.kubernetes.io/os: linux
+              matchExpressions:
+                - {key: node-role.kubernetes.io/worker, operator: Exists}
+            minHealthy: 2
+            unhealthyConditions:
+              - {type: Ready, status: "False", duration: 300s}
+            remediationTemplate:
+              apiVersion: fence-agents-remediation.medik8s.io/v1alpha1
+              kind: FenceAgentsRemediationTemplate
+              name: fenceagentsremediationtemplate-default
+              namespace: openshift-workload-availability
 
       # =======================================================================
       # File integrity - policy: file-integrity
@@ -2666,6 +2687,16 @@ hubClusterSets:
       trident-source-namespace: openshift-marketplace
       trident-channel: stable
       trident-version: 'trident-operator.v25.06.0'   # optional CSV version pin
+
+      # =======================================================================
+      # Node Health Check Operator
+      # =======================================================================
+      nhc: 'false'
+      nhc-subscription-name: 'node-healthcheck-operator'
+      nhc-channel: 'stable'
+      nhc-source: 'redhat-operators'
+      nhc-source-namespace: 'openshift-marketplace'
+      nhc-version: 'node-healthcheck-operator.v0.12.1'
 
       # Zero Trust Workload Identity Manager (SPIRE)
       # =======================================================================
