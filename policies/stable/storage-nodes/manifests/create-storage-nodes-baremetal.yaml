@@ -1,54 +1,105 @@
+# Bare-metal storage nodes have no MachineSet, so existing nodes are labeled for Red Hat OpenShift
+# Data Foundation in place. The nodes come from the first source that is set:
+#   1. config.storageNodes.nodes, by Node name, each with optional taints and removeTaints
+#   2. the autoshift.io/storage-nodes-node-* labels
+#   3. the first autoshift.io/storage-nodes nodes the API returns
+# config.storageNodes.infraRole: false leaves off node-role.kubernetes.io/infra on every path.
+# A named node that does not exist fails the template instead of creating a Node, which musthave
+# would otherwise do.
+#
+# musthave only adds, so a taint leaves a node only through removeTaints, which wins over taints. An
+# entry without an effect matches every effect of its key. While a listed taint is on the node, the
+# node is rewritten once with mustonlyhave: its live spec, minus the removed taints, plus any wanted
+# ones it lacks. metadataComplianceType: musthave keeps every other label. A cordoned node is left
+# alone until it is uncordoned, so the rewrite can never undo a drain. Labels and any taint not in
+# removeTaints are never removed (docs/values-reference.md, "Bare-metal nodes").
 object-templates-raw: |
-  # Declare the template to create the node labels
-  {{- define "node_template" }}
-    {{- range .nodes }}
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $storage := (index $cfg "storageNodes" | default dict) hub}}
+  {{hub- $label_list := list hub}}
+  {{hub- range $label, $labelvalue := .ManagedClusterLabels hub}}
+  {{hub- if $label | hasPrefix "autoshift.io/storage-nodes-node" hub}}
+  {{hub- $label_list = append $label_list $labelvalue hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{- $infraRole := {{hub ternary (index $storage "infraRole") true (hasKey $storage "infraRole") hub}} }}
+  {{- $cfgNodes := (`{{hub (index $storage "nodes" | default list) | toRawJson hub}}` | fromYaml) | default list }}
+  {{- $labelNodes := (`{{hub $label_list | toRawJson hub}}` | fromYaml) | default list }}
+  {{- $labels := dict "cluster.ocs.openshift.io/openshift-storage" "" }}
+  {{- if $infraRole }}{{- $_ := set $labels "node-role.kubernetes.io/infra" "" }}{{- end }}
+  {{- $entries := list }}
+  {{- if $cfgNodes }}
+  {{- range $n := $cfgNodes }}
+  {{- $name := (index $n "name" | default "") }}
+  {{- if not $name }}{{ fail "config.storageNodes.nodes: every entry needs a name." }}{{- end }}
+  {{- $entries = append $entries (dict "name" $name "taints" (index $n "taints" | default list) "removeTaints" (index $n "removeTaints" | default list)) }}
+  {{- end }}
+  {{- else if $labelNodes }}
+  {{- range $name := $labelNodes }}
+  {{- $entries = append $entries (dict "name" $name "taints" list "removeTaints" list) }}
+  {{- end }}
+  {{- else }}
+  {{- $all_nodes := (lookup "v1" "Node" "" "").items }}
+  {{- range until {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub}} }}
+  {{- $entries = append $entries (dict "name" (index $all_nodes .).metadata.name "taints" list "removeTaints" list) }}
+  {{- end }}
+  {{- end }}
+  {{- range $e := $entries }}
+  {{- $name := $e.name }}
+  {{- $live := (lookup "v1" "Node" "" $name) }}
+  {{- if not $live }}{{ fail (printf "Storage node %s, from config.storageNodes.nodes or autoshift.io/storage-nodes-node-*, does not exist." $name) }}{{- end }}
+  {{- $remove := $e.removeTaints }}
+  {{- range $r := $remove }}
+  {{- if not (index $r "key") }}{{ fail (printf "config.storageNodes.nodes: %s has a removeTaints entry with no key." $name) }}{{- end }}
+  {{- end }}
+  {{- $want := list }}
+  {{- range $t := $e.taints }}
+  {{- $hit := false }}
+  {{- range $r := $remove }}
+  {{- if and (eq (index $t "key" | default "") (index $r "key")) (or (not (index $r "effect")) (eq (index $t "effect" | default "") (index $r "effect"))) }}{{- $hit = true }}{{- end }}
+  {{- end }}
+  {{- if not $hit }}{{- $want = append $want $t }}{{- end }}
+  {{- end }}
+  {{- $keep := list }}
+  {{- $drop := false }}
+  {{- range $t := (dig "spec" "taints" list $live) }}
+  {{- $hit := false }}
+  {{- range $r := $remove }}
+  {{- if and (eq (index $t "key" | default "") (index $r "key")) (or (not (index $r "effect")) (eq (index $t "effect" | default "") (index $r "effect"))) }}{{- $hit = true }}{{- end }}
+  {{- end }}
+  {{- if $hit }}{{- $drop = true }}{{- else }}{{- $keep = append $keep $t }}{{- end }}
+  {{- end }}
+  {{- if and $drop (not (dig "spec" "unschedulable" false $live)) }}
+  {{- range $w := $want }}
+  {{- $have := false }}
+  {{- range $k := $keep }}
+  {{- if and (eq (index $k "key" | default "") (index $w "key" | default "")) (eq (index $k "effect" | default "") (index $w "effect" | default "")) }}{{- $have = true }}{{- end }}
+  {{- end }}
+  {{- if not $have }}{{- $keep = append $keep $w }}{{- end }}
+  {{- end }}
+  {{- $spec := dict }}
+  {{- range $field, $value := $live.spec }}{{- $_ := set $spec $field $value }}{{- end }}
+  {{- if $keep }}{{- $_ := set $spec "taints" $keep }}{{- else }}{{- $_ := unset $spec "taints" }}{{- end }}
+  - complianceType: mustonlyhave
+    metadataComplianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ $name }}
+        labels: {{ $labels | toRawJson }}
+      spec: {{ $spec | toRawJson }}
+  {{- else }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
       kind: Node
       metadata:
-        name: {{ .metadata.name }}
-        labels:
-          node-role.kubernetes.io/infra: ''
-          cluster.ocs.openshift.io/openshift-storage: ''
-    {{- end }}
+        name: {{ $name }}
+        labels: {{ $labels | toRawJson }}
+      {{- if $want }}
+      spec:
+        taints: {{ $want | toRawJson }}
+      {{- end }}
   {{- end }}
-
-  # Declare the node list to use with the template
-  {{- $nodes := list }}
-
-  # Build list of labels on hub
-  {{hub- $label_list := list hub}}
-  {{hub- range $label, $labelvalue := .ManagedClusterLabels hub}}
-    {{hub- if $label | hasPrefix "autoshift.io/storage-nodes-node" hub}}
-      {{hub- $label_list = append $label_list $labelvalue hub}}
-    {{hub- end hub}}
-  {{hub- end hub}}
-
-  # Build list with labels if labels exist
-  {{- if not (eq 0 (len (list
-    {{hub range $label_list hub}} {{hub . | quote hub}} {{hub end hub}}))) }}
-
-    # Build node list from labels
-    {{- range (list
-      {{hub range $label_list hub}} {{hub . | quote hub}} {{hub end hub}}) }}
-      {{- $nodes = append $nodes (lookup "v1" "Node" "" .) }}
-    {{- end }}
-
-    # Call template
-    {{- template "node_template" (dict "nodes" $nodes) }}
-
-  # Build list with first {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub}} nodes instead of labels
-  {{- else }}
-
-    # Perform lookup of all nodes
-    {{- $all_nodes := (lookup "v1" "Node" "" "").items }}
-
-    # Build nodelist from number
-    {{- range until {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub}} }}
-      {{- $nodes = append $nodes (index $all_nodes .) }}
-    {{- end }}
-
-    # Call template
-    {{- template "node_template" (dict "nodes" $nodes) }}
   {{- end }}

@@ -1,0 +1,78 @@
+# Bare-metal infra nodes have no MachineSet, so config.infraNodes.nodes names them by Node name and
+# they are labeled and tainted in place. A node without a taints key gets the taints the infra
+# MachineSets set, which the infra workloads tolerate; taints: [] leaves it untainted. A listed name
+# with no Node fails the template instead of creating a Node, which musthave would otherwise do.
+#
+# musthave only adds, so a taint leaves a node only through removeTaints, which wins over taints and
+# the defaults. An entry without an effect matches every effect of its key. While a listed taint is
+# on the node, the node is rewritten once with mustonlyhave: its live spec, minus the removed taints,
+# plus any wanted ones it lacks. metadataComplianceType: musthave keeps every other label. A cordoned
+# node is left alone until it is uncordoned, so the rewrite can never undo a drain. Labels and any
+# taint not in removeTaints are never removed (docs/values-reference.md, "Bare-metal nodes").
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $hubNodes := (index (index $cfg "infraNodes" | default dict) "nodes" | default list) hub}}
+  {{hub- $provider := (index .ManagedClusterLabels "autoshift.io/infra-nodes-provider" | default "") hub}}
+  {{hub- if and (eq $provider "baremetal") (not $hubNodes) hub}}{{hub fail "config.infraNodes.nodes is empty. Bare-metal infra nodes are listed there by Node name." hub}}{{hub- end hub}}
+  {{- $defaultTaints := list (dict "key" "node-role.kubernetes.io/infra" "effect" "NoSchedule") (dict "key" "node-role.kubernetes.io/infra" "effect" "NoExecute") }}
+  {{- range $n := (`{{hub $hubNodes | toRawJson hub}}` | fromYaml) }}
+  {{- $name := (index $n "name" | default "") }}
+  {{- if not $name }}{{ fail "config.infraNodes.nodes: every entry needs a name." }}{{- end }}
+  {{- $live := (lookup "v1" "Node" "" $name) }}
+  {{- if not $live }}{{ fail (printf "config.infraNodes.nodes: no Node named %s." $name) }}{{- end }}
+  {{- $labels := dict "node-role.kubernetes.io/infra" "" }}
+  {{- $remove := (index $n "removeTaints" | default list) }}
+  {{- range $r := $remove }}
+  {{- if not (index $r "key") }}{{ fail (printf "config.infraNodes.nodes: %s has a removeTaints entry with no key." $name) }}{{- end }}
+  {{- end }}
+  {{- $want := list }}
+  {{- range $t := (ternary (index $n "taints") $defaultTaints (hasKey $n "taints")) }}
+  {{- $hit := false }}
+  {{- range $r := $remove }}
+  {{- if and (eq (index $t "key" | default "") (index $r "key")) (or (not (index $r "effect")) (eq (index $t "effect" | default "") (index $r "effect"))) }}{{- $hit = true }}{{- end }}
+  {{- end }}
+  {{- if not $hit }}{{- $want = append $want $t }}{{- end }}
+  {{- end }}
+  {{- $keep := list }}
+  {{- $drop := false }}
+  {{- range $t := (dig "spec" "taints" list $live) }}
+  {{- $hit := false }}
+  {{- range $r := $remove }}
+  {{- if and (eq (index $t "key" | default "") (index $r "key")) (or (not (index $r "effect")) (eq (index $t "effect" | default "") (index $r "effect"))) }}{{- $hit = true }}{{- end }}
+  {{- end }}
+  {{- if $hit }}{{- $drop = true }}{{- else }}{{- $keep = append $keep $t }}{{- end }}
+  {{- end }}
+  {{- if and $drop (not (dig "spec" "unschedulable" false $live)) }}
+  {{- range $w := $want }}
+  {{- $have := false }}
+  {{- range $k := $keep }}
+  {{- if and (eq (index $k "key" | default "") (index $w "key" | default "")) (eq (index $k "effect" | default "") (index $w "effect" | default "")) }}{{- $have = true }}{{- end }}
+  {{- end }}
+  {{- if not $have }}{{- $keep = append $keep $w }}{{- end }}
+  {{- end }}
+  {{- $spec := dict }}
+  {{- range $field, $value := $live.spec }}{{- $_ := set $spec $field $value }}{{- end }}
+  {{- if $keep }}{{- $_ := set $spec "taints" $keep }}{{- else }}{{- $_ := unset $spec "taints" }}{{- end }}
+  - complianceType: mustonlyhave
+    metadataComplianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ $name }}
+        labels: {{ $labels | toRawJson }}
+      spec: {{ $spec | toRawJson }}
+  {{- else }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ $name }}
+        labels: {{ $labels | toRawJson }}
+      {{- if $want }}
+      spec:
+        taints: {{ $want | toRawJson }}
+      {{- end }}
+  {{- end }}
+  {{- end }}
