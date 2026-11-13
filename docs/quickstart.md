@@ -195,10 +195,23 @@ through the `openshift-gitops` policy. Make every decision in steps 1 to 3 befor
    `Subscription`, and the operator keeps its previous configuration.
 
 6. Carry the same choices into AutoShift, so the `openshift-gitops` policy keeps them after it takes
-   over. In the configuration of the hub cluster set, set `config.gitops.clusterScopedNamespaces`
-   to the list from step 2. To keep the default instance, set `config.gitops.defaultInstance: true`
-   and set the `gitops-disable-default-argocd` label to `'false'` or remove it, because the label
-   overrides `defaultInstance`. See the [values reference](values-reference.md#openshift-gitops).
+   over:
+
+   - Argo CD namespace: set `gitopsNamespace` in `autoshift/values/global.yaml`, or
+     `config.gitops.namespace` on the self-managed hub cluster set, to `<argo-namespace>`. AutoShift
+     deploys into this namespace, and the policy lists it first in
+     `ARGOCD_CLUSTER_CONFIG_NAMESPACES`. A different value leaves the instance from step 4 without
+     cluster scope.
+   - Cluster scope: set `config.gitops.clusterScopedNamespaces` on the hub cluster set to the list
+     from step 2.
+   - Default instance, matching step 3. The `gitops-disable-default-argocd` label overrides
+     `config.gitops.defaultInstance`, so set both consistently:
+     - To keep it (`false` in step 3), set `config.gitops.defaultInstance: true` and set the label
+       to `'false'` or remove it.
+     - To remove it (`true` in step 3), leave `config.gitops.defaultInstance` unset or `false`, and
+       do not set the label to `'false'`.
+
+   See the [values reference](values-reference.md#openshift-gitops).
 
 After the installation is complete, verify that all the pods in the `openshift-gitops` namespace are running. This can take a few minutes depending on your network to even return anything.
 
