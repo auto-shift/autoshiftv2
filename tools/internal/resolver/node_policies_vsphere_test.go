@@ -27,15 +27,10 @@ var awsOnlyProviderFields = []string{
 
 // nodePoliciesPendingProviderZoneFix are provider-agnostic policies that still read
 // the AWS-only placement.availabilityZone to find the worker's zone, so on a vSphere
-// cluster they render a MachineSet named <infra-id>-<role>-<no value>. #309 fixes all
-// four. The list is checked both ways: a policy that starts passing must be removed
+// cluster they rendered a MachineSet named <infra-id>-<role>-<no value>, until #309
+// fixed all four, which emptied it. The list is checked both ways: a policy that starts passing must be removed
 // from it, so the fix and this test cannot silently drift apart.
-var nodePoliciesPendingProviderZoneFix = map[string]bool{
-	"policy-infra-nodes-test":   true,
-	"policy-remove-infra-nodes": true,
-	"policy-storage-nodes-test": true,
-	"policy-worker-nodes-test":  true,
-}
+var nodePoliciesPendingProviderZoneFix = map[string]bool{}
 
 var policyNameInMessage = regexp.MustCompile(`policy-[a-z0-9-]+`)
 

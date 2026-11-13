@@ -9,8 +9,37 @@ object-templates-raw: |
       {{- $worker_ms = . }}
     {{- end }}
   {{- end }}
-  {{- /* Generate the MachineSet for each zone as specified or default to worker az */ -}}
-  {{- range $zone := ternary (list $worker_ms.spec.template.spec.providerSpec.value.placement.availabilityZone ) $zones_from_labels (eq 0 (len $zones_from_labels)) }}
+  {{- /* Zone resolution that works on every provider.
+         AWS nests the zone under providerSpec.value.placement.availabilityZone.
+         IBM Cloud and the other flat provider specs carry it as `zone`. vSphere
+         has no zone field at all - it encodes placement through workspace and
+         network - so the MachineSet name suffix is the only handle.
+
+         This file is shared across providers: its placement has no -provider
+         predicate, so it lands on every cluster regardless of platform. Reading
+         .placement.availabilityZone directly is therefore a nil dereference
+         anywhere that is not AWS, and the ConfigurationPolicy fails with a
+         template error rather than rendering nothing. dig throughout is what
+         turns that into an empty string.
+
+         CI does not currently catch this: every worker MachineSet in tools/testdata
+         is a hybrid carrying AWS and vSphere fields on the same object, so the
+         AWS path always resolves there. */ -}}
+  {{- $pv := (dig "spec" "template" "spec" "providerSpec" "value" (dict) $worker_ms) }}
+  {{- $worker_zone := "" }}
+  {{- if (dig "zone" "" $pv) }}
+    {{- $worker_zone = (dig "zone" "" $pv) }}
+  {{- else if (dig "placement" "availabilityZone" "" $pv) }}
+    {{- $worker_zone = (dig "placement" "availabilityZone" "" $pv) }}
+  {{- else if (dig "metadata" "name" "" $worker_ms) }}
+    {{- $worker_zone = trimPrefix (printf "%s-worker-" $infrastructure_id) (dig "metadata" "name" "" $worker_ms) }}
+  {{- end }}
+  {{- $zones := ternary (ternary (list $worker_zone) (list) (ne $worker_zone "")) $zones_from_labels (eq 0 (len $zones_from_labels)) }}
+  {{- /* No zone to check means nothing to render, and an empty ConfigurationPolicy reports
+         Compliant, which would unblock every policy that depends on this readiness check.
+         Fail instead, naming what is missing. */ -}}
+  {{- if eq 0 (len $zones) }}{{ fail "infra-nodes readiness: no autoshift.io/infra-nodes-zone-N label and no worker MachineSet to take the zone from" }}{{- end }}
+  {{- range $zone := $zones }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: machine.openshift.io/v1beta1
