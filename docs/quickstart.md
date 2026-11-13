@@ -130,62 +130,75 @@ sidecar and cluster scope, which an existing installation does not provide. Inst
 `skipOperatorInstall` mode so it leaves the existing operator, `OperatorGroup` and `Subscription` in
 place and only adds the instance and the `Subscription` environment variables.
 
-Before installing, list the environment variables the existing `Subscription` sets:
+This mode needs Helm 4. Helm 4 applies adopted resources with server-side apply, so the existing
+`Subscription` receives the rendered environment variables. Helm 3 accepts `--take-ownership` from
+version 3.17, but it does not patch an adopted custom resource during `install`: the release reports
+success while the `Subscription` keeps its previous configuration.
 
-```console
-oc get subscription openshift-gitops-operator -n openshift-gitops-operator -o jsonpath='{.spec.config.env}'
-```
+AutoShift manages the whole `Subscription` environment variable list and sets only
+`DISABLE_DEFAULT_ARGOCD_INSTANCE` and `ARGOCD_CLUSTER_CONFIG_NAMESPACES`, at installation and later
+through the `openshift-gitops` policy. Make every decision in steps 1 to 3 before you install.
 
-AutoShift replaces this list with only `DISABLE_DEFAULT_ARGOCD_INSTANCE` and
-`ARGOCD_CLUSTER_CONFIG_NAMESPACES`. If the output contains any other variable, stop: this mode
-removes it, and the existing operator may depend on it.
+1. Inspect the existing installation. List the variables the `Subscription` sets:
 
-Install the chart:
+   ```console
+   oc get subscription openshift-gitops-operator -n openshift-gitops-operator -o jsonpath='{.spec.config.env}'
+   ```
 
-```console
-helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml \
-  --set skipOperatorInstall=true \
-  --set gitops.argoNamespace=<argo-namespace> \
-  --set 'gitops.clusterScopedNamespaces={openshift-gitops}' \
-  --set gitops.disableDefaultArgoCD=<true-or-false> \
-  --take-ownership
-```
+   If the output contains any variable other than the two above, stop. This mode removes it, there
+   is no value to carry it over, and the existing operator may depend on it.
 
-Run the same `oc get subscription` command again and confirm both variables:
+   Then record the values the operator runs with now, including its defaults for variables the
+   `Subscription` does not set:
 
-- `ARGOCD_CLUSTER_CONFIG_NAMESPACES` contains `<argo-namespace>` and every namespace in
-  `gitops.clusterScopedNamespaces`.
-- `DISABLE_DEFAULT_ARGOCD_INSTANCE` equals the `gitops.disableDefaultArgoCD` value you installed
-  with. This variable decides whether the operator removes the default instance in
-  `openshift-gitops`.
+   ```console
+   oc get deployment openshift-gitops-operator-controller-manager -n openshift-gitops-operator \
+     -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}'
+   ```
 
-If either variable is missing or holds its earlier value, the adoption did not update the
-`Subscription`, and the operator keeps its previous configuration.
+   Note `ARGOCD_CLUSTER_CONFIG_NAMESPACES`, the Argo CD namespaces that are cluster-scoped now, and
+   `DISABLE_DEFAULT_ARGOCD_INSTANCE`, which is `false` when the default instance in
+   `openshift-gitops` exists.
 
-- `--take-ownership` lets Helm adopt the existing `Subscription`. Use Helm 4, which applies adopted
-  resources with server-side apply, so the `Subscription` receives the rendered environment
-  variables. Helm 3 also accepts `--take-ownership` from version 3.17, but it does not patch an
-  adopted custom resource during `install`, so the `Subscription` keeps its previous configuration
-  while the release reports success.
-- The operator grants cluster scope only to the namespaces in `ARGOCD_CLUSTER_CONFIG_NAMESPACES`,
-  which the chart sets to `gitops.argoNamespace` plus `gitops.clusterScopedNamespaces`. List every
-  existing Argo CD instance that must keep cluster scope, such as the default one in
-  `openshift-gitops`. Set the same list in `config.gitops.clusterScopedNamespaces` so the
-  `openshift-gitops` policy keeps it after installation. See the
-  [values reference](values-reference.md#openshift-gitops).
-- `gitops.disableDefaultArgoCD` still applies in this mode. Set it to `false` to keep an existing
-  default instance, and set `config.gitops.defaultInstance: true` for the policy. The
-  `gitops-disable-default-argocd` label overrides `defaultInstance`, so also set that label to
-  `'false'` or remove it from the cluster set. `clusterScopedNamespaces` keeps an instance cluster
-  scoped. It does not keep the default instance from being removed.
-- AutoShift manages the whole `Subscription` environment variable list and sets only
-  `DISABLE_DEFAULT_ARGOCD_INSTANCE` and `ARGOCD_CLUSTER_CONFIG_NAMESPACES`, both at installation and
-  later through the `openshift-gitops` policy. Any other variable on the existing `Subscription` is
-  removed, and there is no value to carry it over. That is why the check before installation stops
-  on any other variable.
-- Run `skipOperatorInstall` mode only for the first installation over an existing operator. Do not
-  switch an existing release to it: Helm removes the fields the earlier release owned, and that
-  breaks the `Subscription`.
+2. Choose `gitops.clusterScopedNamespaces`. The operator grants cluster scope only to the namespaces
+   in `ARGOCD_CLUSTER_CONFIG_NAMESPACES`, which the chart sets to `gitops.argoNamespace` plus this
+   list. Include every namespace recorded in step 1 whose instance must keep cluster scope. An
+   instance left out loses its cluster-wide permissions.
+
+3. Choose `gitops.disableDefaultArgoCD`. Set it to `false` to keep an existing default instance in
+   `openshift-gitops`. Setting it to `true` makes the operator remove that instance. Keeping an
+   instance cluster-scoped in step 2 does not keep it from being removed.
+
+4. Install the chart with the values from steps 2 and 3:
+
+   ```console
+   helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml \
+     --set skipOperatorInstall=true \
+     --set gitops.argoNamespace=<argo-namespace> \
+     --set 'gitops.clusterScopedNamespaces={<namespace>,<namespace>}' \
+     --set gitops.disableDefaultArgoCD=<true-or-false> \
+     --take-ownership
+   ```
+
+   Run `skipOperatorInstall` mode only for the first installation over an existing operator. Do not
+   switch an existing release to it: Helm removes the fields the earlier release owned, and that
+   breaks the `Subscription`.
+
+5. Verify the result. Run the `oc get subscription` command from step 1 again and compare it with
+   what you requested:
+
+   - `ARGOCD_CLUSTER_CONFIG_NAMESPACES` lists `<argo-namespace>` and every namespace from step 2,
+     and no other namespace.
+   - `DISABLE_DEFAULT_ARGOCD_INSTANCE` equals the value from step 3.
+
+   A variable that is missing or holds a different value means the adoption did not update the
+   `Subscription`, and the operator keeps its previous configuration.
+
+6. Carry the same choices into AutoShift, so the `openshift-gitops` policy keeps them after it takes
+   over. In the configuration of the hub cluster set, set `config.gitops.clusterScopedNamespaces`
+   to the list from step 2. To keep the default instance, set `config.gitops.defaultInstance: true`
+   and set the `gitops-disable-default-argocd` label to `'false'` or remove it, because the label
+   overrides `defaultInstance`. See the [values reference](values-reference.md#openshift-gitops).
 
 After the installation is complete, verify that all the pods in the `openshift-gitops` namespace are running. This can take a few minutes depending on your network to even return anything.
 
