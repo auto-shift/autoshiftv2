@@ -118,10 +118,20 @@ open-cluster-management   multiclusterhub   Running      6m28s   2.13.2         
 > note there).
 
 > [!IMPORTANT]
-> If Red Hat OpenShift GitOps is already installed on the cluster, by any method including an earlier
-> Helm release, do not run the following command. Follow
-> [If Red Hat OpenShift GitOps is already installed](#if-red-hat-openshift-gitops-is-already-installed)
-> instead, which records the existing configuration before anything changes.
+> If Red Hat OpenShift GitOps is already installed on the cluster, find out how before running the
+> following command. `helm list -A --filter '^openshift-gitops$'` lists a release when this chart
+> installed it.
+>
+> - No release is listed, because the operator was installed from the console, with OLM or by another
+>   tool: do not run the following command. Follow
+>   [If Red Hat OpenShift GitOps is already installed](#if-red-hat-openshift-gitops-is-already-installed)
+>   instead.
+> - An `openshift-gitops` release is listed: that release already owns the `Subscription`, so keep
+>   using the following command, in the release's namespace and without `skipOperatorInstall` or
+>   `--take-ownership`. First complete steps 1 to 3 of
+>   [If Red Hat OpenShift GitOps is already installed](#if-red-hat-openshift-gitops-is-already-installed),
+>   add `--set` options for the `gitops.clusterScopedNamespaces` and `gitops.disableDefaultArgoCD`
+>   values chosen there, and verify the result with step 5.
 
 Using helm, install OpenShift GitOps:
 
@@ -186,9 +196,10 @@ through the `openshift-gitops` policy. Make every decision in steps 1 to 3 befor
      --take-ownership
    ```
 
-   Run `skipOperatorInstall` mode only for the first installation over an existing operator. Do not
+   Run `skipOperatorInstall` mode only when no `openshift-gitops` Helm release exists yet. Do not
    switch an existing release to it: Helm removes the fields the earlier release owned, and that
-   breaks the `Subscription`.
+   breaks the `Subscription`. An existing release keeps the standard command, as the note before
+   it describes.
 
 5. Verify the result. Run the `oc get subscription` command from step 1 again and compare it with
    what you requested:
