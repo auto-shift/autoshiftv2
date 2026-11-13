@@ -32,7 +32,7 @@ Your operator is now being deployed across your clusters. Check the ArgoCD dashb
 - [Contributing](#contributing)
 - [Troubleshooting](#troubleshooting)
 - [Additional Resources](#additional-resources)
-
+<a id="architecture-overview"></a>
 ## 🏗️ Architecture overview
 
 AutoShiftv2 orchestrates OpenShift infrastructure through a sophisticated GitOps and policy-driven architecture:
@@ -137,6 +137,7 @@ flowchart TD
 - **Placement matching**: Selects target clusters by using label expressions and cluster sets
 - **Dynamic behavior**: Same policy template produces different resources per cluster based on labels or config
 
+<a id="developer-setup"></a>
 ## 🛠️ Developer setup
 
 ### Prerequisites
@@ -261,7 +262,7 @@ workflow pins need the annotation.
 > | 1.19 | 3.1.9 | 3.18.4 | 5.7.0 | |
 >
 > Rows 1.20 through 1.22 come from the
-> [Red Hat OpenShift GitOps compatibility and support matrix](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.22/html/release_notes/gitops-release-notes),
+> [Red Hat OpenShift GitOps compatibility and support matrix](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/latest/html/release_notes/gitops-release-notes),
 > which carries the three most recent releases. Hub and managed cluster support for Red Hat
 > Advanced Cluster Management is in the
 > [2.17 support matrix](https://access.redhat.com/articles/7142376), published per version.
@@ -323,6 +324,7 @@ make install-policy-generator          # one-time: stages kustomize + PG plugin 
 cd tools && go test -tags integration -count=1 ./internal/resolver/... && cd ..
 ```
 
+<a id="creating-your-first-policy"></a>
 ## 💡 Creating your first policy
 
 ### Step 1: research your operator
@@ -431,6 +433,7 @@ git push
 oc get applications.argoproj.io -n openshift-gitops | grep my-component
 ```
 
+<a id="policy-development-guide"></a>
 ## 📚 Policy development guide
 
 ### Policy development workflow
@@ -464,7 +467,7 @@ channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-c
 # Using subscription name from labels
 name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subscription-name" | default "my-component-operator" {{ "hub}}" }}'
 ```
-
+<a id="hub-template-pitfalls"></a>
 ### Hub template pitfalls
 
 #### Where a hub template resolves
@@ -740,6 +743,7 @@ Placement decides which clusters get a policy. Dependencies decide the order in 
 on a given cluster. Neither is a global sequencer: policies are distributed in parallel, and a
 dependency only holds back the policy that declares it.
 
+<a id="common-development-tasks"></a>
 ## 🔧 Common Development Tasks
 
 ### Updating an Existing Policy
@@ -895,6 +899,7 @@ gitops: 'true'
 gitops-channel: gitops-1.22
 ```
 
+<a id="testing-and-validation"></a>
 ## 🧪 Testing and Validation
 
 ### Local Validation
@@ -977,6 +982,7 @@ oc get policies -A \
 oc get policyreports -A
 ```
 
+<a id="contributing"></a>
 ## 🤝 Contributing
 
 ### Contribution Workflow
@@ -1045,6 +1051,7 @@ oc get policyreports -A
 - [ ] No hard-coded values (use templates)
 - [ ] Add Labels to AutoShift Values files
 
+<a id="troubleshooting"></a>
 ## 🔍 Troubleshooting
 
 ### Common Issues and Solutions
@@ -1202,11 +1209,12 @@ oc describe operatorpolicy install-operator-acs -n $CLUSTER_NAME
 oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 ```
 
+<a id="additional-resources"></a>
 ## 📖 Additional Resources
 
 ### Documentation
 - `scripts/README.md`
-- [OpenShift GitOps Documentation](https://docs.openshift.com/container-platform/latest/cicd/gitops/understanding-openshift-gitops.html)
+- [OpenShift GitOps Documentation](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/latest/html/understanding_openshift_gitops/index)
 - [Red Hat Advanced Cluster Management Policy Framework](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes/)
 
 ### Training

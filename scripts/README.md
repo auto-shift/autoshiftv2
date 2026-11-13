@@ -686,4 +686,4 @@ Scripts that extract the operator catalog auto-detect the catalog version from t
 ## 📚 See Also
 
 - [AutoShift Developer Guide](../docs/developer-guide.md)
-- [oc-mirror Documentation](https://docs.openshift.com/container-platform/latest/installing/disconnected_install/installing-mirroring-disconnected.html)
+- [oc-mirror Documentation](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/disconnected_environments/index)

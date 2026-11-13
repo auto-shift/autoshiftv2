@@ -924,7 +924,7 @@ The AWS account needs sufficient IAM permissions to create virtual private cloud
 
 You can use either:
 - **Long-lived credentials**: IAM user with access key and secret key
-- **STS (temporary credentials)**: See [Installing with STS](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/installing_on_aws/installing-aws-customizations#installing-aws-with-short-term-creds_installing-aws-customizations)
+- **STS (temporary credentials)**: See [Installing with STS](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/installing_on_aws/installer-provisioned-infrastructure#installing-aws-with-short-term-creds_installing-aws-customizations)
 
 #### Generate SSH keys
 
