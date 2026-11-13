@@ -23,6 +23,13 @@
 # well as the channel head. A pin the catalog channel lacks fails generation (a warning with
 # --all-operators). Reading pins needs yq v4 (mikefarah).
 #
+# GATEWAY API:
+# On OpenShift 4.19 and later the ingress operator provides the Gateway API with an istiod built from
+# the images of one OpenShift Service Mesh 3 CSV, the one its release payload names. The istiod image is
+# not in the payload. No values file asks for that CSV, so when an operator that needs the Gateway API
+# is mirrored, or with --all-operators, that CSV is added, read from the release payload.
+# --gateway-api-version overrides it.
+#
 # Usage: ./generate-imageset-config.sh <values-files> [options]
 # Example: ./generate-imageset-config.sh values/clustersets/hub.yaml
 # Example: ./generate-imageset-config.sh values/clustersets/hub.yaml,values/clustersets/sbx.yaml --openshift-version 4.20
@@ -61,6 +68,7 @@ ALL_OPERATORS=false
 AUTOSHIFT_REGISTRY=""
 AUTOSHIFT_VERSION=""
 DEPENDENCIES_FILE=""
+GATEWAY_API_VERSION=""  # --gateway-api-version: a servicemeshoperator3 CSV or version, or 'none'
 
 # Script directory for relative paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -429,7 +437,8 @@ collect_version_pins() {
     fi
 }
 
-# Set PIN_RANGES to "channel|minVersion|csv,csv" lines for a package's pinned channels. minVersion is the
+# Set PIN_RANGES to "channel|minVersion|maxVersion|csv,csv" lines for a package's pinned channels, with
+# maxVersion empty. minVersion is the
 # lowest pinned version in that channel, and no maxVersion is set: oc-mirror then copies every bundle
 # from it to the channel head, so the pinned CSVs, the upgrades between them, and the head a cluster
 # tracking the channel installs are all mirrored. From a cached catalog the version and channels of
@@ -508,8 +517,223 @@ resolve_pin_ranges() {
         [[ -z "$lines" ]] && continue
         min=$(cut -d'|' -f2 <<< "$lines" | sort -V | head -1)
         list=$(cut -d'|' -f3 <<< "$lines" | sort -u | paste -sd, -)
-        PIN_RANGES+="$channel|$min|$list"$'\n'
+        PIN_RANGES+="$channel|$min||$list"$'\n'
     done
+}
+
+# ============================================================================
+# GATEWAY API
+# On OpenShift 4.19 and later the ingress operator provides the Gateway API. Its deployment in the
+# release payload names one OpenShift Service Mesh 3 CSV in GATEWAY_API_OPERATOR_VERSION, for example
+# servicemeshoperator3.v3.3.1 on 4.22.18 while the stable head is 3.4 or later. Earlier releases
+# installed that CSV through OLM. On 4.22.18 the ingress operator no longer does (Red Hat solution
+# 7143483): it runs istiod itself (Deployment openshift-ingress/istiod-openshift-gateway, Istio
+# ISTIO_VERSION 1.28.5), and the istio-pilot image it runs is the one that CSV lists as
+# images_v1_28_5_istiod. Either way the image comes only from that CSV's bundle and is not in the
+# release payload. No values file names the CSV and nothing declares it as an OLM dependency, so
+# without this the mirror has no istiod and no Gateway, and every Gateway API consumer fails
+# disconnected.
+# ============================================================================
+GATEWAY_API_PACKAGE="servicemeshoperator3"
+# Mirrored operators that need the Gateway API: Connectivity Link and Red Hat OpenShift AI, whose
+# Models-as-a-Service and llm-d serving run on a Gateway. Add a package here when another needs it.
+GATEWAY_API_CONSUMERS="rhcl-operator rhods-operator"
+GATEWAY_API_CHANNEL=""   # channel of the CSV the ingress operator names
+GATEWAY_API_CSVS=""      # CSVs it names across the mirrored OpenShift releases, space-separated
+GATEWAY_API_NOTE=""      # where they were read from, for the imageset comment
+GATEWAY_API_EXACT=false  # true when no values file asks for that channel, so its head is not needed
+
+# Print "channel|csv|catalog source" for an OpenShift release, read from the ingress operator
+# deployment in its release payload, or nothing when the release has no Gateway API operator.
+# Cached under the catalog cache, since a release payload never changes. Fails when unreadable.
+gateway_api_operator_for_release() {
+    local release="$1"
+    local cache_dir="$CATALOG_CACHE_DIR/gateway-api-operator"
+    local cache_file="$cache_dir/$release"
+    if [[ -f "$cache_file" ]]; then
+        cat "$cache_file"
+        return 0
+    fi
+    command -v oc &> /dev/null || return 1
+    local image="quay.io/openshift-release-dev/ocp-release:${release}-x86_64"
+    local manifest="0000_50_cluster-ingress-operator_02-deployment.yaml"
+    local dir="$LOCAL_TMP/release-manifests.$$"
+    local auth=() ps
+    if [[ -z "${REGISTRY_AUTH_FILE:-}" ]]; then
+        for ps in "$PROJECT_ROOT/pull-secret.json" "$PROJECT_ROOT/pull-secret.txt"; do
+            [[ -f "$ps" ]] && { auth=(--registry-config "$ps"); break; }
+        done
+    fi
+    rm -rf "$dir" && mkdir -p "$dir"
+    if ! oc image extract "${auth[@]}" "$image" --path "/release-manifests/${manifest}:$dir" --confirm > /dev/null 2>&1 \
+        || [[ ! -f "$dir/$manifest" ]]; then
+        rm -rf "$dir"
+        return 1
+    fi
+    local env
+    env=$(yq -r '.spec.template.spec.containers[].env[] | select(.name | test("^GATEWAY_API_OPERATOR_")) | .name + "=" + .value' \
+        "$dir/$manifest" 2>/dev/null)
+    rm -rf "$dir"
+    local channel csv catalog
+    channel=$(sed -n 's/^GATEWAY_API_OPERATOR_CHANNEL=//p' <<< "$env")
+    csv=$(sed -n 's/^GATEWAY_API_OPERATOR_VERSION=//p' <<< "$env")
+    catalog=$(sed -n 's/^GATEWAY_API_OPERATOR_CATALOG=//p' <<< "$env")
+    mkdir -p "$cache_dir"
+    if [[ -n "$csv" ]]; then
+        echo "${channel:-stable}|$csv|$catalog" > "$cache_file"
+    else
+        : > "$cache_file"
+    fi
+    cat "$cache_file"
+}
+
+# Set GATEWAY_API_CHANNEL, GATEWAY_API_CSVS and GATEWAY_API_NOTE when the imageset needs the
+# Gateway API operator. Reads the payload of each mirrored OpenShift release: the --min-version and
+# --max-version ends when given, otherwise the X.Y.Z version. An X.Y version names no single payload.
+resolve_gateway_api_operator() {
+    local packages=" $1 "
+    GATEWAY_API_CSVS=""
+    [[ "$GATEWAY_API_VERSION" == "none" ]] && return 0
+
+    local consumer="" pkg
+    for pkg in $GATEWAY_API_CONSUMERS; do
+        [[ "$packages" == *" $pkg "* ]] && { consumer="$pkg"; break; }
+    done
+    if [[ -z "$consumer" && "$ALL_OPERATORS" != "true" ]]; then
+        return 0
+    fi
+    local why="${consumer:+$consumer needs the Gateway API}"
+    why="${why:---all-operators mirrors every operator}"
+
+    local minor
+    minor=$(get_catalog_version)
+    if [[ "${minor%%.*}" -eq 4 && "${minor#*.}" -lt 19 ]]; then
+        return 0
+    fi
+
+    if [[ -n "$GATEWAY_API_VERSION" ]]; then
+        local csv="$GATEWAY_API_VERSION"
+        [[ "$csv" == "$GATEWAY_API_PACKAGE".* ]] || csv="$GATEWAY_API_PACKAGE.v${csv#v}"
+        GATEWAY_API_CHANNEL="stable"
+        GATEWAY_API_CSVS="$csv"
+        GATEWAY_API_NOTE="Gateway API from --gateway-api-version"
+        log_step "Gateway API operator: $csv from --gateway-api-version ($why)"
+        return 0
+    fi
+
+    local releases="" releases_read="" release info channel csv catalog
+    for release in "$MIN_VERSION" "$MAX_VERSION"; do
+        [[ "$release" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && " $releases " != *" $release "* ]] && releases+="$release "
+    done
+    if [[ -z "$releases" && "$OPENSHIFT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        releases="$OPENSHIFT_VERSION"
+    fi
+    if [[ -z "$releases" ]]; then
+        log_warning "$why, but OpenShift $OPENSHIFT_VERSION names no single release to read the $GATEWAY_API_PACKAGE version from"
+        log_warning "Mirroring its $GATEWAY_API_PACKAGE stable head, which may not carry the istiod the ingress operator runs. Use an X.Y.Z --openshift-version or --gateway-api-version"
+        GATEWAY_API_UNRESOLVED="OpenShift $OPENSHIFT_VERSION names no single release"
+        return 0
+    fi
+    for release in $releases; do
+        if ! info=$(gateway_api_operator_for_release "$release"); then
+            log_warning "$why, but the $release release payload could not be read for the $GATEWAY_API_PACKAGE version"
+            log_warning "Mirroring its stable head, which may not carry the istiod the ingress operator runs. Check access to quay.io, or use --gateway-api-version"
+            GATEWAY_API_CSVS=""
+            GATEWAY_API_UNRESOLVED="the $release release payload could not be read"
+            return 0
+        fi
+        [[ -z "$info" ]] && continue
+        IFS='|' read -r channel csv catalog <<< "$info"
+        GATEWAY_API_CHANNEL="$channel"
+        [[ " $GATEWAY_API_CSVS " == *" $csv "* ]] || GATEWAY_API_CSVS+="$csv "
+        releases_read+="$release "
+        log_step "Gateway API operator for OpenShift $release: $csv, channel $channel, CatalogSource $catalog ($why)"
+    done
+    GATEWAY_API_CSVS="${GATEWAY_API_CSVS% }"
+    releases_read="${releases_read% }"
+    GATEWAY_API_NOTE="Gateway API on OpenShift ${releases_read// / and }"
+}
+GATEWAY_API_UNRESOLVED=""
+
+# Add the Gateway API operator's channel to the redhat-operators package list, merging with an entry a
+# values file already made for the same package. Sets MERGED_PACKAGES to the new list.
+MERGED_PACKAGES=""
+merge_gateway_api_package() {
+    local packages="$1"
+    local out="" package_info name channels found=false
+    GATEWAY_API_EXACT=true
+    for package_info in $packages; do
+        IFS='|' read -r name channels <<< "$package_info"
+        if [[ "$name" == "$GATEWAY_API_PACKAGE" ]]; then
+            found=true
+            if [[ ",$channels," == *",$GATEWAY_API_CHANNEL,"* ]]; then
+                GATEWAY_API_EXACT=false
+            else
+                channels+=",$GATEWAY_API_CHANNEL"
+            fi
+            package_info="$name|$channels"
+        fi
+        out+="$package_info "
+    done
+    [[ "$found" == "true" ]] || out+="$GATEWAY_API_PACKAGE|$GATEWAY_API_CHANNEL "
+    MERGED_PACKAGES="$out"
+}
+
+# Fold the Gateway API CSVs into PIN_RANGES for their channel. When a values file asks for that channel
+# they become pins like any other and the head is kept; otherwise the channel is mirrored from the
+# lowest to the highest of them and nothing more. A CSV the channel lacks fails generation, or is a
+# warning with --all-operators.
+apply_gateway_api_range() {
+    local catalog_image="$1"
+    local channel="$GATEWAY_API_CHANNEL" csv version in_channels resolved="" versions=""
+    local configs_dir
+    configs_dir=$(get_catalog_cache_configs "$catalog_image")
+    if [[ -n "$configs_dir" && -d "$configs_dir/$GATEWAY_API_PACKAGE" ]]; then
+        # shellcheck disable=SC2016 # jq variables, not shell expansions
+        resolved=$(catalog_fbc_json "$configs_dir/$GATEWAY_API_PACKAGE" | jq -rs --arg want "$GATEWAY_API_CSVS" '
+            . as $all | ($want | split(" ") | map(select(. != "")))[] as $c
+            | ([$all[] | select(.schema == "olm.bundle" and .name == $c) | .properties[]
+                | select(.type == "olm.package") | .value.version] | first // "") as $v
+            | ([$all[] | select(.schema == "olm.channel" and any(.entries[]; .name == $c)) | .name]
+                | join(",")) as $ch
+            | "\($c)|\($v)|\($ch)"')
+    else
+        for csv in $GATEWAY_API_CSVS; do
+            resolved+="$csv|${csv#"$GATEWAY_API_PACKAGE".v}|$channel"$'\n'
+        done
+    fi
+    local good=""
+    while IFS='|' read -r csv version in_channels; do
+        [[ -z "$csv" ]] && continue
+        if [[ -n "$version" && ",$in_channels," == *",$channel,"* ]]; then
+            versions+="$version "
+            good+="$csv,"
+        elif [[ "$ALL_OPERATORS" == "true" ]]; then
+            log_warning "Gateway API operator $csv is not in channel $channel of ${catalog_image##*/}; not mirrored"
+        else
+            log_error "Gateway API operator $csv is not in channel $channel of ${catalog_image##*/}"
+            return 1
+        fi
+    done <<< "$resolved"
+    [[ -z "$versions" ]] && return 0
+
+    local min="" max="" csvs=""
+    if [[ "$GATEWAY_API_EXACT" == "true" ]]; then
+        # The channel is here only for the ingress operator. A values-file pin that resolve_pin_ranges
+        # also placed on it is mirrored through the channel the values file asked for.
+        versions=$(echo $versions | tr ' ' '\n' | sort -V)
+        max=$(tail -1 <<< "$versions")
+    else
+        IFS='|' read -r _ min _ csvs <<< "$(grep "^${channel}|" <<< "$PIN_RANGES" || true)"
+        # A CSV a values file also pins is named once, with the note
+        csvs=$(tr ',' '\n' <<< "$csvs" | grep -vxF -e "${good//,/$'\n'}" | paste -sd, - || true)
+        versions=$(echo $versions $min | tr ' ' '\n' | grep -v '^$' | sort -V)
+    fi
+    min=$(head -1 <<< "$versions")
+    good="${good%,}"
+    csvs="${csvs:+$csvs,}$good ($GATEWAY_API_NOTE)"
+    PIN_RANGES=$(grep -v "^${channel}|" <<< "$PIN_RANGES" || true)
+    PIN_RANGES+=$'\n'"$channel|$min|$max|$csvs"$'\n'
 }
 
 # Append one catalog and its packages (VALID_PACKAGES) to the ImageSetConfiguration
@@ -524,6 +748,9 @@ write_catalog_packages() {
         [[ -z "$package_info" ]] && continue
         IFS='|' read -r name channels <<< "$package_info"
         resolve_pin_ranges "$name" "$channels" "$catalog_image" || return 1
+        if [[ "$name" == "$GATEWAY_API_PACKAGE" && -n "$GATEWAY_API_CSVS" ]]; then
+            apply_gateway_api_range "$catalog_image" || return 1
+        fi
         echo "    - name: $name" >> "$output_file"
         if [[ "$name" == cloudnative-pg ]]; then
             CNPG_CHANNELS="$channels"
@@ -543,12 +770,18 @@ write_catalog_packages() {
             channel=$(echo "$channel" | xargs)
             [[ -z "$channel" ]] && continue
             echo "      - name: $channel" >> "$output_file"
-            local range min csvs
+            local range min max csvs
             range=$(grep "^${channel}|" <<< "$PIN_RANGES" || true)
             if [[ -n "$range" ]]; then
-                IFS='|' read -r _ min csvs <<< "$range"
-                echo "        minVersion: $min  # pinned: ${csvs//,/, }; the channel head is kept" >> "$output_file"
-                log_step "Pinned $name channel $channel from $min ($csvs) to the channel head"
+                IFS='|' read -r _ min max csvs <<< "$range"
+                if [[ -n "$max" ]]; then
+                    echo "        minVersion: $min  # pinned: ${csvs//,/, }" >> "$output_file"
+                    echo "        maxVersion: $max" >> "$output_file"
+                    log_step "Pinned $name channel $channel to $min - $max ($csvs)"
+                else
+                    echo "        minVersion: $min  # pinned: ${csvs//,/, }; the channel head is kept" >> "$output_file"
+                    log_step "Pinned $name channel $channel from $min ($csvs) to the channel head"
+                fi
             fi
         done
     done
@@ -687,6 +920,9 @@ usage() {
     echo "  --all-operators                Mirror every operator the values files declare with"
     echo "                                 <label>-subscription-name, enabled or not. Use with the"
     echo "                                 _example*.yaml files, the label contract CI enforces, for a release"
+    echo "  --gateway-api-version VERSION  servicemeshoperator3 CSV or version the ingress operator names"
+    echo "                                 for the Gateway API (e.g. servicemeshoperator3.v3.3.1), instead"
+    echo "                                 of reading it from the release payload; 'none' leaves it out"
     echo "  --help                         Show this help message"
     echo ""
     echo "Examples:"
@@ -707,6 +943,11 @@ usage() {
     echo "  No maxVersion is set, so oc-mirror copies every bundle from that version to the channel"
     echo "  head. A pinned CSV the channel does not carry fails generation; with --all-operators it"
     echo "  is a warning and the pin is left out."
+    echo ""
+    echo "Gateway API (OpenShift 4.19+):"
+    echo "  When $GATEWAY_API_CONSUMERS is mirrored, or with --all-operators,"
+    echo "  servicemeshoperator3 is added at the CSV the OpenShift ingress operator names, read from"
+    echo "  the release payload of each X.Y.Z release mirrored (needs oc and access to quay.io)."
 }
 
 # Parse command line arguments
@@ -761,6 +1002,10 @@ while [[ $# -gt 0 ]]; do
         --all-operators)
             ALL_OPERATORS=true
             shift
+            ;;
+        --gateway-api-version)
+            GATEWAY_API_VERSION="$2"
+            shift 2
             ;;
         --help)
             usage
@@ -1515,6 +1760,22 @@ EOF
                 fi
             fi
 
+            # The Service Mesh CSV whose istiod the ingress operator runs, for operators that need it
+            local mirrored_names="" package_info
+            for package_info in $redhat_operators $community_operators $certified_operators; do
+                mirrored_names+="${package_info%%|*} "
+            done
+            resolve_gateway_api_operator "$mirrored_names"
+            if [[ -n "$GATEWAY_API_CSVS" ]]; then
+                merge_gateway_api_package "$redhat_operators"
+                redhat_operators="$MERGED_PACKAGES"
+            elif [[ -n "$GATEWAY_API_UNRESOLVED" && " $mirrored_names " != *" $GATEWAY_API_PACKAGE "* ]]; then
+                # The CSV is unknown, so mirror the channel head and say so in the imageset
+                GATEWAY_API_CHANNEL="stable"
+                merge_gateway_api_package "$redhat_operators"
+                redhat_operators="$MERGED_PACKAGES"
+            fi
+
             # Generate each catalog that has operators
             local catalog_ver
             catalog_ver=$(get_catalog_version)
@@ -1539,6 +1800,9 @@ EOF
                 log_step "Added catalog: certified-operator-index"
             fi
 
+            if [[ -n "$GATEWAY_API_UNRESOLVED" ]]; then
+                echo "  # $GATEWAY_API_PACKAGE is the channel head only: $GATEWAY_API_UNRESOLVED, so the CSV whose istiod the ingress operator runs for the Gateway API is unknown. Rerun with --gateway-api-version" >> "$output_file"
+            fi
             if [[ -n "$SKIPPED_PACKAGES" ]]; then
                 echo "  # Declared but not in the catalog for this OpenShift version, so not mirrored: $SKIPPED_PACKAGES" >> "$output_file"
                 log_warning "Not mirrored, absent from the catalog: $SKIPPED_PACKAGES"

@@ -280,7 +280,9 @@ dependencies, the main, bootstrap and policy charts, the console plugin image, a
 components pull outside their operator. An operator the Red Hat catalog does not carry for the
 OpenShift version is left out and named in a comment in the file. A channel that a values file pins
 through `config.<operator>.versions` or the `<operator>-version` label is mirrored from the lowest
-pinned version to the channel head, rather than the head alone, so a pinned cluster can install.
+pinned version to the channel head, rather than the head alone, so a pinned cluster can install. On
+OpenShift 4.19 and later it also holds the OpenShift Service Mesh 3 CSV whose `istiod` image the
+ingress operator runs for the Gateway API, read from the release payload, which no values file names.
 
 ```bash
 make generate-imageset VERSION=X.Y.Z   # the release imageset, in release-artifacts/

@@ -396,6 +396,7 @@ This script automatically:
 - Checks every requested package and channel against the Red Hat, certified and community catalogs, and fails on one that does not exist
 - Adds `defaultChannel` for each operator package (required by oc-mirror)
 - Mirrors the CSVs that values files pin, not only the channel head (see [Version pins](#version-pins))
+- Mirrors the OpenShift Service Mesh 3 CSV whose istiod the ingress operator runs for the Gateway API (see [Gateway API operator](#gateway-api-operator))
 - Deduplicates cross-catalog dependencies (e.g., certified operators won't be added to the redhat catalog)
 - Generates a complete `ImageSetConfiguration` with `apiVersion: mirror.openshift.io/v2alpha1`
 
@@ -473,11 +474,55 @@ release imageset still honors the ones that resolve, so the example values insta
 When the catalog is not cached, as with `--dependencies-file`, the version is read from the CSV name
 and applied to every requested channel, with a warning that it was not checked.
 
+### Gateway API operator
+
+On OpenShift 4.19 and later the cluster ingress operator provides the Gateway API with OpenShift
+Service Mesh 3 (`servicemeshoperator3`). The `GATEWAY_API_OPERATOR_VERSION` variable of its deployment
+in the release payload names one CSV: `servicemeshoperator3.v3.3.1` on OpenShift 4.22.18, while the
+head of the `stable` channel is 3.4 or later. Earlier releases installed that CSV through OLM. On
+4.22.18 the ingress operator no longer does (Red Hat solution 7143483): it runs `istiod` itself
+(Deployment `openshift-ingress/istiod-openshift-gateway`, Istio 1.28.5 from its `ISTIO_VERSION`), using
+the `istio-pilot` image that the CSV lists as `images_v1_28_5_istiod`. That image is not in the release
+payload, and that bundle is the only one in `redhat-operator-index` that carries it. No values file
+asks for the CSV and no operator declares it as a dependency, so without this step the mirror has no
+`istiod` and no Gateway. Red Hat Connectivity Link, Red Hat OpenShift AI
+Models-as-a-Service, and anything else built on the Gateway API then fail disconnected.
+
+The generator adds it when an operator in `GATEWAY_API_CONSUMERS` is mirrored (`rhcl-operator` and
+`rhods-operator`; add a package there when another needs the Gateway API), or always with
+`--all-operators`. It reads the CSV from the release payload of each mirrored OpenShift release: the
+`--min-version` and `--max-version` ends when set, otherwise the X.Y.Z OpenShift version. This needs `oc`
+and access to `quay.io`, and the result is cached under `.cache/catalog-cache/gateway-api-operator/`.
+
+```yaml
+    - name: servicemeshoperator3
+      defaultChannel: stable
+      channels:
+      - name: stable
+        minVersion: 3.3.1  # pinned: servicemeshoperator3.v3.3.1 (Gateway API on OpenShift 4.22.18)
+        maxVersion: 3.3.1
+```
+
+When nothing else asks for that channel, the range runs from the lowest to the highest CSV those
+releases name and stops there. When a values file enables `servicemesh3operator` on the same channel,
+the package is listed once and the CSV becomes one more pin, so the channel head is kept. A different
+channel from the values file is kept beside it.
+
+`--gateway-api-version` sets the CSV (`servicemeshoperator3.v3.3.1` or `3.3.1`) instead of reading the
+payload, and `--gateway-api-version none` leaves it out. The CSV cannot be determined when the
+OpenShift version is X.Y or the payload cannot be read. The generator then warns, mirrors the channel
+head, and writes a comment saying so into the imageset.
+
+On releases where the ingress operator still installs the CSV through OLM, it subscribes from the
+`CatalogSource` that `GATEWAY_API_OPERATOR_CATALOG` names, `redhat-operators`, so a disconnected cluster
+must serve the mirrored Red Hat catalog under that name. On 4.22.18 it creates no Subscription, and the
+catalog name does not matter; only the `istiod` image has to be in the mirror.
+
 ### Requirements
 
 - `oc` CLI installed (for catalog extraction)
 - `jq` installed (for JSON parsing)
-- `yq` v4, the Go implementation (for reading version pins)
+- `yq` v4, the Go implementation (for reading version pins and the release payload)
 - Pull secret in the repo root (`pull-secret.json` or `pull-secret.txt`) or `REGISTRY_AUTH_FILE` env var
 - Operators must have `{operator}-subscription-name` labels in values files
 

@@ -62,6 +62,13 @@ func repoRoot(t *testing.T) string {
 // ImageSetConfiguration (nil when the script failed) and the exit error.
 func generate(t *testing.T, extraArgs []string, values ...string) (string, *imageSet, error) {
 	t.Helper()
+	return generateWith(t, nil, extraArgs, values...)
+}
+
+// generateWith also seeds the release payload cache: each key is an OpenShift release, each value the
+// "channel|csv|catalog source" line the script would read from that release's ingress operator.
+func generateWith(t *testing.T, payloads map[string]string, extraArgs []string, values ...string) (string, *imageSet, error) {
+	t.Helper()
 	for _, tool := range []string{"bash", "jq", "yq"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s not installed", tool)
@@ -79,6 +86,17 @@ func generate(t *testing.T, extraArgs []string, values ...string) (string, *imag
 	configs := filepath.Join(cache, hex.EncodeToString(sum[:]), "configs")
 	if err := os.CopyFS(configs, os.DirFS(filepath.Join(testdata, "catalog"))); err != nil {
 		t.Fatal(err)
+	}
+	if len(payloads) > 0 {
+		dir := filepath.Join(cache, "gateway-api-operator")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for release, line := range payloads {
+			if err := os.WriteFile(filepath.Join(dir, release), []byte(line+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 
 	files := make([]string, len(values))
@@ -202,5 +220,113 @@ func TestPinMissingFromCatalogWarnsWithAllOperators(t *testing.T) {
 	}
 	if c := got["quay-operator/stable-3.18"]; c.MinVersion != "3.18.0" {
 		t.Errorf("quay-operator/stable-3.18 minVersion = %q, want 3.18.0", c.MinVersion)
+	}
+}
+
+// The ingress operator on 4.22.18 names servicemeshoperator3.v3.3.1 and runs its istiod for the Gateway API
+var payload42218 = map[string]string{"4.22.18": "stable|servicemeshoperator3.v3.3.1|redhat-operators"}
+
+func TestGatewayAPIOperatorFromReleasePayload(t *testing.T) {
+	log, set, err := generateWith(t, payload42218, []string{"--openshift-version", "4.22.18"}, "gateway-consumer.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	c, ok := channels(t, set)["servicemeshoperator3/stable"]
+	if !ok {
+		t.Fatalf("servicemeshoperator3 is not mirrored although rhcl-operator needs the Gateway API:\n%s", log)
+	}
+	// Nothing else asks for it, so exactly the CSV the ingress operator names
+	if c.MinVersion != "3.3.1" || c.MaxVersion != "3.3.1" {
+		t.Errorf("servicemeshoperator3/stable = %q - %q, want 3.3.1 - 3.3.1", c.MinVersion, c.MaxVersion)
+	}
+}
+
+func TestGatewayAPIOperatorMergesWithServiceMeshLabels(t *testing.T) {
+	log, set, err := generateWith(t, payload42218, []string{"--openshift-version", "4.22.18"},
+		"gateway-consumer.yaml", "servicemesh.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	got := channels(t, set)
+	c := got["servicemeshoperator3/stable"]
+	// The values files track stable from 3.5.0, so the head stays and the range reaches down to 3.3.1
+	if c.MinVersion != "3.3.1" || c.MaxVersion != "" {
+		t.Errorf("servicemeshoperator3/stable = %q - %q, want 3.3.1 to the head", c.MinVersion, c.MaxVersion)
+	}
+	n := 0
+	for _, op := range set.Mirror.Operators {
+		for _, p := range op.Packages {
+			if p.Name == "servicemeshoperator3" {
+				n++
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("servicemeshoperator3 is listed %d times, want once", n)
+	}
+}
+
+func TestGatewayAPIOperatorAddsItsOwnChannel(t *testing.T) {
+	log, set, err := generateWith(t, payload42218, []string{"--openshift-version", "4.22.18"},
+		"gateway-consumer.yaml", "servicemesh-3.5.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	got := channels(t, set)
+	if c := got["servicemeshoperator3/stable-3.5"]; c.MinVersion != "3.5.0" || c.MaxVersion != "" {
+		t.Errorf("servicemeshoperator3/stable-3.5 = %q - %q, want 3.5.0 to the head", c.MinVersion, c.MaxVersion)
+	}
+	if c := got["servicemeshoperator3/stable"]; c.MinVersion != "3.3.1" || c.MaxVersion != "3.3.1" {
+		t.Errorf("servicemeshoperator3/stable = %q - %q, want 3.3.1 - 3.3.1", c.MinVersion, c.MaxVersion)
+	}
+}
+
+func TestGatewayAPIOperatorOverride(t *testing.T) {
+	log, set, err := generate(t, []string{"--gateway-api-version", "3.3.2"}, "gateway-consumer.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	if c := channels(t, set)["servicemeshoperator3/stable"]; c.MinVersion != "3.3.2" || c.MaxVersion != "3.3.2" {
+		t.Errorf("servicemeshoperator3/stable = %q - %q, want 3.3.2 - 3.3.2", c.MinVersion, c.MaxVersion)
+	}
+	log, set, err = generate(t, []string{"--gateway-api-version", "none"}, "gateway-consumer.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	if _, ok := channels(t, set)["servicemeshoperator3/stable"]; ok {
+		t.Errorf("--gateway-api-version none still mirrored servicemeshoperator3")
+	}
+}
+
+func TestGatewayAPIOperatorOnlyForConsumers(t *testing.T) {
+	log, set, err := generateWith(t, payload42218, []string{"--openshift-version", "4.22.18"}, "clusterset.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	if _, ok := channels(t, set)["servicemeshoperator3/stable"]; ok {
+		t.Errorf("servicemeshoperator3 mirrored although no Gateway API consumer is")
+	}
+}
+
+// An X.Y version names no single release payload, so the CSV is unknown. Say so, in the log and in
+// the imageset, rather than look complete.
+func TestGatewayAPIOperatorUnknownVersionIsFlagged(t *testing.T) {
+	log, set, err := generate(t, nil, "gateway-consumer.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	c, ok := channels(t, set)["servicemeshoperator3/stable"]
+	if !ok || c.MinVersion != "" {
+		t.Errorf("servicemeshoperator3/stable = %+v (present %v), want the channel head", c, ok)
+	}
+	if !strings.Contains(log, "--gateway-api-version") {
+		t.Errorf("no warning points at --gateway-api-version:\n%s", log)
+	}
+}
+
+func TestGatewayAPIOperatorMissingFromCatalogFails(t *testing.T) {
+	log, _, err := generate(t, []string{"--gateway-api-version", "servicemeshoperator3.v3.0.0-tp.1"}, "gateway-consumer.yaml")
+	if err == nil {
+		t.Fatalf("a Gateway API CSV the stable channel lacks should fail generation:\n%s", log)
 	}
 }
