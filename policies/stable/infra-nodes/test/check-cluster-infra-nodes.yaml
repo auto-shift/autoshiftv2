@@ -1,4 +1,28 @@
+# Are the infra nodes up? The workload moves (ingress, monitoring, registry, GitOps) wait on this.
+# MachineSet providers: each infra MachineSet has the expected ready replicas. Bare metal: every node
+# in config.infraNodes.nodes is Ready and carries the infra role. An empty bare-metal list fails, so
+# the check never reports Compliant having checked nothing.
 object-templates-raw: |
+  {{hub- $provider := (index .ManagedClusterLabels "autoshift.io/infra-nodes-provider" | default "") hub}}
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $hubNodes := (index (index $cfg "infraNodes" | default dict) "nodes" | default list) hub}}
+  {{hub- if and (eq $provider "baremetal") (not $hubNodes) hub}}{{hub fail "config.infraNodes.nodes is empty. Bare-metal infra nodes are listed there by Node name." hub}}{{hub- end hub}}
+  {{- if eq "{{hub $provider hub}}" "baremetal" }}
+  {{- range $n := (`{{hub $hubNodes | toRawJson hub}}` | fromYaml) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ index $n "name" }}
+        labels:
+          node-role.kubernetes.io/infra: ''
+      status:
+        conditions:
+          - type: Ready
+            status: 'True'
+  {{- end }}
+  {{- else }}
   {{- /* Specify the parameters needed to create the MachineSet  */ -}}
   {{- $machineset_role := "infra" }}
   {{- $zones_from_labels := list {{hub range $label, $labelvalue := .ManagedClusterLabels hub}}{{hub if $label | hasPrefix "autoshift.io/infra-nodes-zone" hub}}"{{hub $labelvalue hub}}"{{hub end hub}}{{hub end hub}} }}
@@ -22,4 +46,5 @@ object-templates-raw: |
         namespace: openshift-machine-api
       status:
         readyReplicas: {{hub index .ManagedClusterLabels "autoshift.io/infra-nodes" hub}}
+  {{- end }}
   {{- end }}

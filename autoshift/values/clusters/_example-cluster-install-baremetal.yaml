@@ -298,6 +298,51 @@ clusters:
       #         node: 0                    # Optional: NUMA node
 
       # =====================================================================
+      # Infra and storage nodes on bare metal
+      # =====================================================================
+      # Bare metal has no MachineSet, so existing nodes are listed by Node name (oc get nodes) and
+      # labeled and tainted in place. Requires infra-nodes-provider / storage-nodes-provider:
+      # 'baremetal' and a nonzero infra-nodes / storage-nodes count; the count is only the on switch
+      # for infra, and must equal the number of listed nodes for storage. Dropping a node or a taint
+      # from these lists does NOT remove it from the node. List a taint under removeTaints to remove
+      # it; it wins over taints and the defaults, and an entry without an effect matches every effect
+      # of its key. Labels are never removed: see docs/values-reference.md, "Bare-metal nodes".
+      infraNodes:
+        nodes:
+          # No taints key: the infra MachineSet taints, node-role.kubernetes.io/infra NoSchedule and
+          # NoExecute, which the moved ingress, monitoring, registry and GitOps pods tolerate. This
+          # node keeps NoSchedule only, so running pods without the toleration are not evicted.
+          - name: 'infra-0.test-cluster.test.example.com'
+            removeTaints:
+              - key: 'node-role.kubernetes.io/infra'
+                effect: 'NoExecute'
+          # Custom taints replace the defaults. Workloads tolerate only node-role.kubernetes.io/infra,
+          # so any other taint keeps them off this node. taints: [] leaves the node untainted.
+          - name: 'worker-0.test-cluster.test.example.com'
+            taints:
+              - key: 'node-role.kubernetes.io/infra'
+                effect: 'NoSchedule'
+      storageNodes:
+        # Label storage nodes node-role.kubernetes.io/infra as well (default true). false keeps them
+        # out of the infra role and the infra MachineConfigPool.
+        infraRole: false
+        # Wins over the storage-nodes-node-* labels. No taints key means no taints.
+        nodes:
+          - name: 'worker-1.test-cluster.test.example.com'
+            taints:
+              - key: 'node.ocs.openshift.io/storage'
+                value: 'true'
+                effect: 'NoSchedule'
+            # No effect: removes every effect of this key.
+            removeTaints:
+              - key: 'example.com/legacy'
+          - name: 'worker-2.test-cluster.test.example.com'
+            taints:
+              - key: 'node.ocs.openshift.io/storage'
+                value: 'true'
+                effect: 'NoSchedule'
+
+      # =====================================================================
       # Cluster Install — install-specific config
       # =====================================================================
       clusterInstall:

@@ -553,7 +553,7 @@ Automated node health monitoring and remediation.
 | Variable                            | Type              | Default Value             | Notes |
 |-------------------------------------|-------------------|---------------------------|-------|
 | `infra-nodes`                       | int               |                           | Number of infra nodes. If not set infra nodes are not managed, if 0 infra nodes will be deleted |
-| `infra-nodes-provider`              | string            |                           | Provider type - 'aws', 'vmware', or 'test' |
+| `infra-nodes-provider`              | string            |                           | Provider type: `aws`, `vmware`, or `baremetal`. Bare metal reads the nodes from `config.infraNodes.nodes`, see [Bare-metal nodes](#bare-metal-nodes) |
 | `infra-nodes-instance-type`         | string            |                           | AWS instance type |
 | `infra-nodes-numcpu`                | int               |                           | Number of cpu per infra node |
 | `infra-nodes-memory-mib`            | int               |                           | Memory mib per infra node |
@@ -583,7 +583,72 @@ Automated node health monitoring and remediation.
 | `storage-nodes-zone-[number]`       | string         |               | Availability zone (e.g., storage-nodes-zone-1: 'us-east-2a') |
 | `storage-nodes-instance-type`       | string         |               | Instance type for cloud provider |
 | `storage-nodes-provider`            | string         |               | Provider type; valid choices: aws, vmware, baremetal |
-| `storage-nodes-node-[iterator]`     | <list<String>> |               | List of node names to apply storage label to. Used for baremetal where `MachineSets` are not used. |
+| `storage-nodes-node-[iterator]`     | <list<String>> |               | List of node names to apply storage label to. Used for baremetal where `MachineSets` are not used. `config.storageNodes.nodes` takes precedence when set |
+
+### Bare-metal nodes
+
+Bare metal has no `MachineSet`, so AutoShift labels and taints existing nodes in place. List them
+by Node name, as `oc get nodes` shows it, in the cluster's `config`. Placement still comes from the
+labels: set `infra-nodes-provider` or `storage-nodes-provider` to `baremetal`, and `infra-nodes` or
+`storage-nodes` to a count other than `0`. For infra the count only switches the policy on. For
+storage it must equal the number of listed nodes, because the storage readiness check compares the
+two.
+
+```yaml
+clusters:
+  my-cluster:
+    config:
+      infraNodes:
+        nodes:
+          - name: 'infra-0.example.com'      # no taints key: the default infra taints
+          - name: 'infra-1.example.com'
+            taints:                          # replaces the defaults; [] means no taints
+              - key: 'node-role.kubernetes.io/infra'
+                effect: 'NoSchedule'
+          - name: 'infra-2.example.com'
+            removeTaints:                    # default taints minus NoExecute
+              - key: 'node-role.kubernetes.io/infra'
+                effect: 'NoExecute'
+      storageNodes:
+        infraRole: false                     # default true
+        nodes:
+          - name: 'storage-0.example.com'
+            taints:
+              - key: 'node.ocs.openshift.io/storage'
+                value: 'true'
+                effect: 'NoSchedule'
+```
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `infraNodes.nodes[].name` | string | | Node name. Required. A name with no matching Node fails the policy rather than creating one |
+| `infraNodes.nodes[].taints` | list | `node-role.kubernetes.io/infra` with `NoSchedule` and `NoExecute` | Taints for this node, in Kubernetes `taints` form. The defaults match the infra `MachineSets`. `[]` adds no taints |
+| `infraNodes.nodes[].removeTaints` | list | | Taints to remove, each a `key` with an optional `effect`. Without `effect` it matches every effect of the key. Wins over `taints` and the defaults |
+| `storageNodes.infraRole` | bool | `true` | Whether storage nodes also get `node-role.kubernetes.io/infra`. `false` keeps them out of the infra role, and so out of the infra `MachineConfigPool` and the infra workload node selectors. Applies to the label-listed nodes too |
+| `storageNodes.nodes[].name` | string | | Node name. Required. Wins over the `storage-nodes-node-[iterator]` labels |
+| `storageNodes.nodes[].taints` | list | none | Taints for this node. Red Hat OpenShift Data Foundation tolerates `node.ocs.openshift.io/storage=true:NoSchedule` |
+| `storageNodes.nodes[].removeTaints` | list | | Taints to remove, as for `infraNodes.nodes[].removeTaints`. Wins over `taints` |
+
+The infra readiness check tests each listed node: the workload moves for ingress, monitoring, the image
+registry and GitOps wait until every listed node is Ready with the infra role. Those workloads
+tolerate only the `node-role.kubernetes.io/infra` taints, so any other taint on an infra node keeps
+them off it.
+
+A taint leaves a node only through `removeTaints`. Taking a taint out of `taints`, or a node out of
+the list, leaves the node as it was, because the policies add and never subtract. While a taint
+named in `removeTaints` is on a node, the policy rewrites that node once: the live `spec`, minus the
+removed taints, plus any wanted taint it lacks. Labels merge as usual. A cordoned node is skipped
+until it is uncordoned, so the rewrite never undoes a drain. The policy reports Compliant while it
+waits, and the taint goes on the first evaluation after the node is uncordoned. After the taint is gone, the entry can
+stay or go.
+
+Labels are never removed. Removing a node from a list or setting `infraRole: false` later leaves its
+labels in place. Clean them up by hand:
+
+```bash
+oc label node <name> node-role.kubernetes.io/infra-
+oc label node <name> cluster.ocs.openshift.io/openshift-storage-
+```
 
 ### Red Hat Advanced Cluster Security
 

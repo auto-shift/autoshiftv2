@@ -55,6 +55,15 @@ policies:
       - path: manifests/create-infra-nodes-vmware.yaml
     placement:
       placementPath: placement-vmware.yaml
+  # Bare metal has no MachineSet: label and taint the nodes listed in config.infraNodes.nodes.
+  - name: policy-infra-nodes-baremetal
+    pruneObjectBehavior: None
+    manifests:
+      - path: manifests/create-infra-nodes-baremetal.yaml
+    placement:
+      placementPath: placement-baremetal.yaml
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
   # test/ holds an inform-only readiness assertion (a status can only be observed).
   - name: policy-infra-nodes-test
     remediationAction: inform
@@ -62,6 +71,8 @@ policies:
       - path: test/check-cluster-infra-nodes.yaml
     placement:
       placementPath: placement-infra-nodes.yaml
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
   # ---- Migrate platform workloads onto infra nodes (gated on the readiness test) ----
   - name: policy-infra-gitops
     manifests:
