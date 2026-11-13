@@ -17,8 +17,12 @@ spec:
     - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
       value:  {{ .Values.gitops.disableDefaultArgoCD | quote }}
     - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
-      value: {{ .Values.gitops.argoNamespace | default "openshift-gitops" | quote }}
+      value: {{ include "openshift-gitops.clusterConfigNamespaces" . | quote }}
 {{- else }}
+{{- /* skipOperatorInstall: the operator, its OperatorGroup and Subscription already exist. Only the
+       Subscription env is rendered, and is applied onto the existing Subscription by
+       `helm upgrade --install ... --take-ownership`. List any pre-existing cluster-scoped Argo CD
+       namespaces in gitops.clusterScopedNamespaces so they keep cluster scope. */}}
 ---
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
@@ -31,5 +35,5 @@ spec:
     - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
       value: {{ .Values.gitops.disableDefaultArgoCD | quote }}
     - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
-      value: {{ .Values.gitops.argoNamespace | default "openshift-gitops" | quote }}
+      value: {{ include "openshift-gitops.clusterConfigNamespaces" . | quote }}
 {{- end }}

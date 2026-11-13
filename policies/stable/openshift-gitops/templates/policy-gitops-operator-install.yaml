@@ -86,6 +86,14 @@ spec:
               # with controller.enabled false and reconciles nothing itself. A team's own instance stays least
               # privileged and uses purpose-built ClusterRoles in the gitops-dev policy instead.
               #
+              # Last, config.gitops.clusterScopedNamespaces (cluster set or cluster config, falling back to the
+              # chart default gitops.clusterScopedNamespaces) names pre-existing Argo CD instances, such as the
+              # operator default one in openshift-gitops, that must keep cluster scope next to AutoShift's own.
+              # An instance left out of this variable loses its cluster-wide permissions. Entries already
+              # listed are skipped. Read with fromConfigMap for the same reason as
+              # DISABLE_DEFAULT_ARGOCD_INSTANCE above: guessing would strip cluster scope from an instance
+              # that asked to keep it.
+              #
               # Comments belong here, not inside the value: it is a folded scalar and hub templates have no
               # comment syntax, so a # line there becomes part of the value and swallows the first namespace.
               - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
@@ -110,6 +118,11 @@ spec:
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} if and (eq $team "infra") (ne (index $mcLabels "autoshift.io/cluster-type" | default "") "hub") (or (eq $mode "standalone") (hasPrefix "agent" $mode)) {{ "hub}}" }}
                   {{ "{{hub-" }} $namespaces = printf "%s,%s" $namespaces (dig "namespace" "openshift-gitops-infra" $spec) {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} range $ns := (dig "gitops" "clusterScopedNamespaces" (list{{ range (.Values.gitops.clusterScopedNamespaces | default list) }} {{ . | quote }}{{ end }}) (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
+                  {{ "{{hub-" }} if and $ns (not (has $ns (splitList "," $namespaces))) {{ "hub}}" }}
+                  {{ "{{hub-" }} $namespaces = printf "%s,%s" $namespaces $ns {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} $namespaces {{ "hub}}" }}

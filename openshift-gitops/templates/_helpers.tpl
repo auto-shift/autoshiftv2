@@ -16,6 +16,31 @@ deployment); here it guards the bootstrap ArgoCD that first renders those polici
 {{- end -}}
 
 {{/*
+openshift-gitops.clusterConfigNamespaces — the value of the operator's ARGOCD_CLUSTER_CONFIG_NAMESPACES:
+gitops.argoNamespace (the AutoShift infra Argo CD) first, then every namespace in
+gitops.clusterScopedNamespaces, de-duplicated and comma-joined. The operator grants cluster scope only to
+the instances listed here, so a pre-existing instance (for example the default one in openshift-gitops)
+left out of the list loses its cluster-wide permissions when AutoShift sets this variable.
+Fails the render unless gitops.clusterScopedNamespaces is a list of strings.
+*/}}
+{{- define "openshift-gitops.clusterConfigNamespaces" -}}
+{{- $namespaces := list (.Values.gitops.argoNamespace | default "openshift-gitops") -}}
+{{- $extra := .Values.gitops.clusterScopedNamespaces | default list -}}
+{{- if not (kindIs "slice" $extra) -}}
+  {{- fail (printf "\n\ngitops.clusterScopedNamespaces must be a list of namespaces, got %q (%s).\nExample: clusterScopedNamespaces: ['openshift-gitops']\n" (toString $extra) (kindOf $extra)) -}}
+{{- end -}}
+{{- range $ns := $extra -}}
+  {{- if not (kindIs "string" $ns) -}}
+    {{- fail (printf "\n\ngitops.clusterScopedNamespaces entries must be namespace names, got %q (%s).\n" (toString $ns) (kindOf $ns)) -}}
+  {{- end -}}
+  {{- if and $ns (not (has $ns $namespaces)) -}}
+    {{- $namespaces = append $namespaces $ns -}}
+  {{- end -}}
+{{- end -}}
+{{- join "," $namespaces -}}
+{{- end -}}
+
+{{/*
 autoshift.cliImage — the image for the CRD-wait Pod, which only needs oc. Highest priority first:
   1. .Values.image, so `--set image=...` or CLI_IMAGE in the installer still wins outright.
   2. The cluster's own openshift/cli ImageStream, read at install time. That entry is a digest

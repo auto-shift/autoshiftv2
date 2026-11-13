@@ -123,8 +123,38 @@ Using helm, install OpenShift GitOps:
 helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml
 ```
 
-> [!NOTE]
-> If OpenShift GitOps is already installed manually on cluster and the default argo instance exists this step can be skipped. Make sure that argocd controller has cluster-admin
+#### If Red Hat OpenShift GitOps is already installed
+
+Do not skip this step. AutoShift needs its own Argo CD instance with the PolicyGenerator plugin
+sidecar and cluster scope, which an existing installation does not provide. Install the chart in
+`skipOperatorInstall` mode so it leaves the existing operator, `OperatorGroup` and `Subscription` in
+place and only adds the instance and the `Subscription` environment variables:
+
+```console
+helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml \
+  --set skipOperatorInstall=true \
+  --set gitops.argoNamespace=<argo-namespace> \
+  --set 'gitops.clusterScopedNamespaces={openshift-gitops}' \
+  --take-ownership
+```
+
+- `--take-ownership` lets Helm adopt the existing `Subscription`. It requires Helm 3.17 or later.
+- The operator grants cluster scope only to the namespaces in `ARGOCD_CLUSTER_CONFIG_NAMESPACES`,
+  which the chart sets to `gitops.argoNamespace` plus `gitops.clusterScopedNamespaces`. List every
+  existing Argo CD instance that must keep cluster scope, such as the default one in
+  `openshift-gitops`. Set the same list in `config.gitops.clusterScopedNamespaces` so the
+  `openshift-gitops` policy keeps it after installation. See the
+  [values reference](values-reference.md#openshift-gitops).
+- `gitops.disableDefaultArgoCD` still applies in this mode. Set it to `false` to keep an existing
+  default instance, and set `config.gitops.defaultInstance: true` for the policy. The
+  `gitops-disable-default-argocd` label overrides `defaultInstance`, so also set that label to
+  `'false'` or remove it from the cluster set. `clusterScopedNamespaces` keeps an instance cluster
+  scoped. It does not keep the default instance from being removed.
+- The chart replaces the `Subscription` environment variable list. Copy any other variables the
+  existing `Subscription` sets into your values first.
+- Run `skipOperatorInstall` mode only for the first installation over an existing operator. Do not
+  switch an existing release to it: Helm removes the fields the earlier release owned, and that
+  breaks the `Subscription`.
 
 After the installation is complete, verify that all the pods in the `openshift-gitops` namespace are running. This can take a few minutes depending on your network to even return anything.
 
