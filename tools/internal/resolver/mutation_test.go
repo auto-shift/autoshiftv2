@@ -40,6 +40,7 @@ func runMutated(
 	root string,
 	configs *ExampleConfigs,
 	declared map[string]*labels.Declared,
+	mutateLabels func(map[string]string),
 ) (map[string]ChartResult, *labels.Report) {
 	t.Helper()
 
@@ -48,6 +49,9 @@ func runMutated(
 
 	clusterName := "lint-cluster"
 	syntheticLabels := BuildSyntheticLabels(declared)
+	if mutateLabels != nil {
+		mutateLabels(syntheticLabels)
+	}
 	ctx := HubContext{
 		ManagedClusterName:   clusterName,
 		ManagedClusterLabels: syntheticLabels,
@@ -133,15 +137,29 @@ func TestPipeline_MutationSweep(t *testing.T) {
 		mutateConfigs func(*ExampleConfigs)
 		// mutateDeclared modifies a shallow clone of the base declared map.
 		mutateDeclared func(map[string]*labels.Declared)
+		// mutateLabels modifies the synthetic ManagedClusterLabels (keys carry the
+		// autoshift.io/ prefix) after they are built from the declarations, so a case
+		// can drive a label-dependent branch without changing what is declared.
+		mutateLabels func(map[string]string)
 
 		// Output assertions: pipeline must NOT contain this string for the given
 		// policy (because the config that drives it was removed).
 		expectAbsentInPolicy string
 		expectAbsentString   string
+		// expectPresentString must appear in the same policy after the mutation, for a
+		// mutation that should switch a policy to an alternate branch rather than remove
+		// output.
+		expectPresentString string
 
 		// Resolution error: the policy should have ResolveOK=false (hub template
 		// resolution error), which surfaces the missing/broken config condition.
 		expectResolutionError bool
+
+		// Spoke resolution error: a managed-cluster template (a plain {{ }} block, which
+		// the spoke pass resolves) must fail with a message containing this text. A
+		// managed-side fail does not set ResolveOK=false; it is recorded in SpokeWarns,
+		// so expectResolutionError cannot see it.
+		expectSpokeErrorContaining string
 
 		// Route assertion: at least one destination line must be empty / <no value>.
 		expectEmptyDestination bool
@@ -233,6 +251,55 @@ func TestPipeline_MutationSweep(t *testing.T) {
 			},
 			expectMissingLabel: "odf",
 		},
+		{
+			// Managed-side fail: the htpasswd OAuth policy refuses a provider name that a
+			// non-HTPasswd identity provider already uses. tools/testdata has an LDAP
+			// provider named corp-ldap, so naming an htpasswd provider corp-ldap must fail in
+			// the spoke pass.
+			name: "htpasswd provider named like an existing LDAP provider → spoke resolution error",
+			mutateConfigs: func(cfg *ExampleConfigs) {
+				h, _ := cfg.HubConfig["htpasswd"].(map[string]interface{})
+				h["providers"] = []interface{}{
+					map[string]interface{}{"name": "corp-ldap", "secretName": "cluster-admins-htpass"},
+				}
+			},
+			expectAbsentInPolicy:       "stable/htpasswd",
+			expectSpokeErrorContaining: "already used by a non-HTPasswd identity provider",
+		},
+		{
+			// Label-driven: every operator-install kustomization switches its CatalogSource
+			// to <source>-<mirror-catalog-suffix> when disconnected-mirror is 'true', which
+			// the example values set. With the label off, the plain catalog must come back.
+			name: "disconnected-mirror label 'false' → operator source drops the mirror suffix",
+			mutateLabels: func(l map[string]string) {
+				l["autoshift.io/disconnected-mirror"] = "false"
+			},
+			expectAbsentInPolicy: "stable/lvm",
+			expectAbsentString:   "source: redhat-operators-mirror",
+			expectPresentString:  "source: redhat-operators",
+		},
+		{
+			// Label-driven, managed-side: the storage MachineSet readiness check is wrapped in
+			// a guard on storage-nodes-provider, because bare-metal storage nodes have no
+			// MachineSet. With 'baremetal' the check must not render.
+			name: "storage-nodes-provider label 'baremetal' → MachineSet readiness check not rendered",
+			mutateLabels: func(l map[string]string) {
+				l["autoshift.io/storage-nodes-provider"] = "baremetal"
+			},
+			expectAbsentInPolicy: "stable/storage-nodes",
+			expectAbsentString:   "readyReplicas:",
+		},
+		{
+			// Label-driven, hub-side: aap-noobaa-s3-storage adds the NooBaa-backed S3 fragment
+			// to the AnsibleAutomationPlatform spec. The example values leave it off, so this
+			// fragment is otherwise never rendered.
+			name: "aap-noobaa-s3-storage label 'true' → AAP instance gets the NooBaa S3 secret",
+			mutateLabels: func(l map[string]string) {
+				l["autoshift.io/aap-noobaa-s3-storage"] = "true"
+			},
+			expectAbsentInPolicy: "stable/ansible-automation-platform",
+			expectPresentString:  "object_storage_s3_secret: s3-aap-odf",
+		},
 	}
 
 	for _, tc := range cases {
@@ -250,7 +317,7 @@ func TestPipeline_MutationSweep(t *testing.T) {
 				tc.mutateDeclared(decl)
 			}
 
-			byPolicy, report := runMutated(t, root, cfg, decl)
+			byPolicy, report := runMutated(t, root, cfg, decl, tc.mutateLabels)
 
 			// --- output absence check ---
 			if tc.expectAbsentInPolicy != "" {
@@ -271,12 +338,37 @@ func TestPipeline_MutationSweep(t *testing.T) {
 					}
 				}
 
+				if tc.expectSpokeErrorContaining != "" {
+					found := false
+					for _, w := range res.SpokeWarns {
+						if strings.Contains(w, tc.expectSpokeErrorContaining) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Errorf("expected a spoke resolution error containing %q for %s after mutation, got %d spoke warnings without it",
+							tc.expectSpokeErrorContaining, tc.expectAbsentInPolicy, len(res.SpokeWarns))
+					} else {
+						t.Logf("PASS: %s correctly has a spoke resolution error containing %q", tc.expectAbsentInPolicy, tc.expectSpokeErrorContaining)
+					}
+				}
+
 				if tc.expectAbsentString != "" {
 					if strings.Contains(res.ResolvedYAML, tc.expectAbsentString) {
 						t.Errorf("mutation did not suppress %q in %s — config removal was not detected",
 							tc.expectAbsentString, tc.expectAbsentInPolicy)
 					} else {
 						t.Logf("PASS: %q correctly absent from %s after mutation", tc.expectAbsentString, tc.expectAbsentInPolicy)
+					}
+				}
+
+				if tc.expectPresentString != "" {
+					if !strings.Contains(res.ResolvedYAML, tc.expectPresentString) {
+						t.Errorf("%q missing from %s after mutation — the alternate branch did not render",
+							tc.expectPresentString, tc.expectAbsentInPolicy)
+					} else {
+						t.Logf("PASS: %q correctly present in %s after mutation", tc.expectPresentString, tc.expectAbsentInPolicy)
 					}
 				}
 
