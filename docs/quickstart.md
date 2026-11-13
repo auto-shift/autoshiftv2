@@ -227,6 +227,15 @@ through the `openshift-gitops` policy. Make every decision in steps 1 to 3 befor
 6. Carry the same choices into AutoShift, so the `openshift-gitops` policy keeps them after it takes
    over:
 
+   - Operator `Subscription`: the policy manages the `Subscription` named by the
+     `gitops-subscription-name` label in the cluster set (the bundled cluster sets set
+     `openshift-gitops-operator`). If step 1 found another name, set this label to it, or the
+     policy manages a different `Subscription` than the one adopted in step 4. The policy takes the
+     operator namespace only from `gitops.namespace` in
+     `policies/stable/openshift-gitops/values.yaml`, which applies to every cluster and has no
+     cluster set or label override. If step 1 found a namespace other than
+     `openshift-gitops-operator`, change that value in your AutoShift repository before AutoShift
+     takes over, or the policy installs a second `Subscription` in `openshift-gitops-operator`.
    - Argo CD namespace: set `gitopsNamespace` in `autoshift/values/global.yaml`, or
      `config.gitops.namespace` on the self-managed hub cluster set, to `<argo-namespace>`. AutoShift
      deploys into this namespace, and the policy lists it first in
