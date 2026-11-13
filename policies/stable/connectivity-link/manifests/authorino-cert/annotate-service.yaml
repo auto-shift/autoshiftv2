@@ -1,0 +1,22 @@
+# Ask OpenShift's service-ca operator to issue the Authorino serving
+# certificate. Annotating the Service is what triggers it; service-ca then
+# creates the named Secret in the same namespace, signed by the cluster's
+# internal CA.
+#
+# cert-manager is NOT the issuer here, despite being a hard dependency of the
+# RHOAI operator for other reasons. Red Hat's MaaS procedure
+# (access.redhat.com/articles/7147064, step 8) uses service-ca for this
+# certificate specifically, because the Envoy-to-Authorino connection is
+# trusted through the cluster's internal CA bundle rather than any external
+# issuer.
+#
+# complianceType musthave merges the listed fields and leaves everything else
+# alone, so this adds an annotation to a Service the Authorino operator owns
+# without fighting it over the fields it manages.
+apiVersion: v1
+kind: Service
+metadata:
+  name: authorino-authorino-authorization
+  namespace: kuadrant-system
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: authorino-server-cert

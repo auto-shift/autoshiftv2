@@ -1,0 +1,23 @@
+# The Kuadrant control plane. The spec is a base of observability on, with
+# config.connectivity-link.kuadrant from the cluster's rendered-config merged
+# over it, so any Kuadrant spec field can be set per clusterset or cluster.
+#
+# Observability on: the operator then creates the Limitador and Authorino
+# PodMonitor/ServiceMonitor resources that user workload monitoring scrapes.
+# MaaS usage metrics depend on these existing.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $spec := (`
+  observability:
+    enable: true` | fromYaml) hub}}
+  {{hub- $spec = (mergeOverwrite $spec (dig "connectivity-link" "kuadrant" (dict) $cfg)) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: kuadrant.io/v1beta1
+      kind: Kuadrant
+      metadata:
+        name: kuadrant
+        namespace: kuadrant-system
+      spec:
+        {{hub $spec | toYaml | autoindent hub}}
