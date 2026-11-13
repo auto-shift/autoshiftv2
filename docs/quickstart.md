@@ -117,14 +117,145 @@ open-cluster-management   multiclusterhub   Running      6m28s   2.13.2         
 > PolicyGenerator binary from the `acm-cli-downloads` image, so that deployment must already exist (see the ordering
 > note there).
 
+> [!IMPORTANT]
+> If Red Hat OpenShift GitOps is already installed on the cluster, find out how before running the
+> following command. `helm list -A --filter '^openshift-gitops$'` lists a release when this chart
+> installed it.
+>
+> - No release is listed, because the operator was installed from the console, with OLM or by another
+>   tool: do not run the following command. Follow
+>   [If Red Hat OpenShift GitOps is already installed](#if-red-hat-openshift-gitops-is-already-installed)
+>   instead.
+> - An `openshift-gitops` release is listed: upgrade that release with its own values instead of
+>   adopting the operator again. Save the values it was installed with:
+>   `helm get values openshift-gitops -n <release-namespace> -o yaml > openshift-gitops-values.yaml`.
+>   Complete steps 1 to 3 of
+>   [If Red Hat OpenShift GitOps is already installed](#if-red-hat-openshift-gitops-is-already-installed),
+>   then run the following command with `-n <release-namespace>`, add
+>   `-f openshift-gitops-values.yaml` after the existing `-f` option, and add `--set` options for the
+>   `gitops.clusterScopedNamespaces` and `gitops.disableDefaultArgoCD` values chosen there. The
+>   saved values keep the release's other settings, including `gitops.argoNamespace` and
+>   `skipOperatorInstall`. Do not add `--take-ownership`. Verify the result with step 5 and carry the
+>   choices into AutoShift with step 6. If the saved values set `gitops.name` or `gitops.namespace`,
+>   use those values in the step 1 and step 5 commands.
+
 Using helm, install OpenShift GitOps:
 
 ```console
 helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml
 ```
 
-> [!NOTE]
-> If OpenShift GitOps is already installed manually on cluster and the default argo instance exists this step can be skipped. Make sure that argocd controller has cluster-admin
+#### If Red Hat OpenShift GitOps is already installed
+
+Do not skip this step. AutoShift needs its own Argo CD instance with the PolicyGenerator plugin
+sidecar and cluster scope, which an existing installation does not provide. Install the chart in
+`skipOperatorInstall` mode so it leaves the existing operator, `OperatorGroup` and `Subscription` in
+place and only adds the instance and the `Subscription` environment variables.
+
+This mode needs Helm 4. Helm 4 applies adopted resources with server-side apply, so the existing
+`Subscription` receives the rendered environment variables. Helm 3 accepts `--take-ownership` from
+version 3.17, but it does not patch an adopted custom resource during `install`: the release reports
+success while the `Subscription` keeps its previous configuration.
+
+AutoShift manages the whole `Subscription` environment variable list and sets only
+`DISABLE_DEFAULT_ARGOCD_INSTANCE` and `ARGOCD_CLUSTER_CONFIG_NAMESPACES`, at installation and later
+through the `openshift-gitops` policy. Make every decision in steps 1 to 3 before you install.
+
+1. Inspect the existing installation. The commands in this section use the default `Subscription`
+   name and namespace, both `openshift-gitops-operator`. If the existing operator uses others, find
+   them with `oc get subscriptions.operators.coreos.com -A | grep openshift-gitops-operator`, use
+   them in the commands in steps 1 and 5, and pass them to step 4 as `--set gitops.name=<name>` and
+   `--set gitops.namespace=<namespace>`, so the chart adopts that `Subscription`.
+
+   List the variables the `Subscription` sets:
+
+   ```console
+   oc get subscription openshift-gitops-operator -n openshift-gitops-operator -o jsonpath='{.spec.config.env}'
+   ```
+
+   If the output contains any variable other than the two above, stop. This mode removes it, there
+   is no value to carry it over, and the existing operator may depend on it.
+
+   Then record the values the operator runs with now, including its defaults for variables the
+   `Subscription` does not set:
+
+   ```console
+   oc get deployment openshift-gitops-operator-controller-manager -n openshift-gitops-operator \
+     -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}'
+   ```
+
+   Note `ARGOCD_CLUSTER_CONFIG_NAMESPACES`, the Argo CD namespaces that are cluster-scoped now, and
+   `DISABLE_DEFAULT_ARGOCD_INSTANCE`, which is `false` when the default instance in
+   `openshift-gitops` exists.
+
+2. Choose `gitops.clusterScopedNamespaces`. The operator grants cluster scope only to the namespaces
+   in `ARGOCD_CLUSTER_CONFIG_NAMESPACES`, which the chart sets to `gitops.argoNamespace` plus this
+   list. Include every namespace recorded in step 1 whose instance must keep cluster scope. An
+   instance left out loses its cluster-wide permissions.
+
+3. Choose `gitops.disableDefaultArgoCD`. Set it to `false` to keep an existing default instance in
+   `openshift-gitops`. Setting it to `true` makes the operator remove that instance. Keeping an
+   instance cluster-scoped in step 2 does not keep it from being removed.
+
+4. Install the chart with the values from steps 2 and 3:
+
+   ```console
+   helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml \
+     --set skipOperatorInstall=true \
+     --set gitops.argoNamespace=<argo-namespace> \
+     --set 'gitops.clusterScopedNamespaces={<namespace>,<namespace>}' \
+     --set gitops.disableDefaultArgoCD=<true-or-false> \
+     --take-ownership
+   ```
+
+   Run this step only when no `openshift-gitops` Helm release exists yet. Never change the
+   `skipOperatorInstall` setting of an existing release in either direction: switching it on makes
+   Helm remove the fields the earlier release owned and breaks the `Subscription`, and switching it
+   off adds the chart's channel and source settings to an adopted `Subscription`. Upgrade an
+   existing release with its saved values, as the note before the standard command describes.
+
+5. Verify the result. Run the `oc get subscription` command from step 1 again and compare it with
+   what you requested:
+
+   - `ARGOCD_CLUSTER_CONFIG_NAMESPACES` lists `<argo-namespace>` and every namespace from step 2,
+     and no other namespace.
+   - `DISABLE_DEFAULT_ARGOCD_INSTANCE` equals the value from step 3.
+
+   A variable that is missing or holds a different value means the adoption did not update the
+   `Subscription`, and the operator keeps its previous configuration.
+
+6. Carry the same choices into AutoShift, so the `openshift-gitops` policy keeps them after it takes
+   over:
+
+   - Operator `Subscription`: the policy manages the `Subscription` named by the
+     `gitops-subscription-name` label in the cluster set (the bundled cluster sets set
+     `openshift-gitops-operator`). If step 1 found another name, set this label to it, or the
+     policy manages a different `Subscription` than the one adopted in step 4. The policy takes the
+     operator namespace only from `gitops.namespace` in
+     `policies/stable/openshift-gitops/values.yaml`, which applies to every cluster and has no
+     cluster set or label override. If step 1 found a namespace other than
+     `openshift-gitops-operator`, change that value in your AutoShift repository before AutoShift
+     takes over, or the policy installs a second `Subscription` in `openshift-gitops-operator`.
+   - Argo CD namespace: set `gitopsNamespace` in `autoshift/values/global.yaml`, or
+     `config.gitops.namespace` on the self-managed hub cluster set, to `<argo-namespace>`. AutoShift
+     deploys into this namespace, and the policy lists it first in
+     `ARGOCD_CLUSTER_CONFIG_NAMESPACES`. A different value leaves the instance from step 4 without
+     cluster scope. The `gitops-namespace` label overrides both settings, so if the cluster set
+     sets it, set it to `<argo-namespace>` or remove it.
+   - AutoShift Application: when you create it in
+     [Step 4: install AutoShift](#step-4-install-autoshift), set `GITOPS_NAMESPACE` to
+     `<argo-namespace>`. The Argo CD instance installed in this section reconciles Applications only
+     in its own namespace, so it ignores an Application left in `openshift-gitops`.
+   - Cluster scope: set `config.gitops.clusterScopedNamespaces` on the hub cluster set to the list
+     from step 2.
+   - Default instance, matching step 3. The `gitops-disable-default-argocd` label overrides
+     `config.gitops.defaultInstance`, so set both consistently:
+     - To keep it (`false` in step 3), set `config.gitops.defaultInstance: true` and set the label
+       to `'false'` or remove it.
+     - To remove it (`true` in step 3), leave `config.gitops.defaultInstance` unset or `false`, and
+       do not set the label to `'false'`.
+
+   See the [values reference](values-reference.md#openshift-gitops).
 
 After the installation is complete, verify that all the pods in the `openshift-gitops` namespace are running. This can take a few minutes depending on your network to even return anything.
 

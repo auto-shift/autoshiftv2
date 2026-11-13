@@ -385,6 +385,7 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 |-------|------|---------|-------------|
 | `namespace` | string | (`gitopsNamespace`) | Argo CD namespace for the whole deployment. Overrides `gitopsNamespace` |
 | `defaultInstance` | bool | `false` | Keep the operator default Argo CD instance in `openshift-gitops`. Drives `gitops-disable-default-argocd` |
+| `clusterScopedNamespaces` | list | `[]` (`gitops.clusterScopedNamespaces`) | Namespaces of existing Argo CD instances that keep cluster scope next to the AutoShift instance. They are appended to `ARGOCD_CLUSTER_CONFIG_NAMESPACES` after the namespaces AutoShift already lists, skipping any already present. An instance left out loses its cluster-wide permissions. Set it on a cluster set or a cluster. The bootstrap chart reads `gitops.clusterScopedNamespaces` at installation. Whether the default instance exists is controlled separately by `defaultInstance` |
 | `policyGenerator` | bool | (deployment flag) | Install the PolicyGenerator plugin sidecar in the infra repo server. Git and source hubs must set `true`. Read only from the self-managed hub cluster set |
 | `teams` | map | | Developer Argo CD instances, one entry per team. See [Developer OpenShift gitops](#developer-openshift-gitops) |
 | `infra` | map | | Tuning for the infra Argo CD instance, plus `infra.agent`. See the tables below |
