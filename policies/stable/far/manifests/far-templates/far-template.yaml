@@ -39,6 +39,7 @@ object-templates-raw: |
   {{hub- $fillAutoIP := and $autoNodeIPsFromBMH (not (hasKey $nodeparameters "--ip")) hub}}
   {{hub- if $fillAutoIP hub}}
   {{hub- $hubAutoIPs := dict hub}}
+  {{hub- $hubAutoPorts := dict hub}}
   {{hub- $expectedNodes := dict hub}}
   {{hub- $hubBmhs := (lookup "metal3.io/v1alpha1" "BareMetalHost" $clusterName "").items | default (list) hub}}
   {{hub- range $bmh := $hubBmhs hub}}
@@ -51,9 +52,17 @@ object-templates-raw: |
   {{hub- $bmcAddr := dig "spec" "bmc" "address" "" $bmh hub}}
   {{hub- $withoutScheme := regexReplaceAll "^[a-zA-Z0-9+.-]+://([^@/]+@)?" $bmcAddr "" hub}}
   {{hub- $hostPort := regexReplaceAll "/.*$" $withoutScheme "" hub}}
-  {{hub- $host := regexReplaceAll ":([0-9]+)$" $hostPort "" hub}}
+  {{hub- $host := $hostPort hub}}
+  {{hub- $port := "" hub}}
+  {{hub- if regexMatch ":[0-9]+$" $hostPort hub}}
+  {{hub- $port = regexReplaceAll "^.*:([0-9]+)$" $hostPort "$1" hub}}
+  {{hub- $host = regexReplaceAll ":([0-9]+)$" $hostPort "" hub}}
+  {{hub- end hub}}
   {{hub- if not (empty $host) hub}}
   {{hub- $_ := set $hubAutoIPs $nodeName $host hub}}
+  {{hub- if not (empty $port) hub}}
+  {{hub- $_ := set $hubAutoPorts $nodeName $port hub}}
+  {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
@@ -74,9 +83,17 @@ object-templates-raw: |
   {{hub- $bmcAddr := dig "spec" "bmc" "address" "" $bmh hub}}
   {{hub- $withoutScheme := regexReplaceAll "^[a-zA-Z0-9+.-]+://([^@/]+@)?" $bmcAddr "" hub}}
   {{hub- $hostPort := regexReplaceAll "/.*$" $withoutScheme "" hub}}
-  {{hub- $host := regexReplaceAll ":([0-9]+)$" $hostPort "" hub}}
+  {{hub- $host := $hostPort hub}}
+  {{hub- $port := "" hub}}
+  {{hub- if regexMatch ":[0-9]+$" $hostPort hub}}
+  {{hub- $port = regexReplaceAll "^.*:([0-9]+)$" $hostPort "$1" hub}}
+  {{hub- $host = regexReplaceAll ":([0-9]+)$" $hostPort "" hub}}
+  {{hub- end hub}}
   {{hub- if not (empty $host) hub}}
   {{hub- $_ := set $hubAutoIPs $nodeName $host hub}}
+  {{hub- if not (empty $port) hub}}
+  {{hub- $_ := set $hubAutoPorts $nodeName $port hub}}
+  {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
@@ -91,6 +108,9 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- if and (not (empty $expectedNodes)) (empty $missingNodes) hub}}
   {{hub- $_ := set $nodeparameters "--ip" $hubAutoIPs hub}}
+  {{hub- if and (not (empty $hubAutoPorts)) (not (hasKey $nodeparameters "--ipport")) hub}}
+  {{hub- $_ := set $nodeparameters "--ipport" $hubAutoPorts hub}}
+  {{hub- end hub}}
   {{hub- $fillAutoIP = false hub}}
   {{hub- end hub}}
   {{hub- end hub}}
@@ -145,6 +165,7 @@ object-templates-raw: |
           spec: {{ $tplSpec := ({{hub $tplSpec | toRawJson | quote hub}} | fromJson) -}}
             {{- $bmhs := (lookup "metal3.io/v1alpha1" "BareMetalHost" "openshift-machine-api" "").items | default (list) -}}
             {{- $autoIPs := dict -}}
+            {{- $autoPorts := dict -}}
             {{- $expectedNodes := dict -}}
             {{- range $bmh := $bmhs -}}
             {{- $nodeName := dig "metadata" "annotations" "bmac.agent-install.openshift.io/hostname" "" $bmh -}}
@@ -156,9 +177,17 @@ object-templates-raw: |
             {{- $bmcAddr := dig "spec" "bmc" "address" "" $bmh -}}
             {{- $withoutScheme := regexReplaceAll "^[a-zA-Z0-9+.-]+://([^@/]+@)?" $bmcAddr "" -}}
             {{- $hostPort := regexReplaceAll "/.*$" $withoutScheme "" -}}
-            {{- $host := regexReplaceAll ":([0-9]+)$" $hostPort "" -}}
+            {{- $host := $hostPort -}}
+            {{- $port := "" -}}
+            {{- if regexMatch ":[0-9]+$" $hostPort -}}
+            {{- $port = regexReplaceAll "^.*:([0-9]+)$" $hostPort "$1" -}}
+            {{- $host = regexReplaceAll ":([0-9]+)$" $hostPort "" -}}
+            {{- end -}}
             {{- if not (empty $host) -}}
             {{- $_ := set $autoIPs $nodeName $host -}}
+            {{- if not (empty $port) -}}
+            {{- $_ := set $autoPorts $nodeName $port -}}
+            {{- end -}}
             {{- end -}}
             {{- end -}}
             {{- end -}}
@@ -177,6 +206,9 @@ object-templates-raw: |
             {{- $np := (index $tplSpec "nodeparameters" | default dict) -}}
             {{- if not (kindIs "map" $np) -}}{{- $np = dict -}}{{- end -}}
             {{- $_ := set $np "--ip" $autoIPs -}}
+            {{- if and (not (empty $autoPorts)) (not (hasKey $np "--ipport")) -}}
+            {{- $_ := set $np "--ipport" $autoPorts -}}
+            {{- end -}}
             {{- $_ := set $tplSpec "nodeparameters" $np -}}
             {{- $tplSpec | toRawJson }}
   {{hub- end hub}}

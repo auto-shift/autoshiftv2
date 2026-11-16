@@ -142,7 +142,7 @@ Use one template entry per agent configuration you need on the cluster. Agent fl
 | `nodeparameters` | Per-node agent flags; nested maps use Kubernetes `Node` names as keys |
 | `nodeSecretNames` | Per-node target Secret name in `openshift-workload-availability` |
 | `sourceNodeSecrets` | Per-node source Secret name in `sharedSecretNamespace` (`copy` mode only) |
-| `autoNodeIPsFromBMH` | Optional Redfish helper: fill `nodeparameters.--ip` from BareMetalHost data when `--ip` is unset |
+| `autoNodeIPsFromBMH` | Optional Redfish helper: fill `nodeparameters.--ip` from BareMetalHost data when `--ip` is unset. When a BMC address includes an explicit port (for example `:9000`), also fill `nodeparameters.--ipport` unless that key is already set |
 
 #### Per-node credentials
 
@@ -183,6 +183,10 @@ Set `autoNodeIPsFromBMH: true` when using an agent that needs per-node BMC hosts
 BareMetalHost data. The helper runs only when `nodeparameters.--ip` is not already set.
 When present, the Assisted Installer hostname annotation
 `bmac.agent-install.openshift.io/hostname` is preferred over the BareMetalHost name.
+If `spec.bmc.address` includes a host port (common OpenShift examples use `:9000`), the
+helper also sets `nodeparameters.--ipport` for those nodes so `fence_redfish` keeps the
+non-default port. Addresses without an explicit port leave `--ipport` unset (agent
+default 443). An existing `nodeparameters.--ipport` map is left unchanged.
 
 ```yaml
 templates:
