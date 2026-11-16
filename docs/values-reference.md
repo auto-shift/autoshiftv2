@@ -214,6 +214,7 @@ The global-observability chart reads `scrapeInterval` (default `300s`), `logLeve
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `osImages` | list | | Red Hat Enterprise Linux CoreOS images the hub offers to the Assisted Installer. Each entry takes `openshiftVersion`, `version`, `cpuArchitecture` and `url`, plus an optional `rootFSUrl` |
+| `provisioningIP` | string | | Sets `provisioningIP` on the metal3 `Provisioning` CR. Ironic only puts an IP SAN in its TLS certificate when this is set, so BMCs that require HTTPS with a valid certificate need it to mount virtual-media ISOs from `https://<ip>:6183`. With `provisioningNetwork: Disabled`, metal3 does not assign this address to any interface, so it must be an IP the node already has. On single-node hubs, use the node IP. A value that is not an IPv4 or IPv6 address fails the policy. Removing the key leaves the last value on the CR; clear it there by hand |
 
 Left unset, Red Hat Advanced Cluster Management offers its full default image catalog: every
 supported Red Hat OpenShift Container Platform version for x86_64, arm64, s390x and ppc64le. That
