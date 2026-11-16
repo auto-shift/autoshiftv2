@@ -1,0 +1,167 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: acm-failover
+# Red Hat Advanced Cluster Management hub disaster recovery: the cluster backup and restore
+# operator, backed by OpenShift APIs for Data Protection and Velero.
+#
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`.
+# They live only in this file and the placement-*.yaml files.
+#
+# The autoshift.io/acm-failover label is the mode, and its values are the keys of the mode-specific
+# blocks in config.acm-failover:
+#   active   — this hub writes the backups. Gets the BackupSchedule. config.acm-failover.active
+#   passive  — this hub is the standby. Gets the sync Restore.    config.acm-failover.passive
+#   false    — no hub disaster recovery on this cluster.
+# Both modes get the object store and the DataProtectionApplication, because the standby reads the
+# same bucket the active hub writes.
+#
+# Mode is enforced at the PLACEMENT, never inside a template. A template conditional that renders
+# nothing leaves an empty ConfigurationPolicy, and an empty ConfigurationPolicy reports Compliant —
+# which for a backup policy means a hub silently backing up nothing.
+placementBindingDefaults:
+  name: binding-policy-acm-failover
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CP Contingency Planning
+  controls:
+    - CP-9 System Backup
+  # Default placement: hubs in either mode. Mode-specific policies override below.
+  placement:
+    placementPath: placement-acm-failover.yaml
+policies:
+  # 1) Object store + DataProtectionApplication. Both modes.
+  #    Depends on the MultiClusterHub policy because the cluster-backup component is what creates
+  #    the open-cluster-management-backup namespace and installs OpenShift APIs for Data Protection.
+  #    Cross-directory dependency, but same namespace and same cluster, so it resolves.
+  - name: policy-acm-failover-storage
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-acm-mch-install
+        namespace: ${POLICY_NAMESPACE}
+    manifests:
+      - path: manifests/storage/acm-failover-storage.yaml
+  # 1-test-a) Do the credentials Velero opens actually exist? Observation only, no dependents:
+  #   gating the storage policy on this would deadlock the obc backend, where that same policy is
+  #   what creates the derived Secret. Its value is naming the cause precisely, so a missing Secret
+  #   does not present only as "the storage location is not Available".
+  - name: policy-acm-failover-credentials-test
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-acm-mch-install
+        namespace: ${POLICY_NAMESPACE}
+    manifests:
+      - path: test/acm-failover-credentials-ready.yaml
+    customMessage:
+      noncompliant: >-
+        Velero has no credentials for the object store, so no backup can succeed. Create the Secret
+        in open-cluster-management-backup and name it in config.acm-failover.storage.configSecretRef;
+        credentials never go in values. The file holds a Velero credentials block, [default] then
+        aws_access_key_id and aws_secret_access_key for any S3-compatible store:
+        oc create secret generic cloud-credentials -n open-cluster-management-backup
+        --from-file=cloud=./credentials-velero
+        With the obc backend it is derived from the ObjectBucketClaim instead, so this stays
+        noncompliant until that claim binds and needs no action.
+  # 1-test-a2) Is the ROOT AutoShift Application excluded from hub backups? It carries this hub's
+  #   own configuration, so a standby that restores it adopts this hub's config and both hubs end in
+  #   BackupCollision. Scoped to that one Application: the generated ones already carry the label,
+  #   and a user's own Applications should be backed up. Reported, not enforced.
+  - name: policy-acm-failover-exclusions-test
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: test/acm-failover-exclusions-ready.yaml
+    customMessage:
+      noncompliant: >-
+        Hub backups capture Argo CD Applications, so a standby hub that restores this one adopts
+        this hub's configuration: its acm-failover mode flips to active, it starts a second
+        BackupSchedule against the same storage location, and both hubs enter BackupCollision, which
+        stops backups everywhere. Add this to the Application's metadata.labels where it is declared,
+        so GitOps keeps it: velero.io/exclude-from-backup: "true". To stop the exposure immediately,
+        oc label application.argoproj.io <name> -n <namespace> velero.io/exclude-from-backup=true
+  # 1-test-b) Storage readiness (status observation → inform, its own Policy in test/).
+  - name: policy-acm-failover-storage-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-acm-failover-storage
+    manifests:
+      - path: test/acm-failover-storage-ready.yaml
+    customMessage:
+      noncompliant: >-
+        The backup storage location is not Available, so this hub currently has no disaster
+        recovery. The real error is on the DataProtectionApplication rather than here:
+        oc get dataprotectionapplication acm-failover -n open-cluster-management-backup
+        -o jsonpath='{.status.conditions}'
+        Usual causes: the bucket does not exist, the endpoint is unreachable from this cluster, a
+        private endpoint's trust bundle is missing so storage.caRef is needed, or the credentials do
+        not authorise that bucket.
+  # 2) BackupSchedule — ACTIVE hub only, by placement.
+  - name: policy-acm-failover-schedule
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    placement:
+      placementPath: placement-acm-failover-active.yaml
+    dependencies:
+      - name: policy-acm-failover-storage-test
+    manifests:
+      - path: manifests/schedule/acm-failover-schedule.yaml
+  # 2-test) Schedule readiness. Catches BackupCollision, which stops backups on BOTH hubs.
+  - name: policy-acm-failover-schedule-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-acm-failover-active.yaml
+    dependencies:
+      - name: policy-acm-failover-schedule
+    manifests:
+      - path: test/acm-failover-schedule-ready.yaml
+    customMessage:
+      noncompliant: >-
+        The BackupSchedule is not Enabled, so this hub is not producing backups. BackupCollision
+        means a second hub is writing to the same storage location and backups have stopped on BOTH:
+        give one of them its own bucket or its own storage.prefix, then DELETE and recreate this
+        BackupSchedule, because the operator does not resume a collided one on its own. Paused means
+        someone set active.paused. FailedValidation usually means the cron expression or the storage
+        location is wrong.
+  # 3) Passive-sync Restore — STANDBY hub only, by placement.
+  - name: policy-acm-failover-restore
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    placement:
+      placementPath: placement-acm-failover-passive.yaml
+    dependencies:
+      - name: policy-acm-failover-storage-test
+    manifests:
+      - path: manifests/restore/acm-failover-restore.yaml
+  # 3-test) Sync readiness. Enabled is the steady state for a syncing Restore.
+  - name: policy-acm-failover-restore-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-acm-failover-passive.yaml
+    dependencies:
+      - name: policy-acm-failover-restore
+    manifests:
+      - path: test/acm-failover-restore-ready.yaml
+    customMessage:
+      noncompliant: >-
+        The standby is not syncing from the backup storage location, so it is not a usable recovery
+        target. A phase that stays Started, or FinishedWithErrors, most often means a BackupSchedule
+        also exists on this hub: a hub cannot back up and restore at the same time, so remove it.
+        Otherwise confirm this hub reads the same bucket as the active hub, and that it can see the
+        backups at all: oc get backups.velero.io -n open-cluster-management-backup
