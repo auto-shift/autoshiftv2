@@ -6,9 +6,14 @@ object-templates-raw: |
   {{hub- $provider := (index .ManagedClusterLabels "autoshift.io/infra-nodes-provider" | default "") hub}}
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $hubNodes := (index (index $cfg "infraNodes" | default dict) "nodes" | default list) hub}}
-  {{hub- if and (eq $provider "baremetal") (not $hubNodes) hub}}{{hub fail "config.infraNodes.nodes is empty. Bare-metal infra nodes are listed there by Node name." hub}}{{hub- end hub}}
+  {{hub- if and (eq $provider "baremetal") (not $hubNodes) hub}}
+  {{hub- fail "config.infraNodes.nodes is empty. Bare-metal infra nodes are listed there by Node name." hub}}
+  {{hub- end hub}}
   {{- if eq "{{hub $provider hub}}" "baremetal" }}
   {{- range $n := (`{{hub $hubNodes | toRawJson hub}}` | fromYaml) }}
+  {{- if not (index $n "name") }}
+  {{- fail "config.infraNodes.nodes: every entry needs a name." }}
+  {{- end }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1

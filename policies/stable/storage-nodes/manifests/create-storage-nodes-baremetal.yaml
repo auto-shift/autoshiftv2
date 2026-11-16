@@ -8,11 +8,12 @@
 # would otherwise do.
 #
 # musthave only adds, so a taint leaves a node only through removeTaints, which wins over taints. An
-# entry without an effect matches every effect of its key. While a listed taint is on the node, the
-# node is rewritten once with mustonlyhave: its live spec, minus the removed taints, plus any wanted
-# ones it lacks. metadataComplianceType: musthave keeps every other label. A cordoned node is left
-# alone until it is uncordoned, so the rewrite can never undo a drain. Labels and any taint not in
-# removeTaints are never removed (docs/values-reference.md, "Bare-metal nodes").
+# entry without an effect matches every effect of its key. While a listed taint, or a wanted taint's
+# key and effect with a different value, is on the node, the node is rewritten once with
+# mustonlyhave: its live spec, minus those taints, plus any wanted ones it lacks.
+# metadataComplianceType: musthave keeps every other label. A cordoned node gets its labels only, no
+# taint change, until it is uncordoned. Labels and any other taint are never removed
+# (docs/values-reference.md, "Bare-metal nodes").
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $storage := (index $cfg "storageNodes" | default dict) hub}}
@@ -26,12 +27,16 @@ object-templates-raw: |
   {{- $cfgNodes := (`{{hub (index $storage "nodes" | default list) | toRawJson hub}}` | fromYaml) | default list }}
   {{- $labelNodes := (`{{hub $label_list | toRawJson hub}}` | fromYaml) | default list }}
   {{- $labels := dict "cluster.ocs.openshift.io/openshift-storage" "" }}
-  {{- if $infraRole }}{{- $_ := set $labels "node-role.kubernetes.io/infra" "" }}{{- end }}
+  {{- if $infraRole }}
+  {{- $_ := set $labels "node-role.kubernetes.io/infra" "" }}
+  {{- end }}
   {{- $entries := list }}
   {{- if $cfgNodes }}
   {{- range $n := $cfgNodes }}
   {{- $name := (index $n "name" | default "") }}
-  {{- if not $name }}{{ fail "config.storageNodes.nodes: every entry needs a name." }}{{- end }}
+  {{- if not $name }}
+  {{- fail "config.storageNodes.nodes: every entry needs a name." }}
+  {{- end }}
   {{- $entries = append $entries (dict "name" $name "taints" (index $n "taints" | default list) "removeTaints" (index $n "removeTaints" | default list)) }}
   {{- end }}
   {{- else if $labelNodes }}
@@ -47,39 +52,76 @@ object-templates-raw: |
   {{- range $e := $entries }}
   {{- $name := $e.name }}
   {{- $live := (lookup "v1" "Node" "" $name) }}
-  {{- if not $live }}{{ fail (printf "Storage node %s, from config.storageNodes.nodes or autoshift.io/storage-nodes-node-*, does not exist." $name) }}{{- end }}
+  {{- if not $live }}
+  {{- fail (printf "Storage node %s, from config.storageNodes.nodes or autoshift.io/storage-nodes-node-*, does not exist." $name) }}
+  {{- end }}
   {{- $remove := $e.removeTaints }}
   {{- range $r := $remove }}
-  {{- if not (index $r "key") }}{{ fail (printf "config.storageNodes.nodes: %s has a removeTaints entry with no key." $name) }}{{- end }}
+  {{- if not (index $r "key") }}
+  {{- fail (printf "config.storageNodes.nodes: %s has a removeTaints entry with no key." $name) }}
+  {{- end }}
   {{- end }}
   {{- $want := list }}
   {{- range $t := $e.taints }}
   {{- $hit := false }}
   {{- range $r := $remove }}
-  {{- if and (eq (index $t "key" | default "") (index $r "key")) (or (not (index $r "effect")) (eq (index $t "effect" | default "") (index $r "effect"))) }}{{- $hit = true }}{{- end }}
+  {{- if and (eq (index $t "key" | default "") (index $r "key")) (or (not (index $r "effect")) (eq (index $t "effect" | default "") (index $r "effect"))) }}
+  {{- $hit = true }}
   {{- end }}
-  {{- if not $hit }}{{- $want = append $want $t }}{{- end }}
+  {{- end }}
+  {{- if not $hit }}
+  {{- $want = append $want $t }}
+  {{- end }}
   {{- end }}
   {{- $keep := list }}
   {{- $drop := false }}
   {{- range $t := (dig "spec" "taints" list $live) }}
   {{- $hit := false }}
   {{- range $r := $remove }}
-  {{- if and (eq (index $t "key" | default "") (index $r "key")) (or (not (index $r "effect")) (eq (index $t "effect" | default "") (index $r "effect"))) }}{{- $hit = true }}{{- end }}
+  {{- if and (eq (index $t "key" | default "") (index $r "key")) (or (not (index $r "effect")) (eq (index $t "effect" | default "") (index $r "effect"))) }}
+  {{- $hit = true }}
   {{- end }}
-  {{- if $hit }}{{- $drop = true }}{{- else }}{{- $keep = append $keep $t }}{{- end }}
   {{- end }}
-  {{- if and $drop (not (dig "spec" "unschedulable" false $live)) }}
+  {{- range $w := $want }}
+  {{- if and (eq (index $t "key" | default "") (index $w "key" | default "")) (eq (index $t "effect" | default "") (index $w "effect" | default "")) (ne (index $t "value" | default "") (index $w "value" | default "")) }}
+  {{- $hit = true }}
+  {{- end }}
+  {{- end }}
+  {{- if $hit }}
+  {{- $drop = true }}
+  {{- else }}
+  {{- $keep = append $keep $t }}
+  {{- end }}
+  {{- end }}
+  {{- if dig "spec" "unschedulable" false $live }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ $name }}
+        labels: {{ $labels | toRawJson }}
+  {{- else if $drop }}
   {{- range $w := $want }}
   {{- $have := false }}
   {{- range $k := $keep }}
-  {{- if and (eq (index $k "key" | default "") (index $w "key" | default "")) (eq (index $k "effect" | default "") (index $w "effect" | default "")) }}{{- $have = true }}{{- end }}
+  {{- if and (eq (index $k "key" | default "") (index $w "key" | default "")) (eq (index $k "effect" | default "") (index $w "effect" | default "")) }}
+  {{- $have = true }}
   {{- end }}
-  {{- if not $have }}{{- $keep = append $keep $w }}{{- end }}
+  {{- end }}
+  {{- if not $have }}
+  {{- $keep = append $keep $w }}
+  {{- end }}
   {{- end }}
   {{- $spec := dict }}
-  {{- range $field, $value := $live.spec }}{{- $_ := set $spec $field $value }}{{- end }}
-  {{- if $keep }}{{- $_ := set $spec "taints" $keep }}{{- else }}{{- $_ := unset $spec "taints" }}{{- end }}
+  {{- range $field, $value := $live.spec }}
+  {{- $_ := set $spec $field $value }}
+  {{- end }}
+  {{- if $keep }}
+  {{- $_ := set $spec "taints" $keep }}
+  {{- else }}
+  {{- $_ := unset $spec "taints" }}
+  {{- end }}
   - complianceType: mustonlyhave
     metadataComplianceType: musthave
     objectDefinition:

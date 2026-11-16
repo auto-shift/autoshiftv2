@@ -637,10 +637,12 @@ them off it.
 A taint leaves a node only through `removeTaints`. Taking a taint out of `taints`, or a node out of
 the list, leaves the node as it was, because the policies add and never subtract. While a taint
 named in `removeTaints` is on a node, the policy rewrites that node once: the live `spec`, minus the
-removed taints, plus any wanted taint it lacks. Labels merge as usual. A cordoned node is skipped
-until it is uncordoned, so the rewrite never undoes a drain. The policy reports Compliant while it
-waits, and the taint goes on the first evaluation after the node is uncordoned. After the taint is gone, the entry can
-stay or go.
+removed taints, plus any wanted taint it lacks. Labels merge as usual. After the taint is gone, the
+entry can stay or go. Changing the `value` of a listed taint works the same way: the rewrite
+replaces the taint with the same `key` and `effect`, since Kubernetes allows only one.
+
+A cordoned node gets its labels but no taint change. The policy reports Compliant while it waits,
+and the taints change on the first evaluation after the node is uncordoned.
 
 Labels are never removed. Removing a node from a list or setting `infraRole: false` later leaves its
 labels in place. Clean them up by hand:
