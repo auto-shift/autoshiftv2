@@ -1,6 +1,11 @@
+# Channel and update graph. Both decide what lands in status.availableUpdates, which the allowed
+# gate reads, so they are written here, ahead of the gate, rather than by the upgrade policy that
+# depends on it. A disconnected cluster reads its graph from a local OpenShift Update Service:
+# with upstream written only after the gate, the gate never sees the target and nothing upgrades.
 object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- $upgradeCfg := (index ($raw | fromYaml | default dict) "openshift-upgrade" | default dict) hub}}
   {{- $channel := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-channel" | default "" hub}}" }}
-  {{- if ne $channel "" }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: config.openshift.io/v1
@@ -8,5 +13,7 @@ object-templates-raw: |
       metadata:
         name: version
       spec:
+        upstream: '{{hub index $upgradeCfg "upgradeGraphUrl" | default "https://api.openshift.com/api/upgrades_info/v1/graph" hub}}'
+        {{- if ne $channel "" }}
         channel: '{{ $channel }}'
-  {{- end }}
+        {{- end }}
