@@ -32,8 +32,8 @@ spec:
           severity: high
           object-templates-raw: |
             {{ "{{-" }} $ns := (lookup "v1" "Namespace" "" "{{ $policyNamespace }}")  {{ "}}" }}
-            {{ "{{-" }} $nsLabels := (index $ns "metadata" "labels") {{ "}}" }}
-            {{ "{{-" }} $autoshiftLabel := (index $nsLabels "autoshift.io/createdByAutoshift") | default "" {{ "}}" }}
+            {{- /* An absent namespace is the normal state on a managed hub, so it must not error. */}}
+            {{ "{{-" }} $autoshiftLabel := dig "metadata" "labels" "autoshift.io/createdByAutoshift" "" ($ns | default dict) {{ "}}" }}
             {{ "{{-" }} if ne $autoshiftLabel "" {{ "}}" }}
             - complianceType: mustnothave
               objectDefinition:

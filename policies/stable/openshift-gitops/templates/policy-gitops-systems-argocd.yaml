@@ -16,6 +16,11 @@ spec:
   remediationAction: inform
 {{ end }}
   disabled: false
+  # The infra agent stanza resolves the principal Route, which lives in the principal namespace.
+  # Without a service account a hub template may only look up inside the policy namespace, and the
+  # whole policy fails to resolve rather than just that value.
+  hubTemplateOptions:
+    serviceAccountName: autoshift-policy-service-account
   dependencies:
     - name: policy-gitops-operator-install
       namespace: {{ .Values.policy_namespace }}
@@ -36,6 +41,10 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
+            {{/* The infra instance name, per cluster from config.gitops.infra.name, else this chart's
+                 default. fromConfigMap for the same reason as the ArgoCD policy below: a missing
+                 rendered-config must fail, not bind cluster-admin to a default name. */}}
+            {{ "{{hub" }} $argoName := (dig "gitops" "infra" "name" "{{ .Values.gitops.argoName }}" (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -49,7 +58,7 @@ spec:
                 apiVersion: rbac.authorization.k8s.io/v1
                 kind: ClusterRoleBinding
                 metadata:
-                  name: cluster-admin-{{ .Values.gitops.argoName }}-argocd-application-controller
+                  name: cluster-admin-{{ "{{hub" }} $argoName {{ "hub}}" }}-argocd-application-controller
                   annotations:
                     helm.sh/hook-weight: "3"
                 roleRef:
@@ -58,7 +67,7 @@ spec:
                   name: cluster-admin
                 subjects:
                 - kind: ServiceAccount
-                  name: {{ .Values.gitops.argoName }}-argocd-application-controller
+                  name: {{ "{{hub" }} $argoName {{ "hub}}" }}-argocd-application-controller
                   namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -93,7 +102,17 @@ spec:
                  template-error until the configuration arrives. */}}
             {{ "{{hub-" }} $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $infra := (index (index $cfg "gitops" | default dict) "infra" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $argoName := (dig "name" "{{ .Values.gitops.argoName }}" $infra) {{ "hub}}" }}
             {{ "{{hub-" }} $pgEnabled := (index (index $cfg "gitops" | default dict) "policyGenerator" | default false) {{ "hub}}" }}
+            {{ "{{hub-" }} $agentCfg := (index $infra "agent" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $agentNs := (index $infra "agentNamespace" | default "openshift-gitops-infra-agent") {{ "hub}}" }}
+            {{ "{{hub-" }} $infraModeDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") {{ "hub}}" }}
+            {{ "{{hub-" }} $infraMode := (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraModeDefault) {{ "hub}}" }}
+            {{ "{{hub-" }} $pRoute := (lookup "route.openshift.io/v1" "Route" $agentNs "infra-principal-agent-principal") | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $pHost := (dig "spec" "host" "" $pRoute) {{ "hub}}" }}
+            {{ "{{hub-" }} $clientMode := (index $agentCfg "mode" | default "autonomous") {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $infraMode "agent-managed" {{ "hub}}" }}{{ "{{hub-" }} $clientMode = "managed" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $infraMode "agent-autonomous" {{ "hub}}" }}{{ "{{hub-" }} $clientMode = "autonomous" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $server := (index $infra "server" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $serverAutoscale := (index $server "autoscale" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $serverLimits := (index $server "limits" | default dict) {{ "hub}}" }}
@@ -159,7 +178,7 @@ spec:
                  returns nothing in ArgoCD's repo-server. No value fallback: if the repo-server isn't found
                  the image resolves empty and the ArgoCD CR fails loudly rather than retrying a bad pinned
                  tag. The repo-server always exists by the time this day-2 policy runs. */}}
-            {{ "{{" }} $argoRepoDep := (lookup "apps/v1" "Deployment" "{{ .Values.gitops.argoNamespace }}" "{{ .Values.gitops.argoName }}-repo-server") {{ "}}" }}
+            {{ "{{" }} $argoRepoDep := (lookup "apps/v1" "Deployment" "{{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}" "{{ "{{hub" }} $argoName {{ "hub}}" }}-repo-server") {{ "}}" }}
             {{ "{{" }} $argoImageLive := "" {{ "}}" }}
             {{ "{{" }} if $argoRepoDep {{ "}}" }}{{ "{{" }} $argoImageLive = (index $argoRepoDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
             {{/* Same for the PolicyGenerator binary, which comes from the ACM CLI downloads image.
@@ -180,10 +199,45 @@ spec:
                 apiVersion: argoproj.io/v1beta1
                 kind: ArgoCD
                 metadata:
-                  name: {{ .Values.gitops.argoName }}
+                  name: {{ "{{hub" }} $argoName {{ "hub}}" }}
                   namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   disableAdmin: {{ "{{hub" }} ternary (index $infra "disableAdmin") {{ $.Values.gitops.disableAdmin }} (hasKey $infra "disableAdmin") {{ "hub}}" }}
+                  {{ "{{hub-" }} if and (hasPrefix "agent" $infraMode) (ne $pHost "") {{ "hub}}" }}
+                  # The Argo CD agent, when gitops-infra selects an agent mode. It belongs on THIS instance
+                  # rather than a sibling: a namespace holds one Argo CD, and the Applications worth mirroring
+                  # are the ones this instance already owns. This policy is placed on hub clustersets, which is
+                  # also the only place an infra instance exists, so the placement is the gate. The credentials
+                  # and the principal come from the gitops-agent policies. Guarded on the principal Route,
+                  # because an empty address yields an agent that never connects. The server stays enabled,
+                  # unlike a team agent: this is the cluster's working Argo CD and its console is expected to
+                  # keep answering.
+                  argoCDAgent:
+                    agent:
+                      enabled: true
+                      allowedNamespaces:
+                        {{ "{{hub-" }} range (index $agentCfg "agentNamespaces" | default (list "*")) {{ "hub}}" }}
+                        - '{{ "{{hub" }} . {{ "hub}}" }}'
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                      # Without creds the agent falls back to userpass, waits on a secret nothing creates, and never
+                      # becomes ready. The operator turns this into ARGOCD_AGENT_CREDS, and mtls:any is what makes
+                      # it present the client certificate below.
+                      creds: 'mtls:any'
+                      client:
+                        mode: {{ "{{hub" }} $clientMode {{ "hub}}" }}
+                        principalServerAddress: {{ "{{hub" }} $pHost {{ "hub}}" }}
+                        principalServerPort: '{{ "{{hub" }} (index $agentCfg "principalServerPort" | default "443") {{ "hub}}" }}'
+                      tls:
+                        insecure: false
+                        rootCASecretName: gitops-agent-ca
+                        secretName: gitops-agent-client-tls
+                  {{ "{{hub-" }} else if eq $infraMode "uninstall" {{ "hub}}" }}
+                  # Teardown. musthave never removes a field, so leaving the stanza out would keep the agent
+                  # running; it has to be switched off explicitly.
+                  argoCDAgent:
+                    agent:
+                      enabled: false
+                  {{ "{{hub-" }} end {{ "hub}}" }}
                   server:
                     {{ "{{hub-" }} if (ternary (index $serverAutoscale "enabled") {{ $.Values.gitops.server.autoscale.enabled }} (hasKey $serverAutoscale "enabled")) {{ "hub}}" }}
                     autoscale:
@@ -193,7 +247,7 @@ spec:
                         scaleTargetRef:
                           apiVersion: "apps/v1"
                           kind: deployment
-                          name: {{ $.Values.gitops.argoName }}-server
+                          name: {{ "{{hub" }} $argoName {{ "hub}}" }}-server
                         targetCPUUtilizationPercentage: {{ "{{hub" }} index $serverAutoscale "targetCPUUtilizationPercentage" | default {{ $.Values.gitops.server.autoscale.targetCPUUtilizationPercentage }} {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
                     resources:

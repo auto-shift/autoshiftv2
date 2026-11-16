@@ -1,0 +1,133 @@
+object-templates-raw: |
+  # HUB teardown, at two scopes, both driven by an 'uninstall' value. Doing nothing is the default:
+  # only that value removes anything.
+  #
+  #   on a SPOKE's label   that cluster leaves the team. Its credentials and mapping go.
+  #   on THIS hub's label  the team is finished. Its whole principal goes.
+  #
+  # Rendering nothing is the normal result. customMessage.compliant in policy-generator-config.yaml
+  # says as much, so a bare Compliant is not mistaken for a teardown that failed to happen.
+  #
+  # No dependency on the spoke removal, deliberately. An ACM dependency resolves against the SAME
+  # cluster's copy of the other policy, and the spoke half is placed on spokes, so requiring it here
+  # would leave this Pending forever. Ordering is not needed anyway: revoking first only makes the
+  # departing agent fail to authenticate, which is the intended end state regardless.
+  #
+  # PER CLUSTER. Every managed cluster is read, because the hub holds the credentials for all of
+  # them and a departing cluster cannot remove anything from here itself.
+  # Hoisted: range rebinds the dot, and both loops need the policy namespace to read a cluster's
+  # rendered config.
+  {{hub- $polNs := .PolicyMetadata.namespace hub}}
+  # lookup, NOT fromConfigMap: this walks EVERY managed cluster, and a cluster with no
+  # rendered-config is normal. fromConfigMap would fail the whole teardown over one unrelated
+  # cluster.
+  # The principal namespace is decided by THIS hub's config, the same config agent-hub created it
+  # from, never the departing cluster's: infra from config.gitops.infra, a team from
+  # config.gitops.teams.<team>.
+  {{hub- $hubCfg := (index ((lookup "v1" "ConfigMap" $polNs (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $hubTeams := (dig "gitops" "teams" dict $hubCfg) hub}}
+  {{hub- $hubInfra := (dig "gitops" "infra" dict $hubCfg) hub}}
+  # This hub's principal namespaces, by team, handed to the spoke template below as JSON.
+  {{hub- $nsMap := dict "infra" (dig "agentNamespace" "openshift-gitops-infra-agent" $hubInfra) hub}}
+  {{hub- range $t, $ts := $hubTeams hub}}{{hub- $nsMap = set $nsMap $t (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $t) $ts) hub}}{{hub- end hub}}
+  # The departing clusters are THIS hub's own, so they are read by a spoke template, which runs on
+  # the hub this policy lands on; a hub template would read the hub that placed it.
+  {{- $nsMap := fromJson `{{hub $nsMap | toJson hub}}` }}
+  {{- range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) }}
+  {{- $mcName := dig "metadata" "name" "" $mc }}
+  {{- range $label, $val := (dig "metadata" "labels" dict $mc) }}
+  {{- $isInfra := eq $label "autoshift.io/gitops-infra" }}
+  {{- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") }}
+  {{- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra }}
+  {{- $agentNs := index $nsMap $team | default (printf "openshift-gitops-%s-agent" $team) }}
+  {{- $agentName := printf "%s-%s" $mcName $team }}
+  # The agent-to-cluster mapping. Removing it is what actually stops the principal routing to that
+  # agent, so it leads.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: '{{ printf "cluster-%s" $agentName }}'
+        namespace: '{{ $agentNs }}'
+  # The certificates, and then the secrets they issued into. Both are needed: deleting only the
+  # secret leaves cert-manager to reissue it from the Certificate that is still there.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: '{{ printf "%s-client" $agentName }}'
+        namespace: '{{ $agentNs }}'
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: '{{ printf "%s-proxy" $agentName }}'
+        namespace: '{{ $agentNs }}'
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: '{{ printf "%s-client-tls" $agentName }}'
+        namespace: '{{ $agentNs }}'
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: '{{ printf "%s-proxy-tls" $agentName }}'
+        namespace: '{{ $agentNs }}'
+  # The per-agent namespace, whose name is the agent name. In autonomous mode this holds the hub's
+  # mirror of that cluster's applications, and in managed mode it holds the ones the hub owned for
+  # it. Either way it belongs to a cluster that has left, so it goes with it.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: '{{ $agentName }}'
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  # THE WHOLE PRINCIPAL, when this hub's own label says so: gitops-agent for infra, matching the
+  # label that runs it, and gitops-dev-team-<team> for a team. infra's principal is not tied to this
+  # hub's own gitops-infra mode, so tearing down this hub's infra agent leaves a principal it hosts
+  # for other clusters alone. Removing the principal namespace takes the principal, its certificate
+  # authority, the token signing key, the projects and every remaining per-cluster credential with
+  # it, so nothing else needs listing here.
+  {{hub- range $label, $val := .ManagedClusterLabels hub}}
+  {{hub- $isInfra := eq $label "autoshift.io/gitops-agent" hub}}
+  {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") hub}}
+  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) (ternary $hubInfra (index $hubTeams $team | default dict) $isInfra)) hub}}
+  # Cluster-scoped, so it does not go with the namespace.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{hub printf "gitops-agent-%s-principal" $team hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: {{hub printf "gitops-agent-%s-principal" $team hub}}
+  # The principal UI's console link, which is cluster-scoped and so outlives the namespace. Named
+  # after the principal namespace.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: console.openshift.io/v1
+      kind: ConsoleLink
+      metadata:
+        name: '{{hub (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) (ternary $hubInfra (index $hubTeams $team | default dict) $isInfra)) hub}}'
+  {{hub- end hub}}
+  {{hub- end hub}}
