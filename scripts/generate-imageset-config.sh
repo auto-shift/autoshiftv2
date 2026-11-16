@@ -224,12 +224,14 @@ get_catalog_cache_configs() {
 }
 
 # Channel names an operator has in the cached catalog, one per line. FBC packages are laid out as
-# catalog.json, catalog.yaml, or split files, so read every non-bundle file.
+# catalog.json, catalog.yaml, or split files, so read every non-bundle file. The YAML files are
+# joined with a --- between them, so the last document of one file, or a file without a final
+# newline, cannot run into the next.
 get_catalog_channels() {
     local pkg_dir="$1"
     find "$pkg_dir" -type f -name '*.json' -not -path '*/bundles*' -exec cat {} + 2>/dev/null \
         | jq -r 'select(.schema == "olm.channel") | .name' 2>/dev/null
-    find "$pkg_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -not -path '*/bundles*' -exec cat {} + 2>/dev/null \
+    find "$pkg_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -not -path '*/bundles*' -exec awk 'FNR == 1 && NR > 1 { print "---" } 1' {} + 2>/dev/null \
         | awk '/^---/ { if (s == "olm.channel" && n != "") print n; s = ""; n = ""; next }
                /^schema:/ { s = $2 } /^name:/ { n = $2 }
                END { if (s == "olm.channel" && n != "") print n }' | tr -d "\"'"
@@ -355,7 +357,7 @@ get_default_channel() {
     fi
 
     # FBC packages are laid out as package.json, catalog.json, catalog.yaml, or split YAML files such
-    # as package.yaml, so read every non-bundle file, as get_catalog_channels does.
+    # as package.yaml, so read every non-bundle file, joined as get_catalog_channels joins them.
     default_channel=$(
         find "$pkg_dir" -type f -name '*.json' -not -path '*/bundles*' -exec cat {} + 2>/dev/null \
             | jq -r 'select(.schema == "olm.package") | .defaultChannel // empty' 2>/dev/null \
@@ -363,7 +365,7 @@ get_default_channel() {
     )
     if [[ -z "$default_channel" ]]; then
         default_channel=$(
-            find "$pkg_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -not -path '*/bundles*' -exec cat {} + 2>/dev/null \
+            find "$pkg_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -not -path '*/bundles*' -exec awk 'FNR == 1 && NR > 1 { print "---" } 1' {} + 2>/dev/null \
                 | grep -m1 '^defaultChannel:' \
                 | awk '{print $2}' \
                 | tr -d "\"'" \
