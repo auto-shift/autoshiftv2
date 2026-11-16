@@ -1896,14 +1896,16 @@ hubClusterSets:
               name: 'global-observability-remote-write'
               namespace: 'open-cluster-management-observability'
       # OpenShift Update Service graph written to ClusterVersion.spec.upstream
-      # (see docs/ocp-upgrade.md). Default is the public graph; you do not need
-      # to set this key if you are not using a local or disconnected service.
+      # (see docs/ocp-upgrade.md). Optional. When unset, a disconnected-mirror cluster uses the
+      # OpenShift Update Service on the hub that manages it, and any other cluster uses the public
+      # graph. Set it only to point somewhere else.
       openshift-upgrade:
         upgradeGraphUrl: 'https://api.openshift.com/api/upgrades_info/v1/graph'
-      # OpenShift Update Service, for a disconnected fleet. Requires the update-service label. Copy
-      # releases and graphDataImage from the spec of oc-mirror's cluster-resources/updateService.yaml,
-      # written when the ImageSetConfiguration has graph: true. Point each cluster's
-      # openshift-upgrade.upgradeGraphUrl at this service's Route plus /api/upgrades_info/v1/graph.
+      # OpenShift Update Service, for a disconnected fleet. Requires the update-service label, usually
+      # on the hub only. Every key is optional. releases and graphDataImage default to oc-mirror v2's
+      # paths under disconnected.mirrorRegistry; set them only for another layout, copying the spec
+      # of oc-mirror's cluster-resources/updateService.yaml. Disconnected clusters the hub manages
+      # find this service on their own. If you change name, set it where every cluster sees it.
       update-service:
         name: 'autoshift'                      # UpdateService name, which also names its Route
         replicas: 2

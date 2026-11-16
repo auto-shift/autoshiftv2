@@ -26,7 +26,7 @@ flowchart LR
 
 | Step | Policy | Mode | What it does |
 |------|--------|------|--------------|
-| 1 | `policy-openshift-upgrade-channel` | enforce | Sets `ClusterVersion.spec.channel`, and `spec.upstream` from `config.openshift-upgrade.upgradeGraphUrl`, so `status.availableUpdates` recomputes for the desired channel and graph. A disconnected cluster needs the upstream set here: step 2 cannot pass until the CVO reads the local graph. Without this, a y-stream target can deadlock the next check. |
+| 1 | `policy-openshift-upgrade-channel` | enforce | Sets `ClusterVersion.spec.channel` and `spec.upstream` (see [Disconnected clusters](#disconnected-clusters) for how the graph is chosen), so `status.availableUpdates` recomputes for the desired channel and graph. A disconnected cluster needs the upstream set here: step 2 cannot pass until the CVO reads the local graph. Without this, a y-stream target can deadlock the next check. |
 | 2 | `policy-openshift-upgrade-allowed` | inform | Confirms the target is safe to apply. Compliant when the target is already running, appears in `status.availableUpdates` with a release image, or is already accepted (`status.desired.version` or a `Partial` history entry). NonCompliant on a plain miss (wrong or unpublished version). A `Recommended: False` entry under `status.conditionalUpdates` is handled by a sibling check; see [Conditional updates](#conditional-updates-recommended-false). On a disconnected cluster, a third check fails when the target release has no signature; see [Disconnected clusters](#disconnected-clusters). **Step 3 depends on this policy.** |
 | 3 | `policy-openshift-upgrade` | enforce | Writes `spec.upstream` again and, when not already `Progressing`, `spec.desiredUpdate.version` plus `spec.desiredUpdate.image`. The image is copied from `status.availableUpdates` (or from `status.conditionalUpdates` when conditional upgrades are allowed). The CVO then upgrades the cluster. |
 | 4 | `policy-openshift-upgrade-status` | inform | Compliant only after the latest `Completed` history entry is at or above the target. **This is the wave-done gate.** Do not use step 3 for that: it goes Compliant as soon as `desiredUpdate` is written, long before the CVO finishes. |
@@ -74,11 +74,12 @@ hubClusterSets:
 The OpenShift Update Service graph URL is config, not a label. The channel policy reads
 `config.openshift-upgrade.upgradeGraphUrl` from the cluster's rendered-config ConfigMap and writes it
 to `ClusterVersion.spec.upstream`. See [config-and-labels.md](config-and-labels.md). You do not need
-to set this key if the cluster can reach the public graph.
+to set this key if the cluster can reach the public graph, or is disconnected and has an OpenShift
+Update Service on itself or its hub.
 
 | Key | Purpose | Default |
 |-----|---------|---------|
-| `config.openshift-upgrade.upgradeGraphUrl` | OpenShift Update Service graph. Point this at a local service when the cluster is disconnected. | `https://api.openshift.com/api/upgrades_info/v1/graph` |
+| `config.openshift-upgrade.upgradeGraphUrl` | OpenShift Update Service graph. Overrides the default. | A disconnected cluster uses the OpenShift Update Service on itself or on its hub; any other cluster uses `https://api.openshift.com/api/upgrades_info/v1/graph` |
 
 ```yaml
 hubClusterSets:
@@ -111,30 +112,33 @@ Operator from `make generate-imageset`, which includes every declared operator, 
    ```
 
    The script prints `config.update-service` and one `releaseSignatures` entry per release digest.
-   Paste them into the values file that holds `config.disconnected`.
-3. Enable the OpenShift Update Service on the hub with `update-service: 'true'`. It reads the mirror
-   registry CA from the same `config.disconnected.mirrorRegistry` the cluster uses to pull.
-4. Point each cluster at that service. The graph URL is the service Route plus
-   `/api/upgrades_info/v1/graph`. The Route host is in the `UpdateService` status:
+   Paste the `releaseSignatures` entries into the values file that holds `config.disconnected`.
+   `config.update-service` is only needed when the mirror does not use oc-mirror's default paths.
+3. Enable the OpenShift Update Service with `update-service: 'true'` on the hub, or on whichever
+   clusters should serve the graph. It reads the mirror registry CA from the same
+   `config.disconnected.mirrorRegistry` the cluster uses to pull, and finds the mirrored releases
+   and graph image at `<host>[/<path>]/openshift/release-images` and
+   `<host>[/<path>]/openshift/graph-image:latest`.
 
-   ```bash
-   oc get updateservice -n openshift-update-service autoshift -o jsonpath='{.status.policyEngineURI}'
-   ```
+Every `disconnected-mirror` cluster then finds its update graph without further configuration. The
+channel policy writes `ClusterVersion.spec.upstream` from the first of these that exists:
 
-   ```yaml
-   config:
-     openshift-upgrade:
-       upgradeGraphUrl: 'https://<policyEngineURI host>/api/upgrades_info/v1/graph'
-   ```
+1. `config.openshift-upgrade.upgradeGraphUrl`, when set.
+2. An OpenShift Update Service on the cluster itself.
+3. The OpenShift Update Service on the hub that manages the cluster.
 
-   A cluster that does not trust the Route certificate cannot read the graph. Add the hub ingress CA
-   to that cluster's `proxy/cluster` `trustedCA` if the hub uses a private certificate.
+A disconnected cluster with none of these fails the channel policy with a message naming the fix,
+rather than pointing at a public graph it cannot reach. A connected cluster without an explicit URL
+uses the public graph. The service is found by its Route, `<name>-route` in
+`openshift-update-service`, where `name` is `config.update-service.name` (default `autoshift`).
+Set `name` where every cluster sees it if you change it.
+
+A cluster that does not trust the Route certificate cannot read the graph. Add the serving cluster's
+ingress CA to the reading cluster's `proxy/cluster` `trustedCA` if that cluster uses a private
+certificate.
 
 ```yaml
 config:
-  update-service:
-    releases: 'registry.example.com:5000/openshift/release-images'
-    graphDataImage: 'registry.example.com:5000/openshift/graph-image:latest'
   disconnected:
     releaseSignatures:
       - version: '4.22.18'
@@ -142,6 +146,21 @@ config:
         signatures:
           - '<base64 signature>'
 ```
+
+### Where the update service runs in a hub of hubs
+
+Each layer's Red Hat Advanced Cluster Management places policies on its own clusters, and "the hub
+that manages the cluster" means that placing hub. Choose where the service runs with the
+`update-service` label:
+
+| Layout | Labels | Result |
+|---|---|---|
+| One service per managed hub | `update-service: 'true'` on the managed hubs' clusterset in the hub of hubs' values | Each managed hub serves its own spokes, and uses its own service for its own upgrades |
+| One central service on the hub of hubs | `update-service: 'true'` on the hub of hubs only | Managed hubs find it on their own. Their spokes look on their managed hub, so set `config.openshift-upgrade.upgradeGraphUrl` once in each managed hub's values |
+| Both | Both labels | Every cluster uses the nearest service: its own, then its hub's |
+
+Every serving cluster needs the release images and graph image in a mirror it can reach, and the
+`releaseSignatures` list of the clusters it serves.
 
 `releaseSignatures` is required on every cluster with `disconnected-mirror: 'true'`. AutoShift owns
 the `openshift-config-managed/mirrored-release-signatures` ConfigMap it writes, so the list in values

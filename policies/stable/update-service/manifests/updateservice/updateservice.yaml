@@ -1,13 +1,14 @@
 # The UpdateService that serves the OpenShift update graph from the mirror registry.
 #
-# Everything comes from config.update-service in the cluster's rendered-config, normally copied from
-# the spec of the updateService.yaml that oc-mirror writes to working-dir/cluster-resources/ when
-# the ImageSetConfiguration has graph: true:
+# Settings come from config.update-service in the cluster's rendered-config. releases and
+# graphDataImage default to the paths oc-mirror v2 uses under config.disconnected.mirrorRegistry, so
+# a cluster that mirrors with oc-mirror needs neither. Set them only for another layout, copying
+# the spec of the updateService.yaml oc-mirror writes to working-dir/cluster-resources/:
 #
-#   releases        required. The mirrored release repository, for example
-#                   registry.example.com:5000/openshift/release-images.
-#   graphDataImage  required. The graph data image oc-mirror built, for example
-#                   registry.example.com:5000/openshift/graph-image:latest.
+#   releases        default <host>[/<path>]/openshift/release-images. The mirrored release
+#                   repository.
+#   graphDataImage  default <host>[/<path>]/openshift/graph-image:latest. The graph data image
+#                   oc-mirror builds when the ImageSetConfiguration has graph: true.
 #   replicas        optional, default 2. At 2 or more the operator adds a PodDisruptionBudget.
 #   name            optional, default autoshift. The UpdateService name, which also names its Route.
 #
@@ -17,14 +18,22 @@
 object-templates-raw: |
   {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
   {{hub- $cfg := (index ($raw | fromYaml | default dict) "update-service" | default dict) hub}}
+  {{hub- $mirror := (dig "disconnected" "mirrorRegistry" (dict) ($raw | fromYaml | default dict)) hub}}
+  {{hub- $base := (printf "%v" (dig "host" "" $mirror)) hub}}
+  {{hub- if and $base (dig "path" "" $mirror) hub}}
+  {{hub- $base = (printf "%s/%s" $base (dig "path" "" $mirror)) hub}}
+  {{hub- end hub}}
   {{hub- $releases := (printf "%v" (dig "releases" "" $cfg)) hub}}
   {{hub- $graph := (printf "%v" (dig "graphDataImage" "" $cfg)) hub}}
   {{hub- $replicas := (printf "%v" (dig "replicas" 2 $cfg)) hub}}
-  {{hub- if not $releases hub}}
-  {{hub- fail "update-service: config.update-service.releases is required; copy spec.releases from oc-mirror's cluster-resources/updateService.yaml" hub}}
+  {{hub- if and (not $releases) $base hub}}
+  {{hub- $releases = (printf "%s/openshift/release-images" $base) hub}}
   {{hub- end hub}}
-  {{hub- if not $graph hub}}
-  {{hub- fail "update-service: config.update-service.graphDataImage is required; copy spec.graphDataImage from oc-mirror's cluster-resources/updateService.yaml" hub}}
+  {{hub- if and (not $graph) $base hub}}
+  {{hub- $graph = (printf "%s/openshift/graph-image:latest" $base) hub}}
+  {{hub- end hub}}
+  {{hub- if or (not $releases) (not $graph) hub}}
+  {{hub- fail "update-service: set config.disconnected.mirrorRegistry.host, or config.update-service.releases and graphDataImage from oc-mirror's cluster-resources/updateService.yaml" hub}}
   {{hub- end hub}}
   {{hub- if not (regexMatch "^[1-9][0-9]*$" $replicas) hub}}
   {{hub- fail (printf "update-service: config.update-service.replicas %s must be a whole number of 1 or more" $replicas) hub}}

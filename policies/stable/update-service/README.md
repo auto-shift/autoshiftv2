@@ -4,8 +4,10 @@ Installs the OpenShift Update Service Operator and an `UpdateService` that serve
 update graph from a mirror registry. A disconnected cluster cannot read Red Hat's public graph, so
 without this service `ClusterVersion` lists no updates and `openshift-upgrade` has nothing to apply.
 
-Run it on the hub. Point each cluster at it through `config.openshift-upgrade.upgradeGraphUrl`. The
-full disconnected upgrade flow, including release signatures, is in
+Run it on the hub, or on each managed hub in a hub of hubs. Disconnected clusters find it on their
+own: the `openshift-upgrade` channel policy uses a service on the cluster itself, then one on the
+hub that manages it. The full disconnected upgrade flow, including release signatures and hub of
+hubs layouts, is in
 [Disconnected clusters](../../../docs/ocp-upgrade.md#disconnected-clusters).
 
 ## What it deploys
@@ -33,18 +35,19 @@ Every cluster labeled `autoshift.io/update-service: 'true'`.
 
 ## Config
 
-Read from `config.update-service` in the cluster's rendered-config ConfigMap. Copy `releases` and
-`graphDataImage` from the spec of the `updateService.yaml` that oc-mirror writes to
-`working-dir/cluster-resources/` when the `ImageSetConfiguration` sets `graph: true`, or print them
-with `scripts/oc-mirror-to-values.sh`. The policy fails, naming the key, when either is missing.
+Read from `config.update-service` in the cluster's rendered-config ConfigMap. Every key is optional.
+`releases` and `graphDataImage` default to the paths oc-mirror v2 uses under
+`config.disconnected.mirrorRegistry`. Set them only for another layout, copying the spec of the
+`updateService.yaml` oc-mirror writes to `working-dir/cluster-resources/`. The policy fails when
+neither the keys nor `mirrorRegistry.host` is set.
 
 ```yaml
 config:
   update-service:
-    releases: 'registry.example.com:5000/openshift/release-images'           # required
-    graphDataImage: 'registry.example.com:5000/openshift/graph-image:latest'  # required
-    replicas: 2          # optional, default 2; 2 or more adds a PodDisruptionBudget
-    name: 'autoshift'    # optional, default autoshift; also names the Route
+    releases: 'registry.example.com:5000/openshift/release-images'           # default <host>[/<path>]/openshift/release-images
+    graphDataImage: 'registry.example.com:5000/openshift/graph-image:latest'  # default <host>[/<path>]/openshift/graph-image:latest
+    replicas: 2          # default 2; 2 or more adds a PodDisruptionBudget
+    name: 'autoshift'    # default autoshift; also names the Route that clusters find
 ```
 
 ## Mirror registry trust
@@ -57,13 +60,13 @@ certificate needs neither.
 
 ## Graph URL
 
-The service is served through a Route in `openshift-update-service`. Its URL is in the `UpdateService`
-status:
+The service is served through the Route `<name>-route` in `openshift-update-service`. Clusters find it
+by that name, so set `config.update-service.name` where every cluster sees it if you change it. To
+check the URL:
 
 ```bash
 oc get updateservice -n openshift-update-service autoshift -o jsonpath='{.status.policyEngineURI}'
 ```
 
-Set `config.openshift-upgrade.upgradeGraphUrl` on each cluster to that URL plus
-`/api/upgrades_info/v1/graph`. A cluster that does not trust the Route certificate cannot read the
-graph.
+`config.openshift-upgrade.upgradeGraphUrl` overrides the lookup for a cluster that should read a
+different service. A cluster that does not trust the Route certificate cannot read the graph.
