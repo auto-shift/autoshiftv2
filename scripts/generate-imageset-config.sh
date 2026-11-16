@@ -967,7 +967,6 @@ extract_and_log_operators_multi() {
                         log_step "Added additional channel for ACM: $name (channel: $channel)" >&2
                     fi
                 fi
-                include_acm="false"  # Only include ACM once
             fi
         fi
         
