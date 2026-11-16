@@ -1,0 +1,42 @@
+# The UpdateService that serves the OpenShift update graph from the mirror registry.
+#
+# Everything comes from config.update-service in the cluster's rendered-config, normally copied from
+# the spec of the updateService.yaml that oc-mirror writes to working-dir/cluster-resources/ when
+# the ImageSetConfiguration has graph: true:
+#
+#   releases        required. The mirrored release repository, for example
+#                   registry.example.com:5000/openshift/release-images.
+#   graphDataImage  required. The graph data image oc-mirror built, for example
+#                   registry.example.com:5000/openshift/graph-image:latest.
+#   replicas        optional, default 2. At 2 or more the operator adds a PodDisruptionBudget.
+#   name            optional, default autoshift. The UpdateService name, which also names its Route.
+#
+# The operator reads the mirror registry CA from the key updateservice-registry of the ConfigMap that
+# image.config.openshift.io/cluster names in additionalTrustedCA. The disconnected-mirror policy
+# writes that key when config.disconnected.mirrorRegistry carries a CA.
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- $cfg := (index ($raw | fromYaml | default dict) "update-service" | default dict) hub}}
+  {{hub- $releases := (printf "%v" (dig "releases" "" $cfg)) hub}}
+  {{hub- $graph := (printf "%v" (dig "graphDataImage" "" $cfg)) hub}}
+  {{hub- $replicas := (printf "%v" (dig "replicas" 2 $cfg)) hub}}
+  {{hub- if not $releases hub}}
+  {{hub- fail "update-service: config.update-service.releases is required; copy spec.releases from oc-mirror's cluster-resources/updateService.yaml" hub}}
+  {{hub- end hub}}
+  {{hub- if not $graph hub}}
+  {{hub- fail "update-service: config.update-service.graphDataImage is required; copy spec.graphDataImage from oc-mirror's cluster-resources/updateService.yaml" hub}}
+  {{hub- end hub}}
+  {{hub- if not (regexMatch "^[1-9][0-9]*$" $replicas) hub}}
+  {{hub- fail (printf "update-service: config.update-service.replicas %s must be a whole number of 1 or more" $replicas) hub}}
+  {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: updateservice.operator.openshift.io/v1
+      kind: UpdateService
+      metadata:
+        name: '{{hub dig "name" "autoshift" $cfg hub}}'
+        namespace: openshift-update-service
+      spec:
+        replicas: {{hub $replicas hub}}
+        releases: '{{hub $releases hub}}'
+        graphDataImage: '{{hub $graph hub}}'

@@ -976,6 +976,16 @@ hubClusterSets:
             publisher: Red Hat
         useIDMS: true
         disableDefaultCatalogs: true
+        # Release image signatures, required whenever disconnected-mirror is 'true'. The Cluster
+        # Version Operator refuses an update it cannot verify. Copy them from oc-mirror's
+        # cluster-resources/signature-configmap.json, or print entries with
+        # scripts/oc-mirror-to-values.sh. Removing an entry removes its signatures from the cluster;
+        # [] deletes them all. version is for people reading the list and is not used.
+        releaseSignatures:
+          - version: '4.22.18'
+            digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000001'
+            signatures:
+              - 'ZXhhbXBsZS1zaWduYXR1cmU='
       # =======================================================================
       # GitLab (values with / or spaces that can't be labels)
       # =======================================================================
@@ -1890,6 +1900,15 @@ hubClusterSets:
       # to set this key if you are not using a local or disconnected service.
       openshift-upgrade:
         upgradeGraphUrl: 'https://api.openshift.com/api/upgrades_info/v1/graph'
+      # OpenShift Update Service, for a disconnected fleet. Requires the update-service label. Copy
+      # releases and graphDataImage from the spec of oc-mirror's cluster-resources/updateService.yaml,
+      # written when the ImageSetConfiguration has graph: true. Point each cluster's
+      # openshift-upgrade.upgradeGraphUrl at this service's Route plus /api/upgrades_info/v1/graph.
+      update-service:
+        name: 'autoshift'                      # UpdateService name, which also names its Route
+        replicas: 2
+        releases: 'registry.example.com:5000/openshift/release-images'
+        graphDataImage: 'registry.example.com:5000/openshift/graph-image:latest'
     labels:
       # =======================================================================
       # Core Configuration
@@ -2507,6 +2526,17 @@ hubClusterSets:
       openshift-lightspeed-source: redhat-operators
       openshift-lightspeed-source-namespace: openshift-marketplace
       openshift-lightspeed-version: ''
+
+      # =======================================================================
+      # OpenShift Update Service: serves the update graph to a disconnected fleet.
+      # Settings: config.update-service. Usually enabled on the hub only.
+      # =======================================================================
+      update-service: 'false'
+      update-service-subscription-name: cincinnati-operator
+      update-service-channel: v1
+      update-service-source: redhat-operators
+      update-service-source-namespace: openshift-marketplace
+      update-service-version: ''
 
       # =======================================================================
       # SR-IOV Network Operator

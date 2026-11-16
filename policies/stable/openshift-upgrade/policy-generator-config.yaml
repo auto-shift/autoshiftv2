@@ -42,7 +42,9 @@ policies:
   # 2. Version-exists check. The plain-miss gate asks the admin to validate cluster
   #    operators. The conditional gate fails with the Cluster Version Operator reason and
   #    message; customMessage drops the template text so Governance shows that sentence.
-  #    consolidateManifests is false so the two gates can carry different messages.
+  #    The signature gate, on a disconnected cluster, fails when the target release has no
+  #    signature for the Cluster Version Operator to verify.
+  #    consolidateManifests is false so the gates can carry different messages.
   - name: policy-openshift-upgrade-allowed
     consolidateManifests: false
     remediationAction: inform
@@ -57,7 +59,14 @@ policies:
             openshift-version '{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" hub}}'
             is not in ClusterVersion status.availableUpdates with a release image on channel
             '{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-channel" | default "stable-4.22" hub}}'.
-            Validate cluster operators are healthy. policy-openshift-upgrade will not start until this is Compliant.
+            Validate cluster operators are healthy. On a disconnected cluster, also check that
+            config.openshift-upgrade.upgradeGraphUrl points at a reachable OpenShift Update Service
+            whose graph includes this version. policy-openshift-upgrade will not start until this is Compliant.
+      - path: test/openshift-upgrade-signature.yaml
+        name: openshift-upgrade-signature
+        remediationAction: inform
+        customMessage:
+          noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}. The Cluster Version Operator will refuse this update. Add the digest and its signatures from the oc-mirror signature-configmap.json to config.disconnected.releaseSignatures.'
       - path: test/openshift-upgrade-allowed-conditional.yaml
         name: openshift-upgrade-allowed-conditional
         remediationAction: inform

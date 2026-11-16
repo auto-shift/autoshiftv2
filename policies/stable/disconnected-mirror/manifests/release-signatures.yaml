@@ -1,0 +1,71 @@
+# Release image signatures for a cluster that cannot reach Red Hat's signature store. The Cluster
+# Version Operator refuses an update whose release it cannot verify, and it reads signatures from
+# ConfigMaps in openshift-config-managed labeled release.openshift.io/verification-signatures.
+#
+# config.disconnected.releaseSignatures is a list, one entry per release:
+#
+#   version     optional, for people reading the list. Not used.
+#   digest      required. sha256:<64 hex>, the release image digest.
+#   signatures  required. One or more base64 signatures for that digest.
+#
+# oc-mirror writes the same data to working-dir/cluster-resources/signature-configmap.json, and
+# scripts/oc-mirror-to-values.sh prints it as list entries. Each signature becomes the binaryData
+# key sha256-<hex>-<n>, the layout oc-mirror and the Cluster Version Operator use.
+#
+# The policy owns ConfigMap mirrored-release-signatures, the name oc-mirror gives it. mustonlyhave
+# removes a signature when its entry leaves the list, including keys added by applying oc-mirror's
+# file by hand. An empty list deletes the ConfigMap. The key itself is required: a missing key fails
+# the policy instead of leaving a hand-applied ConfigMap in place with nothing reporting on it.
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- $dc := (index ($raw | fromYaml | default dict) "disconnected" | default dict) hub}}
+  {{hub- if not (hasKey $dc "releaseSignatures") hub}}
+  {{hub- fail "disconnected-mirror: config.disconnected.releaseSignatures is required. List each release's digest and signatures from oc-mirror's signature-configmap.json, or set it to [] for none" hub}}
+  {{hub- end hub}}
+  {{hub- $entries := (index $dc "releaseSignatures" | default list) hub}}
+  {{hub- $seen := (list) hub}}
+  {{hub- range $e := $entries hub}}
+  {{hub- $digest := (printf "%v" (dig "digest" "" $e)) hub}}
+  {{hub- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) hub}}
+  {{hub- fail (printf "disconnected-mirror: releaseSignatures digest %q must be sha256: followed by 64 lowercase hex characters" $digest) hub}}
+  {{hub- end hub}}
+  {{hub- if has $digest $seen hub}}
+  {{hub- fail (printf "disconnected-mirror: releaseSignatures lists digest %s twice; put every signature for it in one entry" $digest) hub}}
+  {{hub- end hub}}
+  {{hub- $seen = (append $seen $digest) hub}}
+  {{hub- $sigs := (dig "signatures" (list) $e) hub}}
+  {{hub- if not $sigs hub}}
+  {{hub- fail (printf "disconnected-mirror: releaseSignatures entry %s has no signatures" $digest) hub}}
+  {{hub- end hub}}
+  {{hub- range $s := $sigs hub}}
+  {{hub- if not (regexMatch "^[A-Za-z0-9+/]+=*$" (printf "%v" $s)) hub}}
+  {{hub- fail (printf "disconnected-mirror: releaseSignatures entry %s has a signature that is not base64" $digest) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $entries hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: mirrored-release-signatures
+        namespace: openshift-config-managed
+        labels:
+          release.openshift.io/verification-signatures: ''
+      binaryData:
+  {{hub- range $e := $entries hub}}
+  {{hub- $hex := (replace "sha256:" "" (printf "%v" (index $e "digest"))) hub}}
+  {{hub- range $i, $s := (index $e "signatures") hub}}
+        sha256-{{hub $hex hub}}-{{hub add1 $i hub}}: '{{hub $s hub}}'
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: mirrored-release-signatures
+        namespace: openshift-config-managed
+  {{hub- end hub}}

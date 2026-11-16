@@ -1493,6 +1493,11 @@ show_usage_instructions() {
     echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/idms-oc-mirror.yaml${NC}"
     echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/itms-oc-mirror.yaml${NC}"
     echo ""
+    echo "   Release signatures and the OpenShift Update Service come from values, not oc apply."
+    echo "   Print them from the oc-mirror output and add them to your values file:"
+    echo -e "   ${YELLOW}./scripts/oc-mirror-to-values.sh mirror/working-dir/cluster-resources${NC}"
+    echo "   See docs/ocp-upgrade.md#disconnected-clusters"
+    echo ""
     echo "5. Deploy AutoShift with mirrored content:"
     if [[ ${#VALUES_FILES_ARRAY[@]} -eq 1 ]]; then
         echo -e "   ${YELLOW}helm upgrade --install autoshift autoshift/ -f ${VALUES_FILES_ARRAY[0]}${NC}"

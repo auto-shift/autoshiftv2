@@ -31,7 +31,8 @@ Shared so config.acm.provisioning.osImages and the deprecated disconnected.osIma
 {{- define "autoshift.validate-disconnected" -}}
   {{- $path := .path -}}
   {{- $disconnected := .config -}}
-  {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" "osImages" -}}
+  {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" "osImages" "releaseSignatures" -}}
+  {{- $validSignatureKeys := list "version" "digest" "signatures" -}}
   {{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "mirrors" "tagMirrors" "releaseImage" -}}
   {{- $validMirrorEntryKeys := list "source" "mirror" -}}
   {{- $validCaRefKeys := list "name" "key" "namespace" -}}
@@ -89,6 +90,19 @@ Shared so config.acm.provisioning.osImages and the deprecated disconnected.osIma
     {{- end -}}
     {{- if not (index $caRef "key") }}
 {{ printf "%s: disconnected.mirrorRegistry.caRef.key is required" $path }}
+    {{- end -}}
+  {{- end -}}
+  {{- range $idx, $entry := ($disconnected.releaseSignatures | default list) -}}
+    {{- range $key, $_ := $entry -}}
+      {{- if not (has $key $validSignatureKeys) }}
+{{ printf "%s: disconnected.releaseSignatures[%d].%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validSignatureKeys) }}
+      {{- end -}}
+    {{- end -}}
+    {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" (toString (index $entry "digest" | default ""))) }}
+{{ printf "%s: disconnected.releaseSignatures[%d].digest must be sha256: followed by 64 lowercase hex characters" $path $idx }}
+    {{- end -}}
+    {{- if not (index $entry "signatures") }}
+{{ printf "%s: disconnected.releaseSignatures[%d].signatures needs at least one signature" $path $idx }}
     {{- end -}}
   {{- end -}}
   {{- $catalogs := ($disconnected.catalogs | default list) -}}
