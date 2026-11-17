@@ -33,9 +33,14 @@ oc adm drain <node> --ignore-daemonsets --delete-emptydir-data
 oc adm uncordon <node>
 ```
 
-The drain evicts every pod that is not a static pod or part of a DaemonSet, and the scheduler places
-their replacements wherever they fit. Static control-plane pods and DaemonSets stay. After the uncordon,
-a replacement can come back to this node only if it tolerates the taint.
+Run the uncordon only after the drain finishes successfully. The drain stops on a pod that no
+controller manages (`--force` deletes such pods, and they are not recreated), and it waits while a
+PodDisruptionBudget blocks an eviction. Uncordoning before it finishes leaves the remaining pods on the
+node. See the Red Hat OpenShift Container Platform documentation on evacuating pods from nodes.
+
+A completed drain evicts every pod that is not a static pod or part of a DaemonSet, and the scheduler
+places their replacements wherever they fit. Static control-plane pods and DaemonSets stay. After the
+uncordon, a replacement can come back to this node only if it tolerates the taint.
 
 ## Placement
 
