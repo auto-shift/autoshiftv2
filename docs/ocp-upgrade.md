@@ -134,9 +134,11 @@ when it is set. Otherwise `config.openshift-upgrade.graphSource` picks the servi
 
 Set `local` or `hub` when a cluster could find a service in both places and must use one of them,
 or to use a local service on a connected cluster. A failure names the missing Route and the fix,
-rather than pointing at a graph the cluster cannot reach. The service is found by its Route, `<name>-route` in
-`openshift-update-service`, where `name` is `config.update-service.name` (default `autoshift`).
-Set `name` where every cluster sees it if you change it.
+rather than pointing at a graph the cluster cannot reach. The service is found by its Route,
+`<name>-route` in `openshift-update-service`, where `name` is `config.update-service.name`
+(default `autoshift`). An `UpdateService` first created by an operator from before 2022 keeps the
+older Route name, `<name>-policy-engine-route`, which is also found. Set `name` where every cluster
+sees it if you change it.
 
 A cluster that does not trust the Route certificate cannot read the graph. Add the serving cluster's
 ingress CA to the reading cluster's `proxy/cluster` `trustedCA` if that cluster uses a private

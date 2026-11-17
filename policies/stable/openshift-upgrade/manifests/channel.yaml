@@ -13,19 +13,28 @@
 #       auto   the default. A disconnected-mirror cluster uses its own service, then its hub's,
 #              and fails with neither, because the public graph is unreachable. Any other cluster
 #              uses the public graph.
-# The service is found by its Route, <config.update-service.name, default autoshift>-route in
-# openshift-update-service. The Route is read rather than the UpdateService status because the
-# hub service account holds cluster-reader, which covers Routes.
+# The service is found by its Route in openshift-update-service: <name>-route, where name is
+# config.update-service.name (default autoshift), else <name>-policy-engine-route. An UpdateService
+# created by an operator from before 2022 keeps that older Route, and the operator then never
+# creates <name>-route. The Route is read rather than the UpdateService status because the hub
+# service account holds cluster-reader, which covers Routes.
 object-templates-raw: |
   {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
   {{hub- $cfg := ($raw | fromYaml | default dict) hub}}
-  {{hub- $routeName := (printf "%s-route" (dig "update-service" "name" "autoshift" $cfg)) hub}}
-  {{hub- $hubRoute := (lookup "route.openshift.io/v1" "Route" "openshift-update-service" $routeName | default dict) hub}}
+  {{hub- $serviceName := (dig "update-service" "name" "autoshift" $cfg) hub}}
+  {{hub- $hubRoute := (lookup "route.openshift.io/v1" "Route" "openshift-update-service" (printf "%s-route" $serviceName) | default dict) hub}}
+  {{hub- if not (dig "spec" "host" "" $hubRoute) hub}}
+  {{hub-   $hubRoute = (lookup "route.openshift.io/v1" "Route" "openshift-update-service" (printf "%s-policy-engine-route" $serviceName) | default dict) hub}}
+  {{hub- end hub}}
   {{- $explicit := "{{hub dig "openshift-upgrade" "upgradeGraphUrl" "" $cfg hub}}" }}
   {{- $disconnected := "{{hub index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false" hub}}" }}
-  {{- $routeName := "{{hub $routeName hub}}" }}
+  {{- $serviceName := "{{hub $serviceName hub}}" }}
+  {{- $routeName := printf "%s-route" $serviceName }}
   {{- $hubHost := "{{hub dig "spec" "host" "" $hubRoute hub}}" }}
   {{- $ownHost := (dig "spec" "host" "" (lookup "route.openshift.io/v1" "Route" "openshift-update-service" $routeName | default dict)) }}
+  {{- if eq $ownHost "" }}
+  {{-   $ownHost = (dig "spec" "host" "" (lookup "route.openshift.io/v1" "Route" "openshift-update-service" (printf "%s-policy-engine-route" $serviceName) | default dict)) }}
+  {{- end }}
   {{- $channel := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-channel" | default "" hub}}" }}
   {{- $source := "{{hub dig "openshift-upgrade" "graphSource" "auto" $cfg hub}}" }}
   {{- $upstream := $explicit }}

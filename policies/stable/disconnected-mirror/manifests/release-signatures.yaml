@@ -15,14 +15,18 @@
 # The policy owns ConfigMap mirrored-release-signatures, the name oc-mirror gives it. mustonlyhave
 # removes a signature when its entry leaves the list, including keys added by applying oc-mirror's
 # file by hand. An empty list deletes the ConfigMap. The key itself is required: a missing key fails
-# the policy instead of leaving a hand-applied ConfigMap in place with nothing reporting on it.
+# the policy instead of leaving a hand-applied ConfigMap in place with nothing reporting on it. So
+# does a value that is not a list, such as false or an empty key: only an explicit [] deletes.
 object-templates-raw: |
   {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
   {{hub- $dc := (index ($raw | fromYaml | default dict) "disconnected" | default dict) hub}}
   {{hub- if not (hasKey $dc "releaseSignatures") hub}}
   {{hub- fail "disconnected-mirror: config.disconnected.releaseSignatures is required. List each release's digest and signatures from oc-mirror's signature-configmap.json, or set it to [] for none" hub}}
   {{hub- end hub}}
-  {{hub- $entries := (index $dc "releaseSignatures" | default list) hub}}
+  {{hub- $entries := (index $dc "releaseSignatures") hub}}
+  {{hub- if not (kindIs "slice" $entries) hub}}
+  {{hub- fail "disconnected-mirror: config.disconnected.releaseSignatures must be a list. Set it to [] for none" hub}}
+  {{hub- end hub}}
   {{hub- $seen := (list) hub}}
   {{hub- range $e := $entries hub}}
   {{hub- $digest := (printf "%v" (dig "digest" "" $e)) hub}}

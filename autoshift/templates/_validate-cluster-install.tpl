@@ -92,7 +92,15 @@ Shared so config.acm.provisioning.osImages and the deprecated disconnected.osIma
 {{ printf "%s: disconnected.mirrorRegistry.caRef.key is required" $path }}
     {{- end -}}
   {{- end -}}
-  {{- range $idx, $entry := ($disconnected.releaseSignatures | default list) -}}
+  {{- $signatureList := list -}}
+  {{- if hasKey $disconnected "releaseSignatures" -}}
+    {{- if kindIs "slice" $disconnected.releaseSignatures -}}
+      {{- $signatureList = $disconnected.releaseSignatures -}}
+    {{- else }}
+{{ printf "%s: disconnected.releaseSignatures must be a list; set [] for none" $path }}
+    {{- end -}}
+  {{- end -}}
+  {{- range $idx, $entry := $signatureList -}}
     {{- range $key, $_ := $entry -}}
       {{- if not (has $key $validSignatureKeys) }}
 {{ printf "%s: disconnected.releaseSignatures[%d].%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validSignatureKeys) }}
