@@ -40,8 +40,9 @@ INSTALL_EOF
 
 cat >> "$ARTIFACTS_DIR/install-bootstrap.sh" << INSTALL_VARS
 VERSION="${VERSION}"
-REGISTRY="${REGISTRY}"
-REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE}"
+# Override either from the environment to install from a mirror registry.
+REGISTRY="\${REGISTRY:-${REGISTRY}}"
+REGISTRY_NAMESPACE="\${REGISTRY_NAMESPACE:-${REGISTRY_NAMESPACE}}"
 OCI_REPO="oci://\${REGISTRY}/\${REGISTRY_NAMESPACE}"
 OCI_BOOTSTRAP_REPO="oci://\${REGISTRY}/\${REGISTRY_NAMESPACE}/bootstrap"
 OCI_REGISTRY="\${REGISTRY}/\${REGISTRY_NAMESPACE}"
@@ -63,10 +64,10 @@ command -v helm >/dev/null 2>&1 || error "helm is required"
 oc whoami >/dev/null 2>&1 || error "Not logged in to OpenShift. Run: oc login"
 
 GITOPS_NAMESPACE="${GITOPS_NAMESPACE:-openshift-gitops}"
-# Optional: override the CRD-wait Job's CLI image. The charts default to the in-cluster registry
-# (image-registry.openshift-image-registry.svc:5000/openshift/cli:latest), which can't be pulled on
-# clusters without the internal image registry (e.g. bare metal). To fix, run with:
-#   CLI_IMAGE=registry.redhat.io/openshift4/ose-cli:latest ./install-bootstrap.sh   (or a mirror)
+# Optional: pin the CRD-wait Job's CLI image. The charts resolve it from the cluster's own
+# openshift/cli ImageStream, which works disconnected and needs no internal image registry, so this
+# is only for pinning a specific mirrored image:
+#   CLI_IMAGE=<registry>/openshift4/ose-cli:latest ./install-bootstrap.sh
 CLI_IMAGE="${CLI_IMAGE:-}"
 
 log "Installing Advanced Cluster Management..."
@@ -84,6 +85,14 @@ log "Waiting for ACM MultiClusterHub to be ready (this may take 10+ minutes)..."
 oc wait --for=condition=Complete multiclusterhub multiclusterhub \
     -n open-cluster-management --timeout=900s 2>/dev/null || \
     warn "MultiClusterHub readiness check timed out - check status manually with: oc get mch -n open-cluster-management"
+
+# The GitOps chart stages the PolicyGenerator binary from this deployment's image, read by a Helm
+# lookup at install time. It belongs to the MultiClusterHub console component, so it lands partway
+# through the reconcile. Installing GitOps before it exists leaves the repo-server init container
+# with an empty image and nothing renders, so this is fatal rather than a warning.
+log "Waiting for the ACM CLI downloads deployment (source of the PolicyGenerator binary)..."
+oc rollout status deploy/acm-cli-downloads -n open-cluster-management --timeout=900s || \
+    error "acm-cli-downloads is not available in open-cluster-management. GitOps cannot stage the PolicyGenerator binary without it. Check MultiClusterHub, and that its console component is enabled."
 
 log "Installing OpenShift GitOps..."
 helm upgrade --install openshift-gitops ${OCI_BOOTSTRAP_REPO}/openshift-gitops \
@@ -159,8 +168,9 @@ AUTOSHIFT_EOF
 
 cat >> "$ARTIFACTS_DIR/install-autoshift.sh" << AUTOSHIFT_VARS
 VERSION="${VERSION}"
-REGISTRY="${REGISTRY}"
-REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE}"
+# Override either from the environment to install from a mirror registry.
+REGISTRY="\${REGISTRY:-${REGISTRY}}"
+REGISTRY_NAMESPACE="\${REGISTRY_NAMESPACE:-${REGISTRY_NAMESPACE}}"
 OCI_REPO="oci://\${REGISTRY}/\${REGISTRY_NAMESPACE}"
 OCI_REGISTRY="\${REGISTRY}/\${REGISTRY_NAMESPACE}"
 AUTOSHIFT_VARS
@@ -406,7 +416,7 @@ AutoShift provides a complete Infrastructure-as-Code solution for OpenShift usin
 Use the provided scripts for a streamlined installation:
 
 ```bash
-# Step 1: Install bootstrap operators (GitOps + ACM)
+# Step 1: Install bootstrap operators (ACM, then GitOps)
 ./install-bootstrap.sh
 
 # Step 2: Install AutoShift (deploys policies)
@@ -432,6 +442,36 @@ helm registry login quay.io -u YOUR_USERNAME -p YOUR_TOKEN
 
 #### Step 2: Install Bootstrap Charts
 
+Install Advanced Cluster Management first. In source mode the GitOps repo-server stages the
+PolicyGenerator binary from the `acm-cli-downloads` image, read at install time, so that deployment
+must already exist. OCI mode deploys prerendered Helm charts and does not need the plugin, but the
+order is the same in both so there is only one sequence to remember.
+
+**Install Advanced Cluster Management:**
+
+```bash
+helm upgrade --install advanced-cluster-management \
+GUIDE_EOF
+
+cat >> "$ARTIFACTS_DIR/INSTALL.md" << GUIDE_VERSION
+  oci://${REGISTRY}/${REGISTRY_NAMESPACE}/bootstrap/advanced-cluster-management \\
+  --version ${VERSION} \\
+GUIDE_VERSION
+
+cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
+  --create-namespace \
+  --wait \
+  --timeout 15m
+
+# Verify installation (may take 10+ minutes)
+oc get multiclusterhub -n open-cluster-management
+oc wait --for=condition=Complete multiclusterhub multiclusterhub \
+  -n open-cluster-management --timeout=900s
+
+# Required before installing GitOps in source mode
+oc rollout status deploy/acm-cli-downloads -n open-cluster-management --timeout=15m
+```
+
 **Install OpenShift GitOps:**
 
 ```bash
@@ -454,33 +494,12 @@ oc wait --for=condition=ready pod -l app.kubernetes.io/name=openshift-gitops-ser
   -n openshift-gitops --timeout=300s
 ```
 
-**Install Advanced Cluster Management:**
-
-```bash
-helm upgrade --install advanced-cluster-management \
-GUIDE_EOF
-
-cat >> "$ARTIFACTS_DIR/INSTALL.md" << GUIDE_VERSION
-  oci://${REGISTRY}/${REGISTRY_NAMESPACE}/bootstrap/advanced-cluster-management \\
-  --version ${VERSION} \\
-GUIDE_VERSION
-
-cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
-  --create-namespace \
-  --wait \
-  --timeout 15m
-
-# Verify installation (may take 10+ minutes)
-oc get multiclusterhub -n open-cluster-management
-oc wait --for=condition=Complete multiclusterhub multiclusterhub \
-  -n open-cluster-management --timeout=900s
-```
-
-> **Bare metal / no internal registry:** the CRD-wait Job defaults to the in-cluster CLI image
-> (`image-registry.openshift-image-registry.svc:5000/openshift/cli:latest`). If the internal image
-> registry is not enabled, add `--set image=registry.redhat.io/openshift4/ose-cli:latest` (or your
-> mirrored equivalent) to both bootstrap `helm upgrade` commands above, or run `install-bootstrap.sh`
-> with `CLI_IMAGE=registry.redhat.io/openshift4/ose-cli:latest`.
+> **CRD-wait image:** the charts resolve it from the cluster's own `openshift/cli` ImageStream at
+> install time. That entry is a digest against the release payload, so an ImageDigestMirrorSet
+> rewrites it in a disconnected deployment, and nothing depends on the internal image registry. The
+> in-cluster registry is only the last resort. To pin a specific mirrored image instead, add
+> `--set image=<image>` to both bootstrap `helm upgrade` commands above, or run
+> `install-bootstrap.sh` with `CLI_IMAGE=<image>`.
 
 #### Step 3: Deploy AutoShift
 

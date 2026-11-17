@@ -21,6 +21,23 @@ import (
 // Resolver wraps the ACM TemplateResolver for offline hub template resolution.
 type Resolver struct {
 	inner *templates.TemplateResolver
+	// local is the pristine seed. go-template-utils returns local resources by reference, so a
+	// template that mutates a lookup result (cluster-labels sets metadata.labels on every
+	// ManagedCluster) would otherwise leak into every later resolution. A live API server returns
+	// a fresh object per lookup; refreshLocal gives each resolution its own copy to match.
+	local []unstructured.Unstructured
+}
+
+// refreshLocal hands the inner resolver a deep copy of the seeded resources.
+func (r *Resolver) refreshLocal() {
+	if len(r.local) == 0 {
+		return
+	}
+	fresh := make([]unstructured.Unstructured, len(r.local))
+	for i := range r.local {
+		fresh[i] = *r.local[i].DeepCopy()
+	}
+	r.inner.WithLocalResources(fresh)
 }
 
 // kindToResource converts a Kind to its lowercase plural resource name.
@@ -155,17 +172,17 @@ func NewResolver(localResources []unstructured.Unstructured) (*Resolver, error) 
 		return nil, fmt.Errorf("create template resolver: %w", err)
 	}
 
-	if len(localResources) > 0 {
-		tr.WithLocalResources(localResources)
-	}
-	return &Resolver{inner: tr}, nil
+	res := &Resolver{inner: tr, local: localResources}
+	res.refreshLocal()
+	return res, nil
 }
 
 // SetLocalResources updates the resolver's local resources. These are
 // Kubernetes objects (typically ConfigMaps) that the resolver returns for
 // `lookup`/`fromConfigMap` calls instead of hitting a real API server.
 func (r *Resolver) SetLocalResources(resources []unstructured.Unstructured) {
-	r.inner.WithLocalResources(resources)
+	r.local = resources
+	r.refreshLocal()
 }
 
 // HubContext is the template context struct passed to the ACM resolver. The
@@ -180,6 +197,10 @@ type HubContext struct {
 	ManagedClusterName   string
 	ManagedClusterLabels map[string]string
 	PolicyMetadata       map[string]interface{}
+	// DefaultMessage is empty here. ConfigurationPolicy customMessage templates
+	// read it on the cluster; the test context must have the field so those
+	// templates resolve instead of failing the spoke pass.
+	DefaultMessage string
 }
 
 // ResolvePolicyResult holds the outcome of resolving one multi-document YAML.
@@ -201,6 +222,7 @@ type ResolvePolicyResult struct {
 // `{{hub lookup ... hub}}` calls (which fail without real API resources) to
 // still contribute their successfully-resolved Policy documents.
 func (r *Resolver) ResolvePolicy(rawYAML string, ctx HubContext) ResolvePolicyResult {
+	r.refreshLocal()
 	docs := splitYAMLDocuments(rawYAML)
 	var resolved []string
 	var errs []string
@@ -310,10 +332,9 @@ func NewSpokeResolver(localResources []unstructured.Unstructured) (*Resolver, er
 		return nil, fmt.Errorf("create spoke template resolver: %w", err)
 	}
 
-	if len(localResources) > 0 {
-		tr.WithLocalResources(localResources)
-	}
-	return &Resolver{inner: tr}, nil
+	res := &Resolver{inner: tr, local: localResources}
+	res.refreshLocal()
+	return res, nil
 }
 
 // ResolveSpokeTemplates resolves spoke-side {{ }} template expressions in
@@ -328,6 +349,7 @@ func NewSpokeResolver(localResources []unstructured.Unstructured) (*Resolver, er
 // be partially faked. A failure here does NOT indicate a broken policy; it
 // just means CI couldn't fully exercise that code path.
 func (r *Resolver) ResolveSpokeTemplates(rawYAML string, ctx ...HubContext) ResolvePolicyResult {
+	r.refreshLocal()
 	docs := splitYAMLDocuments(rawYAML)
 	var resolved []string
 	var errs []string

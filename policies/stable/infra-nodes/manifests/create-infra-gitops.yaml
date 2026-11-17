@@ -1,12 +1,38 @@
-apiVersion: pipelines.openshift.io/v1alpha1
-kind: GitopsService
-metadata:
-  name: cluster
-  namespace: '{{hub index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops" hub}}'
-spec:
-  runOnInfra: true
-  tolerations:
-  - effect: NoSchedule
-    key: node-role.kubernetes.io/infra
-  - effect: NoExecute
-    key: node-role.kubernetes.io/infra
+# runOnInfra makes the GitOps Operator pin the whole gitops namespace to infra nodes. The Argo CD
+# instances in it get the infra tolerations in the same evaluation, or their pods stay Pending on the
+# tainted nodes. Only instances that exist are patched, so nothing is created.
+object-templates-raw: |
+  {{- /* Labels exist only in hub templates; .ManagedClusterLabels is nil on the managed cluster. */}}
+  {{- $gitopsNs := "{{hub index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops" hub}}" }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: pipelines.openshift.io/v1alpha1
+      kind: GitopsService
+      metadata:
+        name: cluster
+        namespace: {{ $gitopsNs }}
+      spec:
+        runOnInfra: true
+        tolerations:
+          - effect: NoSchedule
+            key: node-role.kubernetes.io/infra
+          - effect: NoExecute
+            key: node-role.kubernetes.io/infra
+  {{- range $argo := (lookup "argoproj.io/v1beta1" "ArgoCD" $gitopsNs "").items }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: {{ $argo.metadata.name }}
+        namespace: {{ $gitopsNs }}
+      spec:
+        nodePlacement:
+          tolerations:
+            - effect: NoSchedule
+              key: node-role.kubernetes.io/infra
+              operator: Exists
+            - effect: NoExecute
+              key: node-role.kubernetes.io/infra
+              operator: Exists
+  {{- end }}

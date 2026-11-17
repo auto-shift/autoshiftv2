@@ -1,7 +1,7 @@
 # kiali AutoShift Policy
 
 ## Overview
-This policy installs the kiali-ossm operator using AutoShift patterns.
+This policy installs the kiali-ossm operator by using AutoShift patterns.
 
 ## Status
 ✅ **Operator Installation**: Ready to deploy  

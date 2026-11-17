@@ -72,11 +72,58 @@ For new baremetal clusters provisioned through cluster-install:
 | `reservedCpus` | string | **(required)** | CPU set for control plane, operating system, and platform services |
 | `isolatedCpus` | string | **(required)** | CPU set for user workloads |
 | `nodeSelector` | map | `node-role.kubernetes.io/master: ''` | Which nodes the `PerformanceProfile` targets |
+| `machineConfigPoolSelector` | map | derived from `nodeSelector` | Which `MachineConfigPool` the profile renders into. When unset, it is `pools.operator.machineconfiguration.openshift.io/<role>: ''` for the single `node-role.kubernetes.io/<role>` key in `nodeSelector`; the policy fails if `nodeSelector` has no such key or more than one |
 | `numaTopology` | string | *(none)* | Topology Manager policy — see [Non-Uniform Memory Access (NUMA) Topology Policy](#numa-topology-policy) |
 | `realTimeKernel` | bool | `false` | Enable the real-time kernel |
 | `globallyDisableIrqLoadBalancing` | bool | `false` | Disable interrupt request load balancing on isolated CPUs |
 | `hugepages.defaultSize` | string | *(none)* | Default huge page size (e.g., `1G`, `2M`) |
 | `hugepages.pages` | list | *(none)* | List of `{size, count, node}` huge page allocations |
+| `performanceProfile` | map | *(none)* | Full mode: see [Full PerformanceProfile mode](#full-performanceprofile-mode). Cannot be combined with the fields above in the same values block |
+
+## Full PerformanceProfile mode
+
+For settings the fields above do not cover, such as `workloadHints` or `net`, pass a complete
+`PerformanceProfile` spec instead:
+
+```yaml
+clusters:
+  my-cluster:
+    config:
+      workloadPartitioning:
+        performanceProfile:
+          annotations:                 # optional
+            kubeletconfig.experimental: '{"topologyManagerScope": "pod"}'
+          spec:                        # passed through unchanged
+            cpu:
+              reserved: '0-1,32-33'
+              isolated: '2-31,34-63'
+            nodeSelector:
+              node-role.kubernetes.io/master: ''
+            machineConfigPoolSelector:
+              pools.operator.machineconfiguration.openshift.io/master: ''
+            workloadHints:
+              realTime: false
+```
+
+- `spec.cpu.reserved`, `spec.cpu.isolated` and `spec.nodeSelector` are required. Only `spec` and
+  `annotations` are accepted; `name` is rejected.
+- Within one values block, use one mode or the other. Config is merged from cluster, clusterset and
+  global values, so a cluster can set `performanceProfile` under a clusterset that uses the simple
+  fields; `performanceProfile` takes precedence and the inherited simple fields are ignored.
+
+## Changing the profile
+
+The profile is always named `workload-partitioning`, in both modes, so switching modes updates the same
+object rather than creating a second profile that selects the same nodes.
+
+The policy uses `musthave`, so it never removes anything. A field removed from config, or left out after
+switching modes, stays on the profile until you remove it by hand, for example with
+`oc edit performanceprofile workload-partitioning`. Every change to the profile re-renders the
+`MachineConfig` and can reboot the selected nodes, so plan changes for a maintenance window.
+
+The policy fails, with a message naming the cause, when the rendered config has no
+`workloadPartitioning` settings for either mode, when full mode lacks a required field, or when the
+`MachineConfigPool` cannot be derived.
 
 ## Understanding CPU sets
 

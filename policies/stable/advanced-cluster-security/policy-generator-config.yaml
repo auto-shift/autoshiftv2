@@ -44,7 +44,7 @@ policies:
     standards:
       - ${POLICY_STANDARD_HUB}
     placement:
-      placementPath: placement-hub.yaml
+      placementPath: placement-central-hub.yaml
     dependencies:
       - name: policy-acs-operator-install
     manifests:
@@ -55,24 +55,51 @@ policies:
       - ${POLICY_STANDARD_HUB}
     remediationAction: inform
     placement:
-      placementPath: placement-hub.yaml
+      placementPath: placement-central-hub.yaml
     manifests:
       - path: test/central-ready.yaml
   - name: policy-acs-sync-bundle
     placement:
-      placementPath: placement-managed.yaml
+      placementPath: placement-init-bundle-managed.yaml
     hubTemplateOptions:
       serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-acs-operator-install
     manifests:
       - path: manifests/sync-bundle.yaml
+  # 3b) Cluster registration secret (CRS) minted on the hub. HUB-only.
+  #     Replaces the init bundle: one revocable token instead of three long-lived certs.
+  - name: policy-acs-crs
+    placement:
+      placementPath: placement-crs-mint-hub.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-acs-central
+    manifests:
+      - path: manifests/crs/crs-resources.yaml
+  - name: policy-acs-crs-test
+    placement:
+      placementPath: placement-crs-hub.yaml
+    remediationAction: inform
+    manifests:
+      - path: test/crs-ready.yaml
+  # 3c) Sync the CRS to every secured cluster.
+  - name: policy-acs-sync-crs
+    placement:
+      placementPath: placement-crs-managed.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-acs-operator-install
+    manifests:
+      - path: manifests/sync-crs.yaml
   # 4) Declarative auth-provider config for Central. HUB-only.
   - name: policy-acs-declarative-config
     standards:
       - ${POLICY_STANDARD_HUB}
     placement:
-      placementPath: placement-hub.yaml
+      placementPath: placement-auth-hub.yaml
     dependencies:
       - name: policy-acs-central
     manifests:
@@ -82,7 +109,7 @@ policies:
     standards:
       - ${POLICY_STANDARD_HUB}
     placement:
-      placementPath: placement-hub.yaml
+      placementPath: placement-default-policies-hub.yaml
     dependencies:
       - name: policy-acs-central
     manifests:
@@ -92,7 +119,7 @@ policies:
     standards:
       - ${POLICY_STANDARD_HUB}
     placement:
-      placementPath: placement-hub.yaml
+      placementPath: placement-init-bundle-hub.yaml
     dependencies:
       - name: policy-acs-central
     manifests:
@@ -103,7 +130,7 @@ policies:
       - ${POLICY_STANDARD_HUB}
     remediationAction: inform
     placement:
-      placementPath: placement-hub.yaml
+      placementPath: placement-init-bundle-hub.yaml
     manifests:
       - path: test/init-bundle-ready.yaml
   - name: policy-acs-secured-cluster-hub
@@ -111,8 +138,10 @@ policies:
       - ${POLICY_STANDARD_HUB}
     placement:
       placementPath: placement-hub.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
     dependencies:
-      - name: policy-acs-init-bundle
+      - name: policy-acs-central
     manifests:
       - path: manifests/secured-cluster-hub.yaml
   # 8) SecuredCluster on managed clusters + readiness gate. MIXED: SecuredCluster enforce, check informs. MANAGED-only.
@@ -127,8 +156,10 @@ policies:
   - name: policy-acs-secured-cluster
     placement:
       placementPath: placement-managed.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
     dependencies:
-      - name: policy-acs-sync-bundle
+      - name: policy-acs-operator-install
     manifests:
       - path: manifests/secured-cluster.yaml
   # 9) Console link to the ACS portal.
@@ -139,6 +170,8 @@ policies:
     manifests:
       - path: test/secured-cluster-ready.yaml
   - name: policy-acs-console-link
+    placement:
+      placementPath: placement-central-hub.yaml
     hubTemplateOptions:
       serviceAccountName: autoshift-policy-service-account
     manifests:

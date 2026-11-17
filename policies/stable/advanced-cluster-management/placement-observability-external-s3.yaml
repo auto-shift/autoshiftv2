@@ -1,0 +1,31 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-acm-observability-external-s3
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # External S3. Placed only when the label is set, and it does not depend on OpenShift
+  # Data Foundation. Bucket, endpoint, and TLS come from config.acm.observability.thanosStorage.
+  # The Secret that config names holds only the access key and the secret key, and it
+  # has to exist on the hub before the enforcing policy writes thanos-object-storage.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/acm-observability'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/acm-observability-storage'
+              operator: In
+              values:
+                - 'external-s3'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

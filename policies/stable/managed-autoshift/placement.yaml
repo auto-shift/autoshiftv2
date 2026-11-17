@@ -4,12 +4,12 @@ metadata:
   name: placement-policy-managed-autoshift
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Runs ON each managed hub, which then deploys AutoShift to itself through its own Argo CD.
-  # self-managed must be 'false'. That label marks the hub THIS AutoShift instance runs on, which
-  # already has its own top-level Application; this policy bootstraps AutoShift onto the other
-  # hubs the deployment governs.
-  # Every predicate uses `In` rather than `NotIn`: NotIn also matches clusters where the label
-  # is absent, which would select hubs that never opted in.
+  # The Application on the managed hub itself. Same predicates as placement-ns.yaml, plus one:
+  # gitops-infra uses NotIn deliberately. In agent-managed mode the principal on the hub above owns
+  # this hub's Application through policy-managed-autoshift-agent, so writing one here as well would
+  # give the same object two writers. Excluding that one mode leaves every other mode, and every hub
+  # with no gitops-infra label at all, selected. Bare 'agent' resolving to managed is skipped in the
+  # template, because a placement cannot read config.
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -30,6 +30,10 @@ spec:
               operator: In
               values:
                 - 'false'
+            - key: 'autoshift.io/gitops-infra'
+              operator: NotIn
+              values:
+                - 'agent-managed'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

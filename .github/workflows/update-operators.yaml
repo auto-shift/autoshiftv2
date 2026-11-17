@@ -24,9 +24,12 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 
+      # From the channel of the OpenShift minor in versions.yaml, not the bare stable channel,
+      # which tracks the newest major.
       - name: Install oc CLI
         run: |
-          curl -fsSL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz -C /tmp
+          OCP_MINOR=$(yq '.inputs.openshift' versions.yaml)
+          curl -fsSL "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable-${OCP_MINOR}/openshift-client-linux.tar.gz" | tar xz -C /tmp
           sudo mv /tmp/oc /usr/local/bin/oc
           oc version --client
 

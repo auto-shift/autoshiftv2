@@ -79,6 +79,10 @@ and for GitHub dark mode. Do not produce separate light and dark exports.
   Cluster Security for Kubernetes` rather than StackRox, `Red Hat Ansible Automation Platform`
   rather than AWX, `Red Hat OpenShift Logging` rather than Loki, and `Compliance Operator` rather
   than OpenSCAP. Spell the products out rather than abbreviating them.
+  The one exception is the **Argo CD Agent**, which is what Red Hat calls that feature in its own
+  documentation, so a diagram naming the agent uses `Argo CD Agent`. The lint rule does not know
+  about the exception and reports it as a warning, which is expected. `GitOps` on its own still
+  means the instance, not the agent.
 - **API kinds keep their real casing**, because they are what a reader types: `ApplicationSet`,
   `ManagedCluster`, `ConfigurationPolicy`, `PlacementDecision`.
 - **Environments** are NonProd, Prod, and Sandbox throughout.
