@@ -4,8 +4,10 @@
 
 Installs the fence-agents-remediation operator and creates `FenceAgentsRemediationTemplate`
 resources so Red Hat OpenShift can fence nodes with any Fence Agents Remediation (FAR)
-supported agent. Configuration lives under `config.far` in AutoShift values files.
-Credentials stay in a Secret you create on the cluster; values files never hold BMC passwords.
+supported agent. The templates are inert until a separate remediation trigger, typically a
+`NodeHealthCheck`, points at them. Configuration lives under `config.far` in AutoShift values
+files. Credentials stay in a Secret you create on the cluster; values files never hold BMC
+passwords.
 
 Enable the policy with `far: 'true'` on the clusterset or cluster that should run FAR.
 
@@ -218,6 +220,46 @@ If that list is empty, or any BareMetalHost is missing `spec.bmc.address`, set
 does not skip the managed-cluster fallback, hub-discovered node names stay in that
 fallback completeness check, and a partial final result fails rather than omitting nodes
 from `--ip`.
+
+### 4. Activate remediation templates
+
+The FAR policy creates `FenceAgentsRemediationTemplate` objects. It does not create a remediation
+trigger. Without a trigger that references those templates, unhealthy nodes are not fenced
+automatically.
+
+Install and configure the Node Health Check operator (or another Medik8s-compatible trigger) out of
+band. Point its `remediationTemplate` at a template this policy created in
+`openshift-workload-availability`:
+
+```yaml
+apiVersion: remediation.medik8s.io/v1alpha1
+kind: NodeHealthCheck
+metadata:
+  name: far-worker-fencing
+spec:
+  selector:
+    matchLabels:
+      node-role.kubernetes.io/worker: ''
+  remediationTemplate:
+    apiVersion: fence-agents-remediation.medik8s.io/v1alpha1
+    kind: FenceAgentsRemediationTemplate
+    name: far-template-redfish
+    namespace: openshift-workload-availability
+  minHealthy: '51%'
+  unhealthyConditions:
+    - type: Ready
+      status: 'False'
+      duration: 300s
+    - type: Ready
+      status: Unknown
+      duration: 300s
+```
+
+Use the template `name` from `config.far.templates[].name`. Adjust the selector, `minHealthy`, and
+`unhealthyConditions` for the cluster. AutoShift does not manage the `NodeHealthCheck` object.
+
+When Node Health Check creates a `FenceAgentsRemediation`, `policy-far-active-remediations` reports
+NonCompliant until that remediation finishes.
 
 ## Observability
 
