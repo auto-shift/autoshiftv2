@@ -213,10 +213,11 @@ oc get baremetalhost -n <cluster-name>
 oc get baremetalhost -n <cluster-name> -o jsonpath='{.items[*].spec.bmc.address}{"\n"}'
 ```
 
-If that list is empty, or any BareMetalHost is missing `spec.bmc.address`, set
-`nodeparameters.--ip` instead. Auto-fill only accepts a complete map: a partial hub result
-does not skip the managed-cluster fallback, and a partial final result fails rather than
-omitting nodes from `--ip`.
+An empty or incomplete hub BareMetalHost list does not mean you must set
+`nodeparameters.--ip` yet. On managed clusters the policy still tries discovery in
+`openshift-machine-api`. Set `nodeparameters.--ip` explicitly when that fallback also
+cannot supply a BMC address for every required node. Auto-fill only accepts a complete
+map: a partial final result fails rather than omitting nodes from `--ip`.
 
 ## Observability
 
