@@ -25,7 +25,7 @@ helmCharts:
         #   label mode (no config): versions = [far-version label]; startingCSV = that same version.
         # $vers is computed here and reused by `versions` below.
         startingCSV: |-
-          {{hub- $cfg := (index (index (index ((lookup "v1" "ConfigMap" "${POLICY_NAMESPACE}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "far" | default dict) hub}}
+          {{hub- $cfg := dig "far" dict (fromConfigMap "${POLICY_NAMESPACE}" (printf "%s.rendered-config" .ManagedClusterName) "config" | default "{}" | fromYaml) hub}}
           {{hub- $cfgVers := (dig "versions" (list) $cfg) hub}}
           {{hub- $isCfg := (not (empty $cfgVers)) hub}}
           {{hub- $labelVer := (index .ManagedClusterLabels "autoshift.io/far-version" | default "") hub}}
