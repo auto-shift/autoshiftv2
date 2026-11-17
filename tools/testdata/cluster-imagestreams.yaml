@@ -1,0 +1,28 @@
+---
+# AutoShift's helper Jobs resolve their CLI image from this ImageStream at runtime instead of
+# pinning the internal registry, which does not exist on bare metal or most disconnected clusters.
+# The stub also registers image.openshift.io/v1 with the fake API server; metadata.namespace MUST be
+# set or the harness registers the kind as cluster-scoped and every namespaced lookup misses.
+#
+# spec.tags carries the release-payload pullspec that the openshift-controller-manager-operator
+# writes; status.tags carries what the import actually resolved. Both are populated here so the
+# preferred branch and its fallback are exercised.
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: cli
+  namespace: openshift
+spec:
+  tags:
+    - name: latest
+      from:
+        kind: DockerImage
+        name: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:0000000000000000000000000000000000000000000000000000000000000cli
+      referencePolicy:
+        type: Source
+status:
+  dockerImageRepository: image-registry.openshift-image-registry.svc:5000/openshift/cli
+  tags:
+    - tag: latest
+      items:
+        - dockerImageReference: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:0000000000000000000000000000000000000000000000000000000000000cli

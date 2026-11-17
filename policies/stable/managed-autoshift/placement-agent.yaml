@@ -1,0 +1,30 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-managed-autoshift-agent
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # The self-managed hub running the infra Argo CD agent principal. It writes the Application of
+  # every managed hub whose infra agent runs managed, into that agent's namespace here, and the
+  # principal delivers it. Which managed hubs qualify is decided in the template from their labels.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/self-managed'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/gitops-agent'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

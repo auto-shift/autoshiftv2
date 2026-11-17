@@ -134,5 +134,6 @@ grep -rq 'class="mermaid"' "$SITE_DIR" --include='*.html' \
 
 grep -q 'red-hat.css' "$SITE_DIR/index.html" || fail "brand stylesheet is not linked"
 test -f "$SITE_DIR/docs/assets/red-hat.css" || fail "brand stylesheet was not published"
+test -f "$SITE_DIR/docs/assets/source-cache.js" || fail "repository facts cache script was not published"
 
 echo "Site built, pruned and verified in ${SITE_DIR}/"

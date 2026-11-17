@@ -1,8 +1,10 @@
 # cert-manager AutoShift Policy
 
 ## Overview
-This policy installs the openshift-cert-manager-operator operator using AutoShift patterns, and
-provisions a built-in CA (`policy-cert-manager-ca`).
+This policy installs the openshift-cert-manager-operator operator by using AutoShift patterns, and
+provisions a built-in CA (`policy-cert-manager-ca`). Opt-in policies add
+ClusterIssuers of any type (`policy-cert-manager-issuers`) and manage the cluster's API and Ingress
+serving certs.
 
 ## Built-in CA (`autoshift-ca`)
 `policy-cert-manager-ca` creates the `autoshift-ca` ClusterIssuer — the default TLS issuer components use
@@ -18,7 +20,7 @@ via their `tlsIssuer` (GitLab, Keycloak, Vault, …). The **signer is a ref**, s
 - `.issuer.kind` (default `ClusterIssuer`) and `.issuer.group` (default `cert-manager.io`) complete the ref —
   set `.group` for external issuers (Venafi, step-ca, AWS PCA).
 - The signer must be able to issue a **CA cert** (`isCA`) — a `ca` issuer over your root / Venafi / step.
-  Public ACME **cannot** (it won't issue CA certs; use ACME for leaf/Route certs, not the CA).
+  Public ACME **cannot** (it will not issue CA certs; use ACME for leaf/Route certs, not the CA).
 - **Opt out** entirely with `autoshift.io/cert-manager-ca: 'false'` (handled by placement) — then components
   must set their own `tlsIssuer`.
 - **Two-tier note**: if every cluster's `autoshift-ca` chains to the same enterprise root, spokes trust the
@@ -41,11 +43,11 @@ Issuer defaults to `autoshift-ca`; on a cluster with a real ACME issuer set e.g.
 `config.certManager.apiCert.issuer.name: zerossl-production-aws`. Secret/Certificate names are
 `cert-manager-api-cert` / `cert-manager-ingress-cert`.
 
-**Why it's safe / how it falls back:**
+**Why it is safe / how it falls back:**
 - **Readiness gate** — the policy always creates the cert-manager `Certificate`, but only patches the
   APIServer/IngressController **once that `Certificate` is `Ready`**. A failed issuance leaves the cluster on
-  its default cert (never points it at a cert that hasn't issued).
-- **Additive merge** (`musthave`) — doesn't clobber other operator-managed spec fields.
+  its default cert (never points it at a cert that has not issued).
+- **Additive merge** (`musthave`) — does not clobber other operator-managed spec fields.
 - **Non-disruptive rotation** — cert-manager keeps the same secret name; the router hot-reloads and the API
   server dynamically reloads. Only the *first* API add rolls one kube-apiserver revision (no reboot).
 - **Later failure = alert, not auto-revert** — `policy-cert-manager-{api,ingress}-cert-ready` (inform)
@@ -65,6 +67,63 @@ step is **not automated** here (default-off, disruptive) — prefer a **real/ent
 
 **Rollout order:** enable `cert-manager-api-cert` first (low risk), confirm `oc get co kube-apiserver`
 settles (PROGRESSING True→False), then `cert-manager-ingress-cert`.
+
+## Extra ClusterIssuers (opt-in)
+
+`policy-cert-manager-issuers` creates ClusterIssuers from `config.certManager.issuers`. Enable it with the
+label `cert-manager-issuers: 'true'`. Any issuer type cert-manager supports works, including ACME, CA,
+Vault and Venafi, because each entry's `spec` is passed through unchanged. Point
+`config.certManager.{apiCert,ingressCert}.issuer.name` at an issuer created here to use it for the cluster
+serving certs.
+
+```yaml
+config:
+  certManager:
+    issuers:
+      - name: zerossl-production          # unique; not autoshift-ca or autoshift-selfsigned
+        spec:
+          acme:
+            server: https://acme.zerossl.com/v2/DV90
+            email: user@example.com
+            privateKeySecretRef:
+              name: zerossl-prod
+            externalAccountBinding:
+              keyID: '<EAB key ID>'
+              keySecretRef:
+                name: zero-ssl-eabsecret
+                key: secret
+            solvers:
+              - dns01:
+                  cloudflare:
+                    apiTokenSecretRef:
+                      name: cloudflare-api-token-secret
+                      key: api-token
+    controller:
+      overrideArgs:                         # optional; usually needed for DNS01 on private clusters
+        - '--dns01-recursive-nameservers=8.8.8.8:53,1.1.1.1:53'
+        - '--dns01-recursive-nameservers-only'
+```
+
+- **Secrets are created out of band.** EAB HMAC keys, DNS provider tokens and CA key pairs go in the
+  `cert-manager` namespace through External Secrets Operator or by hand, never in values files. The issuer
+  spec only names them. `_example.yaml` shows the `oc` commands.
+- **Validation.** The policy fails, rather than reporting Compliant with nothing applied, when `issuers` is
+  missing or empty, when an entry lacks `name` or `spec`, when two entries share a name, or when a name is
+  reserved. ACME entries must also set `server`, `privateKeySecretRef.name` and at least one solver, and
+  an `externalAccountBinding` must carry `keyID` and `keySecretRef.name`.
+- **Readiness.** `policy-cert-manager-issuers-ready` (inform) asserts `Ready=True` on each issuer.
+  cert-manager sets that only once an issuer works, so for ACME a bad or missing EAB key, an unreachable
+  server or a missing account key Secret reports NonCompliant. Solver credentials, such as a DNS provider
+  token, are only used when a Certificate is issued, so they are not caught here; the
+  `cert-manager-{api,ingress}-cert-ready` policies surface them once a Certificate uses the issuer.
+- **Ownership.** Each ClusterIssuer is applied with `mustonlyhave`, so its spec matches config exactly,
+  including lists such as `acme.solvers`. Removing an entry from config leaves its ClusterIssuer in place;
+  delete it by hand.
+- **Controller arguments.** Where the policy is placed, AutoShift owns
+  `CertManager/cluster` `spec.controllerConfig.overrideArgs`: the list is set to exactly what
+  `config.certManager.controller.overrideArgs` declares, and removed when it declares none. The rest of
+  the CR is carried over. If `CertManager/cluster` cannot be read, the policy fails and leaves it
+  untouched.
 
 ## Status
 ✅ **Operator Installation**: Ready to deploy  

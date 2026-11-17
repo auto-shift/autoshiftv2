@@ -54,8 +54,12 @@ func TestConfigKeyConventions(t *testing.T) {
 	for _, key := range rep.Unmapped {
 		t.Errorf("config key %q (declared in %v) matches no policy directory and is not recorded in "+
 			".github/config-key-conventions.yaml.\n"+
-			"  Either rename it to the lowerCamelCase form of its policy directory, or add it to "+
+			"  Either rename it to its policy directory name or that name in lowerCamelCase, or add it to "+
 			"shared: (fleet-wide) or aliases: (short name for a policy).", key, declared[key])
+	}
+	for _, pair := range rep.Ambiguous {
+		t.Errorf("config keys %s are both declared for one policy directory; it reads only one of them, "+
+			"so keep one name", pair)
 	}
 	for _, stale := range rep.StaleAliases {
 		t.Errorf("alias %s names a policy directory that does not exist; remove or correct the entry "+

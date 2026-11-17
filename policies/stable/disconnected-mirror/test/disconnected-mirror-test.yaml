@@ -1,0 +1,23 @@
+# Are the mirrored catalogs actually serving?
+#
+# policy-disconnected-catalog-sources is satisfied by the CatalogSource objects alone, which an
+# unpullable or untrusted index image still produces. This asserts each one's observed connection
+# state, so it reports NonCompliant until the catalog pod serves, and Compliant once it does.
+# Catalogs are optional, so a cluster that brings its own renders nothing here.
+object-templates-raw: |
+  {{hub $configYaml := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub $disconnected := (index $configYaml "disconnected" | default dict) hub}}
+  {{hub $catalogs := (index $disconnected "catalogs" | default list) hub}}
+  {{hub $suffix := (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror") hub}}
+  {{hub range $_, $catalog := $catalogs hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: CatalogSource
+      metadata:
+        name: {{hub printf "%s-%s" (index $catalog "source") $suffix hub}}
+        namespace: openshift-marketplace
+      status:
+        connectionState:
+          lastObservedState: READY
+  {{hub end hub}}

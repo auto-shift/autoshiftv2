@@ -1,0 +1,15 @@
+object-templates-raw: |
+  # Each secured cluster gets its own single-use registration secret, minted on the hub as
+  # crs-<cluster>. Unlike an init bundle this carries no service certificates: Central issues
+  # each cluster its own on registration and renews them, so the token can be revoked
+  # afterwards without disconnecting anything.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      type: Opaque
+      metadata:
+        name: cluster-registration-secret
+        namespace: stackrox
+      data:
+        crs: '{{hub fromSecret "stackrox" (printf "crs-%s" .ManagedClusterName) "crs" hub}}'

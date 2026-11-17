@@ -5,6 +5,7 @@ This guide shows how to deploy multiple versions of AutoShift side-by-side for g
 ## Overview
 
 Deploy two AutoShift releases simultaneously using the `versionedClusterSets` feature:
+
 - `as-0-0-1` with `versionedClusterSets: true` automatically creates `hub-0-0-1` clusterset
 - `as-0-0-2` with `versionedClusterSets: true` automatically creates `hub-0-0-2` clusterset
 

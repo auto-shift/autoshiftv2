@@ -1,0 +1,47 @@
+# thanos-object-storage for external-s3.
+# config.acm.observability.thanosStorage supplies the bucket, endpoint, and TLS.
+# The Secret named by thanosStorage.source, in that namespace, holds the access key
+# and the secret key at access-key and secret-key. It is read on
+# the hub the policy is placed on.
+object-templates-raw: |
+  {{hub- $raw := fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" hub}}
+  {{hub- if empty $raw hub}}
+  {{hub- fail "advanced-cluster-management: external-s3 requires config.acm.observability.thanosStorage in the rendered-config ConfigMap" hub}}
+  {{hub- end hub}}
+  {{hub- $thanos := dig "acm" "observability" "thanosStorage" dict ($raw | fromYaml) hub}}
+  {{hub- $bucket := index $thanos "bucket" | default "" hub}}
+  {{hub- $endpoint := index $thanos "endpoint" | default "" hub}}
+  {{hub- $insecure := index $thanos "insecure" | default false hub}}
+  {{hub- $useClusterCA := index $thanos "useClusterCA" | default false hub}}
+  {{hub- $source := index $thanos "source" | default dict hub}}
+  {{hub- $sourceNs := index $source "namespace" | default "" hub}}
+  {{hub- $sourceSecret := index $source "secretName" | default "" hub}}
+  {{hub- if or (empty $bucket) (or (empty $endpoint) (or (empty $sourceNs) (empty $sourceSecret))) hub}}
+  {{hub- fail "advanced-cluster-management: external-s3 requires config.acm.observability.thanosStorage bucket, endpoint, source.namespace, and source.secretName" hub}}
+  {{hub- end hub}}
+  {{ $accessKey := fromSecret "{{hub $sourceNs hub}}" "{{hub $sourceSecret hub}}" "access-key" | default "" | base64dec }}
+  {{ $secretKey := fromSecret "{{hub $sourceNs hub}}" "{{hub $sourceSecret hub}}" "secret-key" | default "" | base64dec }}
+  {{ if or (empty $accessKey) (empty $secretKey) }}{{ fail "advanced-cluster-management: access-key or secret-key could not be read from Secret {{hub $sourceSecret hub}} in namespace {{hub $sourceNs hub}}" }}{{ end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: thanos-object-storage
+        namespace: open-cluster-management-observability
+      type: Opaque
+      stringData:
+        thanos.yaml: |
+          type: s3
+          config:
+            bucket: '{{hub $bucket hub}}'
+            endpoint: '{{hub $endpoint hub}}'
+            insecure: {{hub $insecure hub}}
+            access_key: '{{ $accessKey }}'
+            secret_key: '{{ $secretKey }}'
+            http_config:
+              tls_config:
+                {{hub- if $useClusterCA hub}}
+                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                {{hub- end hub}}
+                insecure_skip_verify: false

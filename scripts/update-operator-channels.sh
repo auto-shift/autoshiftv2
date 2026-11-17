@@ -772,6 +772,23 @@ is_newer_channel() {
 # UPDATE FUNCTIONS
 # ============================================================================
 
+# Keep versions.yaml in step with a key this script writes. A pin named like the key
+# (acm-version, gitops-channel) records the value TestVersionPins expects in _example.yaml, so
+# bumping the values without the pin fails CI. Keys with no pin are left alone.
+sync_version_pin() {
+    local pin="$1" new_value="$2" file="$PROJECT_ROOT/versions.yaml" current
+    grep -qE "^  - name: ${pin}$" "$file" 2>/dev/null || return 0
+    current=$(sed -n -E "/^  - name: ${pin}$/,/^  - name: /s/^    value: (.*)$/\1/p" "$file" | \
+              head -1 | tr -d "'" | tr -d '"')
+    [[ "$current" == "$new_value" ]] && return 0
+    if $DRY_RUN; then
+        echo "  Would update versions.yaml: ${pin}: $current -> $new_value"
+    else
+        sed -i.bak -E "/^  - name: ${pin}$/,/^  - name: /s|^    value: .*$|    value: ${new_value}|" "$file"
+        rm -f "$file.bak"
+    fi
+}
+
 # Update a channel in autoshift values files
 update_autoshift_channel() {
     local label="$1"
@@ -795,6 +812,7 @@ update_autoshift_channel() {
             fi
         fi
     done < <(get_update_files)
+    sync_version_pin "${label}-channel" "$new_channel"
 
     return $updated
 }
@@ -839,6 +857,7 @@ update_autoshift_version() {
             rm -f "$file.bak"; updated=1
         fi
     done < <(get_update_files)
+    sync_version_pin "${label}-version" "$new_version"
     return $updated
 }
 

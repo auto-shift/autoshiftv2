@@ -1,69 +1,49 @@
-apiVersion: postgresql.cnpg.io/v1
-kind: Cluster
-metadata:
-  name: gitlab-db
-  namespace: gitlab-system
-spec:
-  instances: '{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-instances" | default "2" | toInt hub}}'
-  postgresql:
-    parameters:
-      max_connections: '200'
-      shared_buffers: 512MB
-      effective_cache_size: 1536MB
-      work_mem: 8MB
-  bootstrap:
-    initdb:
-      database: gitlabhq_production
-      owner: gitlab
-  storage:
-    size: 50Gi
-  resources:
-    requests:
-      cpu: '1'
-      memory: 2Gi
-    limits:
-      cpu: '2'
-      memory: 4Gi
-  affinity:
-    enablePodAntiAffinity: true
-    topologyKey: kubernetes.io/hostname
----
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: gitlab-db
-  namespace: gitlab-system
-spec:
-  selector:
-    matchLabels:
-      cnpg.io/cluster: gitlab-db
-  endpoints:
-  - port: metrics
-    interval: 30s
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: gitlab-db-allow
-  namespace: gitlab-system
-spec:
-  podSelector:
-    matchLabels:
-      cnpg.io/cluster: gitlab-db
-  ingress:
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: gitlab-system
-    ports:
-    - port: 5432
-      protocol: TCP
-    - port: 9187
-      protocol: TCP
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: openshift-operators
-    ports:
-    - port: 8000
-      protocol: TCP
+# No imageName by default, so the Operator runs its built-in PostgreSQL image and records it in the
+# Cluster at creation: an Operator upgrade does not move an existing database. config.gitlab.dbImage
+# names another image; change it in a maintenance window. A minor change rolls the replicas, then the
+# primary; a higher major is an offline in-place upgrade, and a lower one is rejected. Removing the key
+# leaves the last image in place (musthave never removes a field).
+#
+# config.gitlab.dbPrimaryUpdate: unsupervised (default) switches the primary over automatically;
+# supervised updates the replicas and waits for a manual switchover of the primary; CloudNativePG
+# rejects it on a single-instance Cluster.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $dbImage := (index (index $cfg "gitlab" | default dict) "dbImage" | default "") hub}}
+  {{hub- $dbPrimaryUpdate := (index (index $cfg "gitlab" | default dict) "dbPrimaryUpdate" | default "unsupervised") hub}}
+  {{hub- if not (has $dbPrimaryUpdate (list "unsupervised" "supervised")) hub}}{{hub fail (printf "config.gitlab.dbPrimaryUpdate: %s is not unsupervised or supervised" $dbPrimaryUpdate) hub}}{{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: gitlab-db
+        namespace: gitlab-system
+      spec:
+        instances: '{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-instances" | default "2" | toInt hub}}'
+        {{hub- if $dbImage hub}}
+        imageName: '{{hub $dbImage hub}}'
+        {{hub- end hub}}
+        primaryUpdateStrategy: '{{hub $dbPrimaryUpdate hub}}'
+        postgresql:
+          parameters:
+            max_connections: '200'
+            shared_buffers: 512MB
+            effective_cache_size: 1536MB
+            work_mem: 8MB
+        bootstrap:
+          initdb:
+            database: gitlabhq_production
+            owner: gitlab
+        storage:
+          size: 50Gi
+        resources:
+          requests:
+            cpu: '1'
+            memory: 2Gi
+          limits:
+            cpu: '2'
+            memory: 4Gi
+        affinity:
+          enablePodAntiAffinity: true
+          topologyKey: kubernetes.io/hostname
