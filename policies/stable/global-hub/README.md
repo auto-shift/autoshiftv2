@@ -66,6 +66,21 @@ After an upgrade of global hub, Red Hat documents adding the deploy-mode label b
 managed hub by hand. `policy-global-hub-managed-hubs` enforces that label continuously, so it is
 added back without any manual step.
 
+### Stop importing a managed hub
+
+Removing `global-hub-deploy-mode` from a managed hub's clusterset stops AutoShift enforcing the
+import. It does not detach the hub: `policy-global-hub-managed-hubs` never removes the operator's
+`global-hub.open-cluster-management.io/deploy-mode` label, so the hub stays imported. Detach it
+explicitly, on the global hub:
+
+```bash
+oc label managedcluster <hub> global-hub.open-cluster-management.io/deploy-mode-
+```
+
+Red Hat does not document a detach procedure for global hub 1.8. Check that the global hub agent
+add-on is removed from the hub afterwards, with
+`oc get managedclusteraddon -n <hub> | grep global-hub`.
+
 ## Config
 
 `config.global-hub`, in the rendered config of the global hub. Every key is optional.
@@ -73,14 +88,15 @@ added back without any manual step.
 | Key | Default | Purpose |
 |---|---|---|
 | `availabilityConfig` | `High` | `High` or `Basic` |
-| `enableMetrics` | `'true'` | Metrics for the built-in Kafka and PostgreSQL |
-| `installAgentOnLocal` | `'true'` | Install the global hub agent on the global hub itself |
+| `enableMetrics` | `true` | Metrics for the built-in Kafka and PostgreSQL. `true` or `false`, quoted or not |
+| `installAgentOnLocal` | `true` | Install the global hub agent on the global hub itself. `true` or `false`, quoted or not |
 | `postgresRetention` | `18m` | Built-in PostgreSQL retention |
-| `consumerGroupPrefix` | Unset | Kafka consumer group prefix |
+| `consumerGroupPrefix` | `''` | Kafka consumer group prefix. Always written, so clearing it removes a prefix set earlier |
 | `strimziChannel` | `amq-streams-3.1.x` | AMQ Streams channel, used on a disconnected hub |
 
-A missing rendered config fails `policy-global-hub-instance`, rather than creating the instance
-from defaults.
+A missing rendered config, or one without a `config` key, fails `policy-global-hub-instance`,
+rather than creating the instance from defaults. So does a boolean setting that is not `true` or
+`false`.
 
 ## Labels
 
