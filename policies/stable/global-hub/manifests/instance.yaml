@@ -1,7 +1,7 @@
+# fromConfigMap, not lookup: a missing rendered-config fails the policy and names the ConfigMap,
+# rather than creating the instance from defaults. Every config.global-hub key is optional.
 object-templates-raw: |
-  {{hub- $policyNs := .PolicyMetadata.namespace hub}}
-  {{hub- $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $rcConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $rcConfig := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $gh := (index $rcConfig "global-hub" | default dict) hub}}
   - complianceType: musthave
     objectDefinition:

@@ -324,16 +324,18 @@ and therefore running **on the hub-of-hubs**:
    subscription).
 3. `policy-global-hub-managed-hubs` — imports spoke hubs (see below).
 
-Enable it on the hub-of-hubs clusterset:
+Enable it on the hub-of-hubs clusterset. Its settings live under `config.global-hub`:
 
 ```yaml
 # autoshift/values/clustersets/hubofhubs.yaml
 hubClusterSets:
   hubofhubs:
+    config:
+      global-hub:
+        availabilityConfig: High
     labels:
       global-hub: 'true'
       global-hub-channel: release-1.8
-      global-hub-availability-config: High
 ```
 
 ### Importing spoke hubs as managed hubs
@@ -347,8 +349,15 @@ spoke hub's **clusterset** in the HoH values:
 hubClusterSets:
   hub1:
     labels:
-      global-hub-deploy-mode: 'default'   # 'default' or 'hosted'
+      self-managed: 'false'
+      global-hub-deploy-mode: 'default'
 ```
+
+Default mode needs the spoke hub to run with self-management off, so the chart refuses
+`global-hub-deploy-mode: 'default'` without `self-managed: 'false'`. It also refuses Red Hat's
+`hosted` mode, which lets a managed hub keep its `local-cluster`: hosted mode disables the
+`policyController`, `certPolicyController` and `applicationManager` add-ons for that hub, so the
+hub-of-hubs could no longer place AutoShift policies on it.
 
 `cluster-labels` propagates `autoshift.io/global-hub-deploy-mode` onto `hub1`, and
 `policy-global-hub-managed-hubs` (running on the HoH) translates it into the real
@@ -364,7 +373,7 @@ The operator pulls AMQ Streams from a catalog, so in a mirror you must mirror **
 `multicluster-global-hub-operator-rh` and `amq-streams`. When `disconnected-mirror: 'true'`,
 `policy-global-hub-instance` adds Strimzi catalog-source annotations to the CR pointing at
 the mirrored catalog. See [policies/stable/global-hub/README.md](../policies/stable/global-hub/README.md)
-for the full label reference.
+for the full config and label reference.
 
 ## Common pitfalls
 
