@@ -45,7 +45,7 @@ The choice is made per policy, not per directory, from where the policy is place
   `policy-vault-transit-provider`, set the hub standard explicitly.
 - Every other policy uses `${POLICY_STANDARD}`.
 
-So one directory can contain both. MetalLB, for example, uses the managed standard by default, and its
+One directory can contain both. MetalLB, for example, uses the managed standard by default, and its
 IP address pool and L2 advertisement ConfigMap policies, which run on the hub, use the hub standard.
 `openshift-dns` uses the managed standard.
 
