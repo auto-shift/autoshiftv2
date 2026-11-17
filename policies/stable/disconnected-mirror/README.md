@@ -3,7 +3,8 @@
 Points a cluster at a mirror registry: mirrored operator catalogs, image pull redirection, trust for
 the mirror's certificate, release signatures, and the default OperatorHub catalogs turned off. It does not mirror
 anything. Mirror the content first, for example with `oc mirror` and the `ImageSetConfiguration`
-that `make generate-imageset` writes.
+that `make generate-imageset` writes. The end-to-end flow is in
+[disconnected deployments](../../../docs/disconnected.md).
 
 ## What it deploys
 
@@ -78,12 +79,22 @@ policy owns the ConfigMap with `mustonlyhave`: removing an entry removes its sig
 cluster, and signatures applied by hand are removed too. Keep an entry for every release a cluster
 might still move to. See [Disconnected clusters](../../../docs/ocp-upgrade.md#disconnected-clusters).
 
-`mirror` is a path that every consumer prefixes with `host`. Writing the full registry there
-produces the host twice.
+Each `mirrors` and `tagMirrors` entry pairs a full image name with a path on the mirror:
+
+| Field | Contains a registry | What it is |
+|---|---|---|
+| `source` | Always | The image name a cluster pulls, as written in the image reference. Copy it from the left side of oc-mirror's `idms-oc-mirror.yaml` |
+| `mirror` | Never | A path under `host`. Every consumer prefixes `host`, so writing the registry here produces it twice |
+| `host` | Is the registry | Written once |
+
+A `source` can be a registry you own. A spoke that reads its update graph from the hub's OpenShift
+Update Service is told to pull releases from the hub's mirror, so that name is its `source`.
 
 Set `ca` or `caRef` only when the mirror's certificate is not publicly trusted. Without either,
-`policy-disconnected-registry-ca` applies nothing. A `caRef` is read from the hub, with the
-namespace defaulting to the policy namespace.
+`policy-disconnected-registry-ca` applies nothing. A `caRef` names a ConfigMap on the hub that
+places the policy, never on the managed cluster: the policy reads it there and copies the CA to
+each cluster. Its namespace defaults to the policy namespace, and the policy reads any other
+namespace through the AutoShift policy service account.
 
 ## Before you disable the default catalogs
 

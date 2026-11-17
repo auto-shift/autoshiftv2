@@ -3,15 +3,16 @@
 # depends on it. A disconnected cluster reads its graph from a local OpenShift Update Service:
 # with upstream written only after the gate, the gate never sees the target and nothing upgrades.
 #
-# spec.upstream, first match wins:
-#   1. config.openshift-upgrade.upgradeGraphUrl, when set.
-#   2. On a disconnected-mirror cluster, an OpenShift Update Service on the cluster itself: a hub
-#      that runs one for its spokes uses it too.
-#   3. On a disconnected-mirror cluster, the OpenShift Update Service on the hub that placed this
-#      policy. Hub templates resolve on the placing hub, so a spoke reads its hub's service and, in
-#      a hub of hubs, a managed hub without its own reads its parent's.
-#   4. A disconnected-mirror cluster with none of these fails, because the public graph is
-#      unreachable. Any other cluster uses the public graph.
+# spec.upstream:
+#   - config.openshift-upgrade.upgradeGraphUrl, when set, always wins.
+#   - Otherwise config.openshift-upgrade.graphSource picks the OpenShift Update Service:
+#       local  the service on this cluster. Fails when it has none.
+#       hub    the service on the hub that placed this policy. Hub templates resolve on the placing
+#              hub, so a spoke reads its hub's service and a managed hub reads its parent's. Fails
+#              when that hub has none.
+#       auto   the default. A disconnected-mirror cluster uses its own service, then its hub's,
+#              and fails with neither, because the public graph is unreachable. Any other cluster
+#              uses the public graph.
 # The service is found by its Route, <config.update-service.name, default autoshift>-route in
 # openshift-update-service. The Route is read rather than the UpdateService status because the
 # hub service account holds cluster-reader, which covers Routes.
@@ -26,16 +27,36 @@ object-templates-raw: |
   {{- $hubHost := "{{hub dig "spec" "host" "" $hubRoute hub}}" }}
   {{- $ownHost := (dig "spec" "host" "" (lookup "route.openshift.io/v1" "Route" "openshift-update-service" $routeName | default dict)) }}
   {{- $channel := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-channel" | default "" hub}}" }}
+  {{- $source := "{{hub dig "openshift-upgrade" "graphSource" "auto" $cfg hub}}" }}
   {{- $upstream := $explicit }}
-  {{- if and (eq $upstream "") (eq $disconnected "true") }}
-  {{-   $host := $ownHost }}
-  {{-   if eq $host "" }}
+  {{- if eq $upstream "" }}
+  {{-   $host := "" }}
+  {{-   if eq $source "local" }}
+  {{-     $host = $ownHost }}
+  {{-     if eq $host "" }}
+  {{-       fail (printf "openshift-upgrade: graphSource is local, but Route openshift-update-service/%s does not exist on this cluster. Enable the update-service label on it, or change graphSource" $routeName) }}
+  {{-     end }}
+  {{-   else if eq $source "hub" }}
   {{-     $host = $hubHost }}
+  {{-     if eq $host "" }}
+  {{-       fail (printf "openshift-upgrade: graphSource is hub, but Route openshift-update-service/%s does not exist on the hub that manages this cluster. Enable the update-service label on that hub, or change graphSource" $routeName) }}
+  {{-     end }}
+  {{-   else if eq $source "auto" }}
+  {{-     if eq $disconnected "true" }}
+  {{-       $host = $ownHost }}
+  {{-       if eq $host "" }}
+  {{-         $host = $hubHost }}
+  {{-       end }}
+  {{-       if eq $host "" }}
+  {{-         fail (printf "openshift-upgrade: no update graph for this disconnected cluster. Route openshift-update-service/%s exists neither on this cluster nor on the hub that manages it; enable the update-service label on one of them, or set config.openshift-upgrade.upgradeGraphUrl" $routeName) }}
+  {{-       end }}
+  {{-     end }}
+  {{-   else }}
+  {{-     fail (printf "openshift-upgrade: graphSource %q is not one of auto, local or hub." $source) }}
   {{-   end }}
-  {{-   if eq $host "" }}
-  {{-     fail (printf "openshift-upgrade: no update graph for this disconnected cluster. Route openshift-update-service/%s exists neither on this cluster nor on the hub that manages it; enable the update-service label on one of them, or set config.openshift-upgrade.upgradeGraphUrl" $routeName) }}
+  {{-   if ne $host "" }}
+  {{-     $upstream = printf "https://%s/api/upgrades_info/v1/graph" $host }}
   {{-   end }}
-  {{-   $upstream = printf "https://%s/api/upgrades_info/v1/graph" $host }}
   {{- end }}
   {{- if eq $upstream "" }}
   {{-   $upstream = "https://api.openshift.com/api/upgrades_info/v1/graph" }}

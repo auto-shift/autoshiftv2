@@ -943,11 +943,16 @@ hubClusterSets:
           path: 'openshift'
           # ca (inline bundle) or caRef (hub ConfigMap): only when the mirror's certificate is not
           # publicly trusted. Omit both for a mirror with a public certificate.
+          # caRef names a ConfigMap on the HUB, created out of band. AutoShift copies the CA from it
+          # to every cluster that uses this config. namespace defaults to the policy namespace.
           caRef:
             name: 'cluster-ca-bundle'
             key: 'ca-bundle.crt'
             namespace: 'cluster-install-secrets'
-          # mirror is a path on host, which every consumer prefixes; omit it to use host[/path].
+          # source: the image name a cluster pulls, in full, registry included. Copy it from the left
+          #   side of oc-mirror's idms-oc-mirror.yaml.
+          # mirror: a path on host, never a registry. AutoShift prefixes host, so writing the
+          #   registry here doubles it. Omit it to use host[/path].
           mirrors:
             - source: 'registry.redhat.io'
               mirror: 'rhel'
@@ -1895,12 +1900,14 @@ hubClusterSets:
             secretRef:
               name: 'global-observability-remote-write'
               namespace: 'open-cluster-management-observability'
-      # OpenShift Update Service graph written to ClusterVersion.spec.upstream
-      # (see docs/ocp-upgrade.md). Optional. When unset, a disconnected-mirror cluster uses the
-      # OpenShift Update Service on the hub that manages it, and any other cluster uses the public
-      # graph. Set it only to point somewhere else.
+      # Update graph written to ClusterVersion.spec.upstream (see docs/ocp-upgrade.md). Both keys
+      # are optional. upgradeGraphUrl, when set, wins. Otherwise graphSource picks the OpenShift
+      # Update Service: local (on this cluster), hub (on the hub that manages it) or auto. auto, the
+      # default, uses this cluster's service and then its hub's on a disconnected-mirror cluster,
+      # and the public graph on any other. local and hub fail when that service does not exist.
       openshift-upgrade:
         upgradeGraphUrl: 'https://api.openshift.com/api/upgrades_info/v1/graph'
+        graphSource: 'auto'
       # OpenShift Update Service, for a disconnected fleet. Requires the update-service label, usually
       # on the hub only. Every key is optional. releases and graphDataImage default to oc-mirror v2's
       # paths under disconnected.mirrorRegistry; set them only for another layout, copying the spec

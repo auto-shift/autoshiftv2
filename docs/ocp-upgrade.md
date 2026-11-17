@@ -71,15 +71,16 @@ hubClusterSets:
 
 ## Config
 
-The OpenShift Update Service graph URL is config, not a label. The channel policy reads
-`config.openshift-upgrade.upgradeGraphUrl` from the cluster's rendered-config ConfigMap and writes it
-to `ClusterVersion.spec.upstream`. See [config-and-labels.md](config-and-labels.md). You do not need
-to set this key if the cluster can reach the public graph, or is disconnected and has an OpenShift
-Update Service on itself or its hub.
+The update graph is config, not a label. The channel policy reads `config.openshift-upgrade` from
+the cluster's rendered-config ConfigMap and writes the graph URL to `ClusterVersion.spec.upstream`.
+See [config-and-labels.md](config-and-labels.md). You do not need to set either key if the cluster
+can reach the public graph, or is disconnected and has an OpenShift Update Service on itself or its
+hub.
 
 | Key | Purpose | Default |
 |-----|---------|---------|
-| `config.openshift-upgrade.upgradeGraphUrl` | OpenShift Update Service graph. Overrides the default. | A disconnected cluster uses the OpenShift Update Service on itself or on its hub; any other cluster uses `https://api.openshift.com/api/upgrades_info/v1/graph` |
+| `config.openshift-upgrade.upgradeGraphUrl` | Update graph URL. When set, it wins over `graphSource`. | Unset |
+| `config.openshift-upgrade.graphSource` | Which OpenShift Update Service to use: `local` (on the cluster itself), `hub` (on the hub that manages the cluster) or `auto`. See [Disconnected clusters](#disconnected-clusters). | `auto`: a disconnected cluster uses the service on itself, then on its hub; any other cluster uses `https://api.openshift.com/api/upgrades_info/v1/graph` |
 
 ```yaml
 hubClusterSets:
@@ -91,8 +92,9 @@ hubClusterSets:
 
 ## Disconnected clusters
 
-A cluster that cannot reach Red Hat needs two things that a connected cluster gets from the
-internet: an update graph, and the signatures that let the CVO verify a release. oc-mirror v2
+For mirroring and installing without internet access, start with
+[disconnected deployments](disconnected.md). A cluster that cannot reach Red Hat needs two things
+that a connected cluster gets from the internet: an update graph, and the signatures that let the CVO verify a release. oc-mirror v2
 produces both, and AutoShift applies both from values.
 
 | Need | oc-mirror output in `working-dir/cluster-resources/` | Values key | Applied by |
@@ -121,15 +123,18 @@ Operator from `make generate-imageset`, which includes every declared operator, 
    `<host>[/<path>]/openshift/graph-image:latest`.
 
 Every `disconnected-mirror` cluster then finds its update graph without further configuration. The
-channel policy writes `ClusterVersion.spec.upstream` from the first of these that exists:
+channel policy writes `ClusterVersion.spec.upstream` from `config.openshift-upgrade.upgradeGraphUrl`
+when it is set. Otherwise `config.openshift-upgrade.graphSource` picks the service:
 
-1. `config.openshift-upgrade.upgradeGraphUrl`, when set.
-2. An OpenShift Update Service on the cluster itself.
-3. The OpenShift Update Service on the hub that manages the cluster.
+| `graphSource` | Graph used | When the service is missing |
+|---|---|---|
+| `auto` (default) | A disconnected cluster uses the service on itself, then the one on the hub that manages it. Any other cluster uses the public graph | A disconnected cluster fails the channel policy |
+| `local` | The service on the cluster itself | The channel policy fails |
+| `hub` | The service on the hub that manages the cluster | The channel policy fails |
 
-A disconnected cluster with none of these fails the channel policy with a message naming the fix,
-rather than pointing at a public graph it cannot reach. A connected cluster without an explicit URL
-uses the public graph. The service is found by its Route, `<name>-route` in
+Set `local` or `hub` when a cluster could find a service in both places and must use one of them,
+or to use a local service on a connected cluster. A failure names the missing Route and the fix,
+rather than pointing at a graph the cluster cannot reach. The service is found by its Route, `<name>-route` in
 `openshift-update-service`, where `name` is `config.update-service.name` (default `autoshift`).
 Set `name` where every cluster sees it if you change it.
 
@@ -157,7 +162,7 @@ that manages the cluster" means that placing hub. Choose where the service runs 
 |---|---|---|
 | One service per managed hub | `update-service: 'true'` on the managed hubs' clusterset in the hub of hubs' values | Each managed hub serves its own spokes, and uses its own service for its own upgrades |
 | One central service on the hub of hubs | `update-service: 'true'` on the hub of hubs only | Managed hubs find it on their own. Their spokes look on their managed hub, so set `config.openshift-upgrade.upgradeGraphUrl` once in each managed hub's values |
-| Both | Both labels | Every cluster uses the nearest service: its own, then its hub's |
+| Both | Both labels | With `graphSource: auto`, every cluster uses the nearest service: its own, then its hub's. Set `graphSource: hub` on the managed hubs to have them use the central service for their own upgrades |
 
 Every serving cluster needs the release images and graph image in a mirror it can reach, and the
 `releaseSignatures` list of the clusters it serves.
