@@ -4,6 +4,7 @@ package resolver
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -281,6 +282,68 @@ func TestPlaceholders_AllRenderersAgree(t *testing.T) {
 		for _, token := range used.FindAllString(string(body), -1) {
 			if !suite[token] {
 				t.Errorf("%s uses %s, which no renderer substitutes", rel, token)
+			}
+		}
+	}
+}
+
+// OCI mode renders each PolicyGenerator directory into a stock Helm chart at release time
+// (scripts/render-policygen-charts.sh), with the placeholders still in place, and substitutes them at
+// install time with a literal replace. PolicyGenerator writes the standards annotation as a plain
+// scalar, so the substitution has to add quoting: package two real charts and render them with names
+// that are YAML-significant when unquoted.
+func TestOCIChart_QuotesCustomStandard(t *testing.T) {
+	root := repoRoot(t)
+	bin, pluginHome := resolveKustomizeTools(root)
+	if bin == "" || pluginHome == "" {
+		t.Skip("kustomize/PolicyGenerator not found; run make install-policy-generator")
+	}
+	for _, tool := range []string{"bash", "helm"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not on PATH", tool)
+		}
+	}
+	charts := t.TempDir()
+	cmd := exec.Command("bash", "scripts/render-policygen-charts.sh",
+		"policies/stable/htpasswd", "policies/stable/advanced-cluster-security")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "KUSTOMIZE="+bin, "KUSTOMIZE_PLUGIN_HOME="+pluginHome,
+		"CHARTS_DIR="+charts, "VERSION=0.0.0-test")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("render-policygen-charts.sh: %v\n%s", err, out)
+	}
+	values := filepath.Join(charts, "values.yaml")
+	if err := os.WriteFile(values, []byte("autoshift:\n  policyStandard: \"Platform: Security\"\n  policyStandardHub: \"2022\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"Platform: Security": true, "2022": true}
+	for _, chart := range []string{"htpasswd", "advanced-cluster-security"} {
+		out, err := exec.Command("helm", "template", "asv",
+			filepath.Join(charts, "policies", chart+"-0.0.0-test.tgz"), "-f", values).CombinedOutput()
+		if err != nil {
+			t.Errorf("%s: helm template with a colon-space standard failed: %v\n%s", chart, err, out)
+			continue
+		}
+		if strings.Contains(string(out), "${POLICY_STANDARD") {
+			t.Errorf("%s: an unsubstituted standard placeholder is left in the output", chart)
+		}
+		dec := yaml.NewDecoder(strings.NewReader(string(out)))
+		for {
+			var doc struct {
+				Kind     string `yaml:"kind"`
+				Metadata struct {
+					Name        string            `yaml:"name"`
+					Annotations map[string]string `yaml:"annotations"`
+				} `yaml:"metadata"`
+			}
+			if err := dec.Decode(&doc); err != nil {
+				break
+			}
+			if doc.Kind != "Policy" {
+				continue
+			}
+			if got := doc.Metadata.Annotations["policy.open-cluster-management.io/standards"]; !want[got] {
+				t.Errorf("%s: %s has standard %q, want one of the configured names", chart, doc.Metadata.Name, got)
 			}
 		}
 	}

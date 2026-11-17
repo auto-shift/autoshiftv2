@@ -77,15 +77,22 @@ autoshift:
     compliant: 10m
     noncompliant: 30s
 EOF
+  # PolicyGenerator writes the standards annotation as a plain scalar (`standards: ${POLICY_STANDARD}`),
+  # so the annotation is replaced as a whole with a quoted value first. A literal replace alone would
+  # turn a name like "Platform: Security" into invalid YAML, and "2022" or "true" into a non-string.
   cat > "$chart/templates/policies.yaml" <<'EOF'
+{{- $ps := toString (((.Values.autoshift).policyStandard) | default "NIST SP 800-53") -}}
+{{- $psh := toString (((.Values.autoshift).policyStandardHub) | default $ps) -}}
 {{- .Files.Get "files/rendered.yaml"
     | replace "${POLICY_NAMESPACE}"   .Values.policy_namespace
     | replace "${REMEDIATION}"        (ternary "inform" "enforce" ((.Values.autoshift).dryRun | default false))
     | replace "${EVAL_COMPLIANT}"     (((.Values.autoshift).evaluationInterval).compliant | default "10m")
     | replace "${EVAL_NONCOMPLIANT}"  (((.Values.autoshift).evaluationInterval).noncompliant | default "30s")
     | replace "${CLUSTER_SET_SUFFIX}" (.Values.clusterSetSuffix | default "")
-    | replace "${POLICY_STANDARD_HUB}" (((.Values.autoshift).policyStandardHub) | default (((.Values.autoshift).policyStandard) | default "NIST SP 800-53"))
-    | replace "${POLICY_STANDARD}"   (((.Values.autoshift).policyStandard) | default "NIST SP 800-53") }}
+    | replace "/standards: ${POLICY_STANDARD_HUB}" (printf "/standards: %s" (quote $psh))
+    | replace "/standards: ${POLICY_STANDARD}"     (printf "/standards: %s" (quote $ps))
+    | replace "${POLICY_STANDARD_HUB}" $psh
+    | replace "${POLICY_STANDARD}"     $ps }}
 EOF
 
   # 5. package.

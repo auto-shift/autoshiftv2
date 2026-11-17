@@ -83,5 +83,6 @@ The standards are substituted at deploy time, by the same mechanism as `${POLICY
    annotation.
 
 Helm-templated policies read `.Values.autoshift.policyStandard` or `.Values.autoshift.policyStandardHub`
-from the values the ApplicationSet passes them. In OCI mode, the packaged charts receive the same
-values.
+from the values the ApplicationSet passes them. In OCI mode, each PolicyGenerator policy is packaged as a
+plain Helm chart with the placeholders still in place, and the chart substitutes them at install time,
+quoting the standards annotation so names with YAML syntax stay strings.
