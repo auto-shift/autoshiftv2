@@ -502,7 +502,7 @@ objects until you remove the old instance:
 
 ### Unschedulable Control Plane
 
-Taints the control-plane nodes listed in `config.unschedulableControlPlane.nodes` with `autoshift.io/unschedulable-control-plane:NoSchedule`, so pods without a matching toleration cannot schedule there. Once the pods already running are moved, the node keeps its control-plane components (etcd, API server, controllers, scheduler), the DaemonSets, and any pod that tolerates the taint. Designed for compact clusters where most masters should remain schedulable but one or more should be marked unschedulable.
+Taints the control-plane nodes listed in `config.unschedulableControlPlane.nodes` with `autoshift.io/unschedulable-control-plane:NoSchedule`, so pods without a matching toleration cannot schedule there. Once the pods already running are moved, only pods that tolerate the taint can run there: the control-plane static pods (etcd, API server, controllers, scheduler), the DaemonSets, and any other pod with a matching toleration. Designed for compact clusters where most masters should remain schedulable but one or more should be marked unschedulable.
 
 **Why a custom taint key?** On compact clusters, the OpenShift scheduler operator has `mastersSchedulable: true` and actively removes the standard `node-role.kubernetes.io/control-plane:NoSchedule` taint. Using the standard key would create a reconciliation loop between ACM and the scheduler operator. The custom key `autoshift.io/unschedulable-control-plane` avoids this conflict entirely.
 
