@@ -28,8 +28,9 @@ for everything that runs on managed clusters.
 ### Allowed characters
 
 A standard name is display text, but it is substituted into policy configurations by `sed` and
-written into YAML, so the chart rejects names containing `"`, `'`, `\`, `|`, `&` or a line break, with
-a message naming the value. Everything else works, including colons, slashes and parentheses, for
+written into YAML, so the chart rejects names containing `"`, `'`, `\`, `|`, `&`, `{`, `}` or a line
+break, with a message naming the value. Braces are rejected because the ApplicationSet would evaluate
+them as a template. Everything else works, including colons, slashes and parentheses, for
 example `ISO/IEC 27001:2022`. Every place the name is written is quoted, so YAML syntax in a name stays
 part of the name.
 

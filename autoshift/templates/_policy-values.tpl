@@ -42,15 +42,16 @@ so the fallback is written once and the value is always validated.
 
 The name is a display string, but it is substituted into PolicyGenerator configs by sed in the CMP
 sidecar and pg-render.sh, and emitted into YAML in several places. Characters that would change sed or
-YAML structure are rejected here with a readable message: " ' \ | & and line breaks. Everything else,
-including a colon (ISO/IEC 27001:2022), is fine because every emitted copy is quoted.
+YAML structure are rejected here with a readable message: " ' \ | & { } and line breaks. Braces would
+otherwise be evaluated as a template by the ApplicationSet (goTemplate, missingkey=error). Everything
+else, including a colon (ISO/IEC 27001:2022), is fine because every emitted copy is quoted.
 */}}
 {{- define "autoshift.validatePolicyStandard" -}}
 {{- if not (trim .value) -}}
 {{- fail (printf "%s must not be empty" .key) -}}
 {{- end -}}
-{{- if regexMatch "[\"'\\\\|&\\r\\n]" .value -}}
-{{- fail (printf "%s %q contains a character AutoShift cannot pass through safely (one of \" ' \\ | & or a line break)" .key .value) -}}
+{{- if regexMatch "[\"'\\\\|&{}\\r\\n]" .value -}}
+{{- fail (printf "%s %q contains a character AutoShift cannot pass through safely (one of \" ' \\ | & { } or a line break)" .key .value) -}}
 {{- end -}}
 {{- end -}}
 

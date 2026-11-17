@@ -121,10 +121,12 @@ type placementSelector struct {
 	} `yaml:"spec"`
 }
 
-// requiresHub reports whether a Placement only ever selects hubs: it requires
-// autoshift.io/cluster-type In [hub]. Placements that reach the hub some other way (a label only the
-// hub carries, for example) are not detected, so this is one-directional: a hub-only placement must
-// use the hub standard, but the hub standard is not forbidden elsewhere.
+// requiresHub reports whether a Placement only ever selects hubs. Predicates are ORed, so every
+// predicate must carry a hub restriction: autoshift.io/cluster-type In [hub], or
+// autoshift.io/self-managed In [true] (a cluster that manages itself is a hub). Placements that reach
+// the hub some other way (a label only the hub carries, for example) are not detected, so this is
+// one-directional: a hub-only placement must use the hub standard, but the hub standard is not
+// forbidden elsewhere.
 func requiresHub(t *testing.T, path string) bool {
 	t.Helper()
 	body, err := os.ReadFile(path)
@@ -135,14 +137,23 @@ func requiresHub(t *testing.T, path string) bool {
 	if err := yaml.Unmarshal(body, &pl); err != nil {
 		t.Fatalf("parse %s: %v", path, err)
 	}
+	if len(pl.Spec.Predicates) == 0 {
+		return false
+	}
 	for _, pred := range pl.Spec.Predicates {
+		hub := false
 		for _, e := range pred.RequiredClusterSelector.LabelSelector.MatchExpressions {
-			if e.Key == "autoshift.io/cluster-type" && e.Operator == "In" && len(e.Values) == 1 && e.Values[0] == "hub" {
-				return true
+			only := e.Operator == "In" && len(e.Values) == 1
+			if only && ((e.Key == "autoshift.io/cluster-type" && e.Values[0] == "hub") ||
+				(e.Key == "autoshift.io/self-managed" && e.Values[0] == "true")) {
+				hub = true
 			}
 		}
+		if !hub {
+			return false
+		}
 	}
-	return false
+	return true
 }
 
 // A policy whose placement requires cluster-type In [hub] reports the hub standard.
@@ -165,14 +176,22 @@ func TestPolicyStandard_HubOnlyPoliciesUseHubStandard(t *testing.T) {
 				standards = cfg.PolicyDefaults.Standards
 			}
 			if requiresHub(t, filepath.Join(dir, placement)) && (len(standards) != 1 || standards[0] != standardHubToken) {
-				t.Errorf("%s: %s is placed only on hubs (%s requires cluster-type In [hub]) but reports %v; use %s",
+				t.Errorf("%s: %s is placed only on hubs (every predicate in %s requires cluster-type In [hub] or self-managed In [true]) but reports %v; use %s",
 					rel, p.Name, placement, standards, standardHubToken)
 			}
 		}
 	}
 }
 
-// Every Helm-templated Policy reads its standard from autoshift values and quotes it.
+// A Helm-templated Placement is hub-only when its clusterSets are the hub clustersets and not also the
+// managed ones (policy-gitops-operator-install spans both and correctly keeps the managed standard).
+var (
+	hubClusterSetPlacement     = regexp.MustCompile(`range \$[A-Za-z]+, \$[A-Za-z]+ := \$?\.Values\.hubClusterSets`)
+	managedClusterSetPlacement = regexp.MustCompile(`range \$[A-Za-z]+, \$[A-Za-z]+ := \$?\.Values\.managedClusterSets`)
+)
+
+// Every Helm-templated Policy reads its standard from autoshift values and quotes it, and one placed
+// on the hub clustersets reads policyStandardHub.
 func TestPolicyStandard_HelmTemplatesUseValues(t *testing.T) {
 	root := repoRoot(t)
 	paths, err := filepath.Glob(filepath.Join(root, "policies", "*", "*", "templates", "*.yaml"))
@@ -191,6 +210,10 @@ func TestPolicyStandard_HelmTemplatesUseValues(t *testing.T) {
 			}
 			if !strings.Contains(line, ".Values.autoshift).policyStandard") || !strings.Contains(line, "| quote") {
 				t.Errorf("%s:%d: standards annotation must come from autoshift.policyStandard or policyStandardHub and be quoted: %s",
+					rel, i+1, strings.TrimSpace(line))
+			}
+			if hubClusterSetPlacement.Match(body) && !managedClusterSetPlacement.Match(body) && !strings.Contains(line, ".Values.autoshift).policyStandardHub") {
+				t.Errorf("%s:%d: this policy is placed on the hub clustersets, so its standards annotation must read policyStandardHub: %s",
 					rel, i+1, strings.TrimSpace(line))
 			}
 		}
