@@ -3,6 +3,7 @@
 package resolver
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -327,24 +328,41 @@ func TestOCIChart_QuotesCustomStandard(t *testing.T) {
 		if strings.Contains(string(out), "${POLICY_STANDARD") {
 			t.Errorf("%s: an unsubstituted standard placeholder is left in the output", chart)
 		}
+		// Annotations decode into yaml.Node, not string: yaml.v3 would turn an unquoted 2022 into "2022"
+		// and hide exactly the regression this test exists to catch. The tag must be !!str.
 		dec := yaml.NewDecoder(strings.NewReader(string(out)))
+		policies := 0
 		for {
 			var doc struct {
 				Kind     string `yaml:"kind"`
 				Metadata struct {
-					Name        string            `yaml:"name"`
-					Annotations map[string]string `yaml:"annotations"`
+					Name        string               `yaml:"name"`
+					Annotations map[string]yaml.Node `yaml:"annotations"`
 				} `yaml:"metadata"`
 			}
 			if err := dec.Decode(&doc); err != nil {
+				if err != io.EOF {
+					t.Errorf("%s: rendered output is not valid YAML: %v", chart, err)
+				}
 				break
 			}
 			if doc.Kind != "Policy" {
 				continue
 			}
-			if got := doc.Metadata.Annotations["policy.open-cluster-management.io/standards"]; !want[got] {
-				t.Errorf("%s: %s has standard %q, want one of the configured names", chart, doc.Metadata.Name, got)
+			policies++
+			node, ok := doc.Metadata.Annotations["policy.open-cluster-management.io/standards"]
+			switch {
+			case !ok:
+				t.Errorf("%s: %s has no standards annotation", chart, doc.Metadata.Name)
+			case node.ShortTag() != "!!str":
+				t.Errorf("%s: %s standards annotation %q is a %s, not a string; the value must be quoted",
+					chart, doc.Metadata.Name, node.Value, node.ShortTag())
+			case !want[node.Value]:
+				t.Errorf("%s: %s has standard %q, want one of the configured names", chart, doc.Metadata.Name, node.Value)
 			}
+		}
+		if policies == 0 {
+			t.Errorf("%s: rendered no Policy documents", chart)
 		}
 	}
 }
