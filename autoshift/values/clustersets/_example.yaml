@@ -924,6 +924,19 @@ hubClusterSets:
           #   name: 'autoshift-repo-secret'
           #   namespace: 'policies-autoshift'
       # =======================================================================
+      # Global Hub settings (the global-hub label turns the feature on)
+      # =======================================================================
+      # Settings live here, not in labels: labels switch features on and off for placements,
+      # configuration belongs in config. The operator-install labels (subscription-name, channel,
+      # source, source-namespace, version) stay as labels to match every other operator policy.
+      global-hub:
+        availabilityConfig: High            # High (default) or Basic
+        enableMetrics: 'true'
+        installAgentOnLocal: 'true'
+        postgresRetention: 18m
+        consumerGroupPrefix: 'example_'     # optional Kafka consumer group prefix; '' for none
+        strimziChannel: amq-streams-3.1.x   # AMQ Streams channel, used on a disconnected hub
+      # =======================================================================
       # Images for AutoShift's own helper Jobs (read via rendered-config ConfigMap)
       # =======================================================================
       # Leave blank. Each Job resolves its image at runtime from the cluster's own
@@ -2791,3 +2804,30 @@ hubClusterSets:
       # only until config.ztwim.defaultX509Validity expires. policy-ztwim-operand-drift reports
       # when this is needed and stays Compliant when it is not.
       ztwim-operand-reconcile: 'false'
+
+      # =======================================================================
+      # Global Hub — set on the GLOBAL hub's clusterset (the self-managed hub-of-hubs)
+      # =======================================================================
+      # Turns the feature on and installs the operator here. Its settings live under
+      # config.global-hub, not in labels.
+      global-hub: 'false'
+      global-hub-subscription-name: multicluster-global-hub-operator-rh
+      global-hub-channel: release-1.8
+      global-hub-source: redhat-operators
+      global-hub-source-namespace: openshift-marketplace
+      global-hub-version: ''                       # optional: pin CSV (sets manual approval)
+
+      # =======================================================================
+      # Global Hub import — set on each MANAGED HUB's clusterset (hub1, hub2, ...)
+      # =======================================================================
+      # Opt one spoke hub in to being imported by the global hub. It is per hub: set it on
+      # every managed hub you want imported, and leave it unset on hubs you do not.
+      # Setting it on the global hub's own clusterset does nothing useful.
+      #
+      # policy-global-hub-managed-hubs reads this off the ManagedCluster and translates it into
+      # the operator's own global-hub.open-cluster-management.io/deploy-mode label — which is why
+      # it is a label and not config.
+      #   default  the only value AutoShift supports. The managed hub must set self-managed 'false'.
+      # Red Hat's 'hosted' mode is refused by the chart: it disables the policy add-on for that hub,
+      # so the hub of hubs could no longer configure it.
+      global-hub-deploy-mode: ''
