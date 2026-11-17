@@ -36,10 +36,10 @@ object-templates-raw: |
     {{ fail (printf "far.templates[%s] requires sharedparameters and/or nodeparameters, or set autoNodeIPsFromBMH=true to fill nodeparameters.--ip from BareMetalHost data" $tplName) }}
   {{hub- end hub}}
   {{hub- $fillAutoIP := and $autoNodeIPsFromBMH (not (hasKey $nodeparameters "--ip")) hub}}
-  {{hub- if $fillAutoIP hub}}
   {{hub- $hubAutoIPs := dict hub}}
   {{hub- $hubAutoPorts := dict hub}}
   {{hub- $expectedNodes := dict hub}}
+  {{hub- if $fillAutoIP hub}}
   {{hub- $hubBmhs := (lookup "metal3.io/v1alpha1" "BareMetalHost" $clusterName "").items | default (list) hub}}
   {{hub- range $bmh := $hubBmhs hub}}
   {{hub- $nodeName := dig "metadata" "annotations" "bmac.agent-install.openshift.io/hostname" "" $bmh hub}}
@@ -162,10 +162,13 @@ object-templates-raw: |
       spec:
         template:
           spec: {{ $tplSpec := ({{hub $tplSpec | toRawJson | quote hub}} | fromJson) -}}
+            {{- $expectedNodes := ({{hub $expectedNodes | default dict | toRawJson | quote hub}} | fromJson) -}}
+            {{- if not (kindIs "map" $expectedNodes) -}}
+              {{- $expectedNodes = dict -}}
+            {{- end -}}
             {{- $bmhs := (lookup "metal3.io/v1alpha1" "BareMetalHost" "openshift-machine-api" "").items | default (list) -}}
             {{- $autoIPs := dict -}}
             {{- $autoPorts := dict -}}
-            {{- $expectedNodes := dict -}}
             {{- range $bmh := $bmhs -}}
             {{- $nodeName := dig "metadata" "annotations" "bmac.agent-install.openshift.io/hostname" "" $bmh -}}
             {{- if empty $nodeName -}}
