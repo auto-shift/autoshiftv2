@@ -1,9 +1,9 @@
 # unschedulable-control-plane
 
 Taints the control-plane nodes listed in `config.unschedulableControlPlane.nodes` with
-`autoshift.io/unschedulable-control-plane:NoSchedule`, so no new application pods schedule there and,
-once the pods already running are moved, they run only control-plane components. It is for compact
-clusters where most control-plane nodes stay schedulable and one or more are dedicated to
+`autoshift.io/unschedulable-control-plane:NoSchedule`, so pods without a matching toleration cannot
+schedule there. Once the pods already running are moved, the node keeps its control-plane components,
+the DaemonSets, and any pod that tolerates the taint. It is for compact clusters where most control-plane nodes stay schedulable and one or more are dedicated to
 the control plane, such as the
 [dual-room ACP topology](https://github.com/RedHatEdge/patterns/tree/main/patterns/dual-room-acp-topology#approach-a-stretched-acp).
 
@@ -33,7 +33,7 @@ oc adm uncordon <node>
 ```
 
 The drain evicts the application pods, which reschedule onto the untainted nodes. Static control-plane
-pods and DaemonSets stay. After the uncordon, the taint keeps application pods off the node.
+pods and DaemonSets stay. After the uncordon, the taint keeps off any pod without a matching toleration.
 
 ## Placement
 
