@@ -1,8 +1,9 @@
 # unschedulable-control-plane
 
 Taints the control-plane nodes listed in `config.unschedulableControlPlane.nodes` with
-`autoshift.io/unschedulable-control-plane:NoSchedule`, so they run only control plane components. It is
-for compact clusters where most control-plane nodes stay schedulable and one or more are dedicated to
+`autoshift.io/unschedulable-control-plane:NoSchedule`, so no new application pods schedule there and,
+once the pods already running are moved, they run only control-plane components. It is for compact
+clusters where most control-plane nodes stay schedulable and one or more are dedicated to
 the control plane, such as the
 [dual-room ACP topology](https://github.com/RedHatEdge/patterns/tree/main/patterns/dual-room-acp-topology#approach-a-stretched-acp).
 
@@ -17,8 +18,22 @@ standard `node-role.kubernetes.io/control-plane:NoSchedule` taint. A policy that
 would fight the operator. The custom key avoids that.
 
 Application pods without a toleration for the key no longer schedule on the tainted nodes. System
-DaemonSets (OVN-Kubernetes, CSI plugins, the machine config daemon) and the control plane static pods
+DaemonSets (OVN-Kubernetes, CSI plugins, the machine config daemon) and the control-plane static pods
 tolerate every taint, so they keep running there.
+
+## Moving pods that are already running
+
+`NoSchedule` keeps new pods off a node; it does not evict pods that were running there before the taint
+was applied. The policy reports Compliant as soon as the taint is set, so move those pods once,
+after it is:
+
+```bash
+oc adm drain <node> --ignore-daemonsets --delete-emptydir-data
+oc adm uncordon <node>
+```
+
+The drain evicts the application pods, which reschedule onto the untainted nodes. Static control-plane
+pods and DaemonSets stay. After the uncordon, the taint keeps application pods off the node.
 
 ## Placement
 
@@ -37,8 +52,9 @@ clusters:
       unschedulable-control-plane: 'true'
     config:
       unschedulableControlPlane:
-        nodes:                                     # required, at least one
+        nodes:                                     # required, at least one, unless releaseAll
           - 'master-4.my-cluster.example.com'
+        # releaseAll: true                         # ignore nodes; remove the taint from every node
 ```
 
 `docs/values-reference.md` has a 5-node example that combines this policy with ODF storage nodes.
@@ -52,13 +68,20 @@ clusters:
   rebuilt from the live Node without that entry, with the rest of its spec carried over, under
   `mustonlyhave`. `musthave` cannot drop an entry from a list. This runs only for nodes being released.
   `mustnothave` is never used, because under enforce it would delete the Node.
-- **Disabling the policy** leaves existing taints in place. Remove a node from the list first, let the
-  policy remove its taint, then disable it.
+- **Releasing every node.** An empty `nodes` list fails, so the last tainted node cannot be released by
+  emptying the list. Set `releaseAll: true` instead: the policy ignores `nodes` and removes the taint
+  from every node that carries it, then has nothing left to do and reports Compliant. It overrides an
+  inherited `nodes` list rather than requiring it to be empty, because config is deep-merged and an
+  empty list at the cluster level does not replace the clusterset's.
+- **Disabling the policy** leaves existing taints in place. To stop using it: set `releaseAll: true`,
+  wait for the taints to be removed, then set the `unschedulable-control-plane` label to `'false'` and
+  remove the config.
 
 The policy fails with a message naming the cause, rather than reporting Compliant with nothing applied
 or creating anything, when:
 
-- `config.unschedulableControlPlane.nodes` is missing or empty, or contains an empty or repeated name
+- `config.unschedulableControlPlane.nodes` is missing or empty and `releaseAll` is not set, or it
+  contains an empty or repeated name
 - a listed Node does not exist. Without this check, `musthave` would create a bare Node object with that
   name
 - a listed Node is not a control-plane node
