@@ -187,6 +187,8 @@ If `spec.bmc.address` includes a host port (common OpenShift examples use `:9000
 helper also sets `nodeparameters.--ipport` for those nodes so `fence_redfish` keeps the
 non-default port. Addresses without an explicit port leave `--ipport` unset (agent
 default 443). An existing `nodeparameters.--ipport` map is left unchanged.
+`FenceAgentsRemediationTemplate` objects use `mustonlyhave` so a later apply that omits
+`--ipport` removes a stale per-node port left from an earlier BMC address.
 
 ```yaml
 templates:
