@@ -14,7 +14,7 @@ metadata:
   name: policy-gitops-cmp-plugin
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/standards: {{ (($.Values.autoshift).policyStandardHub) | default (($.Values.autoshift).policyStandard) | default "NIST SP 800-53" | quote }}
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
@@ -67,6 +67,12 @@ spec:
                                 EC="${ARGOCD_ENV_EVAL_COMPLIANT:-${EVAL_COMPLIANT:-10m}}"
                                 EN="${ARGOCD_ENV_EVAL_NONCOMPLIANT:-${EVAL_NONCOMPLIANT:-30s}}"
                                 CSS="${ARGOCD_ENV_CLUSTER_SET_SUFFIX:-${CLUSTER_SET_SUFFIX:-}}"
+                                PS="${ARGOCD_ENV_POLICY_STANDARD:-${POLICY_STANDARD:-NIST SP 800-53}}"
+                                PSH="${ARGOCD_ENV_POLICY_STANDARD_HUB:-${POLICY_STANDARD_HUB:-${PS}}}"
+                                # The standard is free text: escape sed's replacement metacharacters so a name can never alter
+                                # the substitution. The chart already rejects | & and backslash in it; this keeps sed safe regardless.
+                                PS=$(printf '%s' "$PS" | sed 's/[|&\\]/\\&/g')
+                                PSH=$(printf '%s' "$PSH" | sed 's/[|&\\]/\\&/g')
                                 # sed (envsubst is not in the argocd image), restricted to these exact tokens so
                                 # hub-template $vars ($base, $cm, ...) inside manifests/ are never touched.
                                 find . -type f -name '*.yaml' -exec sed -i \
@@ -75,6 +81,8 @@ spec:
                                   -e "s|\${EVAL_COMPLIANT}|${EC}|g" \
                                   -e "s|\${EVAL_NONCOMPLIANT}|${EN}|g" \
                                   -e "s|\${CLUSTER_SET_SUFFIX}|${CSS}|g" \
+                                  -e "s|\${POLICY_STANDARD_HUB}|${PSH}|g" \
+                                  -e "s|\${POLICY_STANDARD}|${PS}|g" \
                                   {} +
                                 # A policy manifest path may be a nested kustomization that renders a shared chart from
                                 # components/. PolicyGenerator spawns a nested `kustomize build` for it, configured by

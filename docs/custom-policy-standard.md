@@ -1,15 +1,17 @@
 # Custom Policy Standards
 
-AutoShift policies are grouped under an ACM Governance **standard** that appears in the ACM console's policy filters. By default, all policies use `NIST SP 800-53`. You can override this to group policies under your own standard names.
+AutoShift policies are grouped under a Red Hat Advanced Cluster Management Governance **standard**,
+which appears in the console's policy filters. By default every policy uses `NIST SP 800-53`. You can
+replace that with your own standard names, and give hub policies a separate standard from managed
+cluster policies:
 
-AutoShift supports two configurable standards to separate hub infrastructure policies from managed cluster policies:
+| Value | Placeholder | Applies to |
+|-------|-------------|------------|
+| `autoshift.policyStandard` | `${POLICY_STANDARD}` | Policies that run on managed clusters |
+| `autoshift.policyStandardHub` | `${POLICY_STANDARD_HUB}` | Policies placed only on hubs |
 
-| Value | Variable | Applies to |
-|-------|----------|------------|
-| `autoshift.policyStandard` | `${POLICY_STANDARD}` | Managed cluster policies (~40 policies) |
-| `autoshift.policyStandardHub` | `${POLICY_STANDARD_HUB}` | Hub-targeting policies (ACM, ACS, GitOps, cluster-install, cluster-labels, cluster-config-maps, openshift-dns, metallb) |
-
-If `policyStandardHub` is unset, it defaults to `policyStandard`. If both are unset, all policies use `NIST SP 800-53`.
+If `policyStandardHub` is unset, it falls back to `policyStandard`. If both are unset, every policy
+uses `NIST SP 800-53`.
 
 ## Configuration
 
@@ -20,50 +22,65 @@ autoshift:
   policyStandardHub: "Advanced Compute Platform Hub"
 ```
 
-This flows through the existing substitution pipeline:
+In the Governance console this creates two filterable standards: one for hub infrastructure and one
+for everything that runs on managed clusters.
 
-- **PolicyGenerator policies** receive `${POLICY_STANDARD}` or `${POLICY_STANDARD_HUB}` via the CMP sidecar
-- **Helm-templated policies** receive `.Values.autoshift.policyStandard` or `.Values.autoshift.policyStandardHub`
-- **OCI-rendered charts** receive it through the same `policyValuesObject`
+### Allowed characters
 
-## Hub versus Managed Policy Classification
+A standard name is display text, but it is substituted into policy configurations by `sed` and
+written into YAML, so the chart rejects names containing `"`, `'`, `\`, `|`, `&` or a line break, with
+a message naming the value. Everything else works, including colons, slashes and parentheses, for
+example `ISO/IEC 27001:2022`. Every place the name is written is quoted, so YAML syntax in a name stays
+part of the name.
 
-Hub policies are those whose placement targets hub clusters (via `autoshift.io/cluster-type: hub` or hub-only clusterSets):
+## Hub and managed policies
 
-| Standard | Policies |
-|----------|----------|
-| Hub | advanced-cluster-management, advanced-cluster-security, cluster-install, cluster-labels, cluster-config-maps, openshift-gitops, openshift-dns, metallb |
-| Managed | All other policies (~40) — cert-manager, logging, lvm, odf, openshift-virtualization, etc. |
+The choice is made per policy, not per directory, from where the policy is placed:
 
-## HA versus Non-HA Storage (ODF / LVM)
+- A policy whose placement requires `autoshift.io/cluster-type: hub` uses `${POLICY_STANDARD_HUB}`.
+  This rule is enforced by the validation suite.
+- A policy placed on every hub clusterset (the Helm-templated `openshift-gitops`, `cluster-labels` and
+  `cluster-config-maps` policies) uses `policyStandardHub`.
+- A few policies that reach only the hub through a hub-only label, such as
+  `policy-vault-transit-provider`, set the hub standard explicitly.
+- Every other policy uses `${POLICY_STANDARD}`.
 
-The HA versus non-HA distinction is a **placement concern**, not a standards concern — policies for ODF and LVM target different clusters via label selectors:
+So one directory can contain both. MetalLB, for example, uses the managed standard by default, and its
+IP address pool and L2 advertisement ConfigMap policies, which run on the hub, use the hub standard.
+`openshift-dns` uses the managed standard.
 
-| Storage | Placement label | Use case |
-|---------|----------------|----------|
-| ODF | `autoshift.io/odf: 'true'` | HA clusters with dedicated storage nodes |
-| LVM | `autoshift.io/lvm: 'true'` | Non-HA / single-node / compact clusters |
-
-Both appear under the same managed standard (`Advanced Compute Platform`) in the Governance UI.
-
-## Example: Deploying the Advanced Compute Platform
+In a PolicyGenerator configuration, the default goes in `policyDefaults.standards`, and a hub-only
+policy in an otherwise managed directory overrides it:
 
 ```yaml
-autoshift:
-  policyStandard: "Advanced Compute Platform"
-  policyStandardHub: "Advanced Compute Platform Hub"
+policyDefaults:
+  standards:
+    - "${POLICY_STANDARD}"
+policies:
+  - name: policy-example-hub
+    standards:
+      - "${POLICY_STANDARD_HUB}"
+    placement:
+      placementPath: placement-hub.yaml
 ```
 
-In the ACM Governance UI this creates two filterable standards:
-- **Advanced Compute Platform Hub** — hub infrastructure (ACM, ACS, GitOps, DNS, MetalLB)
-- **Advanced Compute Platform** — managed cluster policies (storage, observability, security agents, operators)
+Always quote the placeholder. The validation suite fails a configuration that writes a standard name
+directly, leaves the placeholder unquoted, or gives a hub-only policy the managed standard.
 
-## How It Works
+## How it works
 
-The standards are substituted at deploy time — the same mechanism used for `${POLICY_NAMESPACE}`, `${REMEDIATION}`, and other per-deployment tokens:
+The standards are substituted at deploy time, by the same mechanism as `${POLICY_NAMESPACE}`,
+`${REMEDIATION}` and the other per-deployment placeholders:
 
-1. Helm renders the ApplicationSet with `POLICY_STANDARD` and `POLICY_STANDARD_HUB` as plugin env vars
-2. The CMP sidecar runs `sed` to replace both `${POLICY_STANDARD_HUB}` and `${POLICY_STANDARD}` tokens (`_HUB` is replaced first so the shorter token does not match it)
-3. PolicyGenerator bakes the values into `policy.open-cluster-management.io/standards` annotations
+1. Helm renders the ApplicationSet with `POLICY_STANDARD` and `POLICY_STANDARD_HUB` as plugin
+   environment variables, after validating both names.
+2. The CMP sidecar replaces `${POLICY_STANDARD_HUB}` and `${POLICY_STANDARD}` with `sed`, escaping the
+   characters `sed` treats specially. The bootstrap chart's CMP and the copy that the `openshift-gitops`
+   policy keeps on every hub substitute the same placeholders; the validation suite checks that they,
+   `scripts/pg-render.sh` and the suite itself agree.
+3. PolicyGenerator writes the value into each policy's `policy.open-cluster-management.io/standards`
+   annotation.
 
-For Helm-templated policies (openshift-gitops, cluster-labels, cluster-config-maps), the annotation reads directly from `.Values.autoshift.policyStandardHub`.
+Helm-templated policies read `.Values.autoshift.policyStandard` or `.Values.autoshift.policyStandardHub`
+from the values the ApplicationSet passes them. In OCI mode, the packaged charts receive the same
+values.

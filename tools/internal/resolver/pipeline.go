@@ -69,6 +69,21 @@ func HelmTemplate(chartDir string, extraValuesFiles ...string) (string, error) {
 	return string(out), nil
 }
 
+// PlaceholderTestValues maps every per-deployment ${...} placeholder the repo-server CMP substitutes
+// to the value the validation suite uses for it. TestPlaceholders_AllRenderersAgree checks that this
+// set matches what both CMP copies and scripts/pg-render.sh substitute, so a placeholder added to one
+// renderer and not the others fails a test instead of shipping as literal text. No token is a prefix
+// of another, so map order does not matter to strings.Replacer.
+var PlaceholderTestValues = map[string]string{
+	"${POLICY_NAMESPACE}":    "policies-autoshift",
+	"${REMEDIATION}":         "enforce",
+	"${EVAL_COMPLIANT}":      "watch",
+	"${EVAL_NONCOMPLIANT}":   "watch",
+	"${CLUSTER_SET_SUFFIX}":  "",
+	"${POLICY_STANDARD}":     "NIST SP 800-53",
+	"${POLICY_STANDARD_HUB}": "NIST SP 800-53",
+}
+
 // KustomizeBuild renders a PolicyGenerator policy directory the same way the
 // repo-server CMP does: substitute the per-deployment ${...} placeholders, then
 // run `kustomize build` with the same flags as the CMP. Test values mirror a
@@ -79,13 +94,11 @@ func HelmTemplate(chartDir string, extraValuesFiles ...string) (string, error) {
 // $KUSTOMIZE_BIN / $KUSTOMIZE_PLUGIN_HOME, then the repo-local .tools/ that
 // `make install-policy-generator` stages, then `kustomize` on PATH.
 func KustomizeBuild(policyDir string) (string, error) {
-	repl := strings.NewReplacer(
-		"${POLICY_NAMESPACE}", "policies-autoshift",
-		"${REMEDIATION}", "enforce",
-		"${EVAL_COMPLIANT}", "watch",
-		"${EVAL_NONCOMPLIANT}", "watch",
-		"${CLUSTER_SET_SUFFIX}", "",
-	)
+	pairs := make([]string, 0, 2*len(PlaceholderTestValues))
+	for token, value := range PlaceholderTestValues {
+		pairs = append(pairs, token, value)
+	}
+	repl := strings.NewReplacer(pairs...)
 	work, err := os.MkdirTemp("", "autoshift-kustomize-*")
 	if err != nil {
 		return "", err

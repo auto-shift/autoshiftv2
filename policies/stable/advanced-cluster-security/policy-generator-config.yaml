@@ -25,7 +25,7 @@ policyDefaults:
     compliant: ${EVAL_COMPLIANT}
     noncompliant: ${EVAL_NONCOMPLIANT}
   standards:
-    - ${POLICY_STANDARD}
+    - "${POLICY_STANDARD}"
   categories:
     - CM Configuration Management
     - CA Security Assessment and Authorization
@@ -42,7 +42,7 @@ policies:
   # 2) Central CR + readiness gate. MIXED: Central enforce, the status check informs. HUB-only.
   - name: policy-acs-central
     standards:
-      - ${POLICY_STANDARD_HUB}
+      - "${POLICY_STANDARD_HUB}"
     placement:
       placementPath: placement-central-hub.yaml
     dependencies:
@@ -52,7 +52,7 @@ policies:
   # 3) Sync the Central-generated TLS bundles to the managed cluster (hub fromSecret needs a SA). MANAGED-only.
   - name: policy-acs-central-test
     standards:
-      - ${POLICY_STANDARD_HUB}
+      - "${POLICY_STANDARD_HUB}"
     remediationAction: inform
     placement:
       placementPath: placement-central-hub.yaml
@@ -70,6 +70,8 @@ policies:
   # 3b) Cluster registration secret (CRS) minted on the hub. HUB-only.
   #     Replaces the init bundle: one revocable token instead of three long-lived certs.
   - name: policy-acs-crs
+    standards:
+      - "${POLICY_STANDARD_HUB}"
     placement:
       placementPath: placement-crs-mint-hub.yaml
     hubTemplateOptions:
@@ -79,6 +81,8 @@ policies:
     manifests:
       - path: manifests/crs/crs-resources.yaml
   - name: policy-acs-crs-test
+    standards:
+      - "${POLICY_STANDARD_HUB}"
     placement:
       placementPath: placement-crs-hub.yaml
     remediationAction: inform
@@ -97,7 +101,7 @@ policies:
   # 4) Declarative auth-provider config for Central. HUB-only.
   - name: policy-acs-declarative-config
     standards:
-      - ${POLICY_STANDARD_HUB}
+      - "${POLICY_STANDARD_HUB}"
     placement:
       placementPath: placement-auth-hub.yaml
     dependencies:
@@ -107,7 +111,7 @@ policies:
   # 5) Baseline SecurityPolicy CRDs for Central. HUB-only.
   - name: policy-acs-security-policies
     standards:
-      - ${POLICY_STANDARD_HUB}
+      - "${POLICY_STANDARD_HUB}"
     placement:
       placementPath: placement-default-policies-hub.yaml
     dependencies:
@@ -117,7 +121,7 @@ policies:
   # 6) Cluster init-bundle generation (RBAC + Job) + Job-succeeded gate. MIXED: resources enforce, check informs. HUB-only.
   - name: policy-acs-init-bundle
     standards:
-      - ${POLICY_STANDARD_HUB}
+      - "${POLICY_STANDARD_HUB}"
     placement:
       placementPath: placement-init-bundle-hub.yaml
     dependencies:
@@ -127,7 +131,7 @@ policies:
   # 7) SecuredCluster on the hub's own local-cluster + readiness gate. MIXED: SecuredCluster enforce, check informs. HUB-only.
   - name: policy-acs-init-bundle-test
     standards:
-      - ${POLICY_STANDARD_HUB}
+      - "${POLICY_STANDARD_HUB}"
     remediationAction: inform
     placement:
       placementPath: placement-init-bundle-hub.yaml
@@ -135,7 +139,7 @@ policies:
       - path: test/init-bundle-ready.yaml
   - name: policy-acs-secured-cluster-hub
     standards:
-      - ${POLICY_STANDARD_HUB}
+      - "${POLICY_STANDARD_HUB}"
     placement:
       placementPath: placement-hub.yaml
     hubTemplateOptions:
@@ -147,7 +151,7 @@ policies:
   # 8) SecuredCluster on managed clusters + readiness gate. MIXED: SecuredCluster enforce, check informs. MANAGED-only.
   - name: policy-acs-secured-cluster-hub-test
     standards:
-      - ${POLICY_STANDARD_HUB}
+      - "${POLICY_STANDARD_HUB}"
     remediationAction: inform
     placement:
       placementPath: placement-hub.yaml
@@ -170,6 +174,8 @@ policies:
     manifests:
       - path: test/secured-cluster-ready.yaml
   - name: policy-acs-console-link
+    standards:
+      - "${POLICY_STANDARD_HUB}"
     placement:
       placementPath: placement-central-hub.yaml
     hubTemplateOptions:

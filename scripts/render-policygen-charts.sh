@@ -71,7 +71,8 @@ clusterSetSuffix: ""
 autoshift:
   dryRun: false
   policyStandard: "NIST SP 800-53"
-  policyStandardHub: "NIST SP 800-53"
+  # Empty so the replace below falls back to policyStandard when a consumer sets only that.
+  policyStandardHub: ""
   evaluationInterval:
     compliant: 10m
     noncompliant: 30s
