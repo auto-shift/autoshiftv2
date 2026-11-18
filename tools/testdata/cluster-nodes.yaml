@@ -59,6 +59,12 @@ metadata:
   name: worker-1.test-cluster.test.example.com
 spec:
   providerID: aws:///us-east-2b/i-0fake000000000002
+  # Removed by config.storageNodes.nodes[].removeTaints in _example-cluster-install-baremetal.yaml,
+  # so the storage-nodes rewrite path renders.
+  taints:
+    - key: example.com/legacy
+      value: 'true'
+      effect: NoSchedule
 status:
   addresses:
   - address: 10.0.0.11
@@ -99,6 +105,12 @@ metadata:
   name: worker-2.test-cluster.test.example.com
 spec:
   providerID: aws:///us-east-2c/i-0fake000000000003
+  # A stale value for the Red Hat OpenShift Data Foundation taint that the bare-metal example lists,
+  # so the storage policy renders its value-replacement rewrite.
+  taints:
+  - key: node.ocs.openshift.io/storage
+    value: "false"
+    effect: NoSchedule
 status:
   addresses:
   - address: 10.0.0.12
@@ -168,6 +180,14 @@ metadata:
     node.kubernetes.io/instance-type: r5.2xlarge
     topology.kubernetes.io/zone: us-east-2a
   name: infra-0.test-cluster.test.example.com
+# The infra MachineSet taints. The NoExecute one is removed by config.infraNodes.nodes[].removeTaints
+# in _example-cluster-install-baremetal.yaml, so the infra-nodes rewrite path renders.
+spec:
+  taints:
+    - key: node-role.kubernetes.io/infra
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/infra
+      effect: NoExecute
 status:
   capacity:
     cpu: "8"
