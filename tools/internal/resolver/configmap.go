@@ -194,12 +194,14 @@ func GenerateSyntheticConfigMaps(cfg *ExampleConfigs, clusterName, namespace str
 		}
 		cms = append(cms, clusterCM)
 
-		// <name>.rendered-config — merge hub config base + cluster overrides
-		renderedCfg := map[string]interface{}{}
-		if len(cfg.HubConfig) > 0 {
-			deepMerge(renderedCfg, cfg.HubConfig)
-		}
-		deepMerge(renderedCfg, clusterCfg)
+		// <name>.rendered-config — merge hub config base + cluster overrides.
+		// Both sides are deep copies: deepMerge assigns nested maps by
+		// reference, so merging cfg.HubConfig in directly would let this
+		// cluster's overrides write through to the hub config, and from there
+		// into every synthetic cluster rendered after it (in map order, so
+		// not even deterministically).
+		renderedCfg := deepCopyMap(cfg.HubConfig)
+		deepMerge(renderedCfg, deepCopyMap(clusterCfg))
 
 		renderedJSON, err := json.Marshal(renderedCfg)
 		if err != nil {

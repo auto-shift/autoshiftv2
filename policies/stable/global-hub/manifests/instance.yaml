@@ -1,0 +1,51 @@
+# fromConfigMap, not lookup: a missing rendered-config fails the policy and names the ConfigMap,
+# rather than creating the instance from defaults. The ConfigMap is always written with a config
+# key, so an empty one is broken too. Every config.global-hub key is optional.
+#
+# enableMetrics and installAgentOnLocal accept true or false, quoted or not. hasKey tells an
+# explicit false from an unset key, which `| default` would turn into true.
+#
+# consumerGroupPrefix is always written, '' when unset: musthave never removes a field, so
+# leaving it out would keep a prefix that was cleared from config.
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- if not $raw hub}}
+  {{hub-   fail (printf "global-hub: ConfigMap %s.rendered-config has no config key" .ManagedClusterName) hub}}
+  {{hub- end hub}}
+  {{hub- $gh := (index ($raw | fromYaml | default dict) "global-hub" | default dict) hub}}
+  {{hub- $bools := dict "enableMetrics" "true" "installAgentOnLocal" "true" hub}}
+  {{hub- range $key, $_ := $bools hub}}
+  {{hub-   if hasKey $gh $key hub}}
+  {{hub-     $v := (toString (index $gh $key)) hub}}
+  {{hub-     if not (has $v (list "true" "false")) hub}}
+  {{hub-       fail (printf "global-hub: config.global-hub.%s is %q; use true or false" $key $v) hub}}
+  {{hub-     end hub}}
+  {{hub-     $_ := set $bools $key $v hub}}
+  {{hub-   end hub}}
+  {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.open-cluster-management.io/v1alpha4
+      kind: MulticlusterGlobalHub
+      metadata:
+        name: multiclusterglobalhub
+        namespace: multicluster-global-hub
+        {{hub- if (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}
+        annotations:
+          global-hub.open-cluster-management.io/strimzi-catalog-source-name: '{{hub printf "%s-%s" (index .ManagedClusterLabels "autoshift.io/global-hub-source" | default "redhat-operators") (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror") hub}}'
+          global-hub.open-cluster-management.io/strimzi-catalog-source-namespace: '{{hub index .ManagedClusterLabels "autoshift.io/global-hub-source-namespace" | default "openshift-marketplace" hub}}'
+          global-hub.open-cluster-management.io/strimzi-subscription-package-name: amq-streams
+          global-hub.open-cluster-management.io/strimzi-subscription-channel: '{{hub index $gh "strimziChannel" | default "amq-streams-3.1.x" hub}}'
+        {{hub- end hub}}
+      spec:
+        availabilityConfig: '{{hub index $gh "availabilityConfig" | default "High" hub}}'
+        enableMetrics: {{hub index $bools "enableMetrics" hub}}
+        installAgentOnLocal: {{hub index $bools "installAgentOnLocal" hub}}
+        dataLayer:
+          kafka:
+            topics:
+              specTopic: gh-spec
+              statusTopic: 'gh-status.*'
+            consumerGroupPrefix: '{{hub index $gh "consumerGroupPrefix" | default "" hub}}'
+          postgres:
+            retention: '{{hub index $gh "postgresRetention" | default "18m" hub}}'

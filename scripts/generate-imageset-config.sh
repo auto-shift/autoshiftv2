@@ -224,12 +224,14 @@ get_catalog_cache_configs() {
 }
 
 # Channel names an operator has in the cached catalog, one per line. FBC packages are laid out as
-# catalog.json, catalog.yaml, or split files, so read every non-bundle file.
+# catalog.json, catalog.yaml, or split files, so read every non-bundle file. The YAML files are
+# joined with a --- between them, so the last document of one file, or a file without a final
+# newline, cannot run into the next.
 get_catalog_channels() {
     local pkg_dir="$1"
     find "$pkg_dir" -type f -name '*.json' -not -path '*/bundles*' -exec cat {} + 2>/dev/null \
         | jq -r 'select(.schema == "olm.channel") | .name' 2>/dev/null
-    find "$pkg_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -not -path '*/bundles*' -exec cat {} + 2>/dev/null \
+    find "$pkg_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -not -path '*/bundles*' -exec awk 'FNR == 1 && NR > 1 { print "---" } 1' {} + 2>/dev/null \
         | awk '/^---/ { if (s == "olm.channel" && n != "") print n; s = ""; n = ""; next }
                /^schema:/ { s = $2 } /^name:/ { n = $2 }
                END { if (s == "olm.channel" && n != "") print n }' | tr -d "\"'"
@@ -354,18 +356,54 @@ get_default_channel() {
         return
     fi
 
-    # Check for package.json (split structure)
-    if [[ -f "$pkg_dir/package.json" ]]; then
-        default_channel=$(jq -r '.defaultChannel // empty' "$pkg_dir/package.json" 2>/dev/null)
-    # Check for catalog.json (combined structure)
-    elif [[ -f "$pkg_dir/catalog.json" ]]; then
-        default_channel=$(jq -r 'select(.schema == "olm.package") | .defaultChannel // empty' "$pkg_dir/catalog.json" 2>/dev/null)
-    # Check for catalog.yaml (newer catalog format)
-    elif [[ -f "$pkg_dir/catalog.yaml" ]]; then
-        default_channel=$(grep '^defaultChannel:' "$pkg_dir/catalog.yaml" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' || true)
+    # FBC packages are laid out as package.json, catalog.json, catalog.yaml, or split YAML files such
+    # as package.yaml, so read every non-bundle file, joined as get_catalog_channels joins them.
+    default_channel=$(
+        find "$pkg_dir" -type f -name '*.json' -not -path '*/bundles*' -exec cat {} + 2>/dev/null \
+            | jq -r 'select(.schema == "olm.package") | .defaultChannel // empty' 2>/dev/null \
+            | head -1
+    )
+    if [[ -z "$default_channel" ]]; then
+        default_channel=$(
+            find "$pkg_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -not -path '*/bundles*' -exec awk 'FNR == 1 && NR > 1 { print "---" } 1' {} + 2>/dev/null \
+                | grep -m1 '^defaultChannel:' \
+                | awk '{print $2}' \
+                | tr -d "\"'" \
+                || true
+        )
     fi
 
     echo "$default_channel"
+}
+
+# multicluster-engine channels for the mirrored Red Hat Advanced Cluster Management channels,
+# whatever the catalog's default channel is. From 2.17 the versions match: release-2.17 installs
+# multicluster-engine from stable-2.17. Before that it ran five minors behind: release-2.16 installs
+# stable-2.11. Prints them comma-separated, or nothing when no release-X.Y channel is mirrored.
+get_acm_mce_channels() {
+    local redhat_operators="$1"
+    local package_info name channels channel major minor mce=""
+
+    for package_info in $redhat_operators; do
+        IFS='|' read -r name channels <<< "$package_info"
+        [[ "$name" == "advanced-cluster-management" ]] || continue
+        IFS=',' read -ra chans <<< "$channels"
+        for channel in "${chans[@]}"; do
+            channel=$(echo "$channel" | xargs)
+            [[ "$channel" =~ ^release-([0-9]+)\.([0-9]+)$ ]] || continue
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            if [[ "$major" == "2" && "$minor" -lt 17 ]]; then
+                minor=$((minor - 5))
+            fi
+            channel="stable-$major.$minor"
+            if [[ ",$mce," != *",$channel,"* ]]; then
+                mce+="${mce:+,}$channel"
+            fi
+        done
+    done
+
+    echo "$mce"
 }
 
 # Version parsing function
@@ -929,7 +967,6 @@ extract_and_log_operators_multi() {
                         log_step "Added additional channel for ACM: $name (channel: $channel)" >&2
                     fi
                 fi
-                include_acm="false"  # Only include ACM once
             fi
         fi
         
@@ -1211,11 +1248,6 @@ EOF
                         required_by=$(jq -r --arg dep "$dep" 'to_entries[] | select(.value | index($dep)) | .key' "$DEPENDENCIES_FILE" 2>/dev/null | head -1)
                         [[ -z "$required_by" ]] && required_by="transitive"
 
-                        # Look up the actual default channel from catalog
-                        local dep_channel
-                        dep_channel=$(get_default_channel "$dep" "$catalog_ver")
-                        [[ -z "$dep_channel" ]] && dep_channel="stable"
-
                         # Check if this dependency is already in certified or community operators
                         # to avoid adding it to the wrong catalog
                         if [[ "$certified_operators" =~ "$dep|" ]]; then
@@ -1223,6 +1255,19 @@ EOF
                         elif [[ "$community_operators" =~ "$dep|" ]]; then
                             log_step "Skipped dependency $dep — already in community catalog"
                         else
+                            # multicluster-engine follows the ACM channel; anything else takes the
+                            # catalog's default channel
+                            local dep_channel=""
+                            if [[ "$dep" == "multicluster-engine" ]]; then
+                                dep_channel=$(get_acm_mce_channels "$redhat_operators")
+                            fi
+                            if [[ -z "$dep_channel" ]]; then
+                                dep_channel=$(get_default_channel "$dep" "$catalog_ver")
+                            fi
+                            if [[ -z "$dep_channel" ]]; then
+                                dep_channel="stable"
+                                log_warning "No default channel for $dep in the catalog cache, trying stable"
+                            fi
                             redhat_operators+="$dep|$dep_channel "
                             log_step "Added dependency: $dep (required by $required_by, channel: $dep_channel)"
                         fi
