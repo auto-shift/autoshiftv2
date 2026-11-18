@@ -72,7 +72,7 @@ changes `spec.replicas`, the node policy sets it back on its next evaluation, an
 
 Until the node policies stop enforcing the count on autoscaled machine sets, choose one owner
 per class: do not set `machineSets.worker` on a cluster that carries `autoshift.io/worker-nodes`,
-or `machineSets.infra` on a cluster with a non-zero `autoshift.io/infra-nodes`. A fixed count
+or `machineSets.infra` on a cluster with a nonzero `autoshift.io/infra-nodes`. A fixed count
 comes from the node policy, a range from this one. Storage machine sets are never autoscaled, so
 `storage-nodes` is unaffected.
 
