@@ -35,8 +35,10 @@ helmCharts:
         #     (explicit — the list says what's ALLOWED, not where to START; default "" = let OLM pick).
         #   label mode (no config): versions = [nvidia-gpu-operator-version label]; startingCSV = that same version.
         # $vers is computed here and reused by `versions` below.
+        # fromConfigMap fails the policy when rendered-config is missing, rather than
+        # clearing a configured pin and letting the Automatic subscription upgrade.
         startingCSV: |-
-          {{hub- $cfg := (index (index (index ((lookup "v1" "ConfigMap" "${POLICY_NAMESPACE}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "nvidia-gpu-operator" | default dict) hub}}
+          {{hub- $cfg := dig "nvidia-gpu-operator" dict (fromConfigMap "${POLICY_NAMESPACE}" (printf "%s.rendered-config" .ManagedClusterName) "config" | default "{}" | fromYaml) hub}}
           {{hub- $cfgVers := (dig "versions" (list) $cfg) hub}}
           {{hub- $isCfg := (not (empty $cfgVers)) hub}}
           {{hub- $labelVer := (index .ManagedClusterLabels "autoshift.io/nvidia-gpu-operator-version" | default "") hub}}

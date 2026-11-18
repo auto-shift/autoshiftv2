@@ -12,6 +12,25 @@
 # cluster. Maps merge key by key and config wins; lists replace the base whole. It is the
 # same config.nvidia-gpu-operator key the version pin reads.
 #
+# complianceType is mustonlyhave, so this policy owns the whole spec: the live
+# ClusterPolicy is made to match the rendered spec exactly. A changed list entry
+# replaces the old one instead of being added beside it, and a field removed from
+# config is removed from the cluster (or returns to its base value) instead of
+# staying behind. musthave would merge into lists and leave removed fields in place
+# while still reporting Compliant. The operator writes only status, so owning the
+# spec does not fight it. Edit the ClusterPolicy through config, not by hand: a hand
+# edit is reverted on the next evaluation.
+#
+# The base also states the values the ClusterPolicy CRD defaults under the objects
+# it sets (cdi.default, operator.defaultRuntime and runtimeClass, toolkit.installDir),
+# so the rendered spec already matches what the API server stores. A config object
+# that brings in a new sub-object with CRD defaults of its own (devicePlugin.mps, for
+# example) should state those defaults too.
+#
+# fromConfigMap fails the policy when the rendered-config ConfigMap or its config key
+# is missing, rather than enforcing the base alone and stripping a running cluster's
+# configured settings.
+#
 # Every field here, and every field set through config, must exist in the
 # ClusterPolicy CRD that the channel in manifests/operator-install/kustomization.yaml
 # installs. The API server
@@ -25,13 +44,22 @@
 # spec.mps, spec.kataSandboxDevicePlugin. All five were set to a default or
 # sat under a disabled feature, so nothing changes behaviourally.
 object-templates-raw: |
-  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- if (empty $raw) hub}}
+  {{hub- fail (printf "ConfigMap %s.rendered-config in %s has no config key; the ClusterPolicy is not enforced without it" .ManagedClusterName .PolicyMetadata.namespace) hub}}
+  {{hub- end hub}}
+  {{hub- $cfg := ($raw | fromYaml | default dict) hub}}
   {{hub- $spec := (`
   operator:
     use_ocp_driver_toolkit: true
+    # CRD defaults, stated so mustonlyhave matches the stored object. The operator
+    # detects CRI-O from the nodes; defaultRuntime is only its fallback, and docker
+    # is what every ClusterPolicy created without the field already carries.
+    defaultRuntime: docker
+    runtimeClass: nvidia
   cdi:
     enabled: false
+    default: false
   sandboxWorkloads:
     enabled: false
     defaultWorkload: container
@@ -91,6 +119,7 @@ object-templates-raw: |
     strategy: single
   toolkit:
     enabled: true
+    installDir: /usr/local/nvidia
   validator:
     plugin:
       env: []
@@ -110,7 +139,7 @@ object-templates-raw: |
     enabled: false
   ` | fromYaml) hub}}
   {{hub- $spec = (mergeOverwrite $spec (dig "nvidia-gpu-operator" "clusterPolicy" (dict) $cfg)) hub}}
-  - complianceType: musthave
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: nvidia.com/v1
       kind: ClusterPolicy

@@ -10,7 +10,7 @@ directory is under `policies/certified/` because the Operator ships in `certifie
 |---|---|---|
 | `policy-nvidia-gpu-operator-install` | enforce | The `nvidia-gpu-operator` namespace, an OwnNamespace OperatorGroup and the `gpu-operator-certified` subscription |
 | `policy-nvidia-gpu-cluster-policy` | enforce | `ClusterPolicy` `gpu-cluster-policy`: driver, container toolkit, device plugin, DCGM, GPU feature discovery, with `config.nvidia-gpu-operator.clusterPolicy` merged over the base. Waits for the Operator |
-| `policy-nvidia-gpu-ready` | inform | The `ClusterPolicy` reports `Ready` |
+| `policy-nvidia-gpu-ready` | inform | The `ClusterPolicy` reports `Ready` with reason `Reconciled` |
 
 ## Enabling
 
@@ -42,8 +42,18 @@ nodes to manage and no error.
 
 The `ClusterPolicy` spec is read from `config.nvidia-gpu-operator.clusterPolicy`, the same key the
 version pin uses, and merged over the base in `manifests/cluster-policy/cluster-policy.yaml`. Maps
-merge key by key and the configured value wins; lists replace the base whole. A field removed from
-config returns to the base.
+merge key by key and the configured value wins; lists replace the base whole.
+
+The policy enforces the result with `mustonlyhave`, so it owns the whole `ClusterPolicy` spec. A
+changed list entry replaces the old one rather than being added beside it, and a field removed from
+config returns to its base value, or is removed from the cluster when the base does not set it. A hand
+edit to the `ClusterPolicy` is reverted on the next evaluation, so change it through config. The
+policy fails, naming the ConfigMap, when the cluster's rendered-config is missing, rather than
+enforcing the base alone.
+
+The base states the values the `ClusterPolicy` CRD defaults under the objects it sets, so that the
+rendered spec matches the stored object. When config adds a sub-object that has CRD defaults of its
+own, for example `devicePlugin.mps`, state those defaults in config too.
 
 ```yaml
 hubClusterSets:
@@ -119,6 +129,10 @@ Until the driver stack finishes, which takes about 15 minutes on a new node, the
 schedulable and reports no `nvidia.com/gpu` capacity, so GPU workloads stay `Pending` with no
 obvious cause. `policy-nvidia-gpu-ready` asserts the `ClusterPolicy` `Ready` condition, which spans
 the whole stack and names the component that is stuck.
+
+The check requires the reason `Reconciled`, not only `Ready=True`. The Operator also reports
+`Ready=True` with reason `NFDLabelsMissing` when no node has NFD labels, and `NoGPUNodes` when no node
+carries `feature.node.kubernetes.io/pci-10de.present`, and deploys nothing in either case.
 
 GPU nodes themselves come from the cluster, from MachineSets or bare-metal hosts that carry an NVIDIA
 GPU.
