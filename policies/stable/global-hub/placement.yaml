@@ -1,0 +1,23 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-global-hub
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # All three policies land on the hub whose clusterset enables Global Hub — normally the
+  # self-managed hub-of-hubs. Managed hubs opt IN to being imported separately, via
+  # global-hub-deploy-mode on their own clustersets, which manifests/managed-hubs.yaml reads
+  # off each ManagedCluster.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/global-hub'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

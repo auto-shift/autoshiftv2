@@ -122,7 +122,7 @@ Returns newline-separated error strings (empty string = no errors).
 {{- define "autoshift.validate-workload-partitioning" -}}
   {{- $path := .path -}}
   {{- $wp := .config -}}
-  {{- $validWpKeys := list "reservedCpus" "isolatedCpus" "nodeSelector" "numaTopology" "realTimeKernel" "globallyDisableIrqLoadBalancing" "hugepages" -}}
+  {{- $validWpKeys := list "performanceProfile" "reservedCpus" "isolatedCpus" "nodeSelector" "machineConfigPoolSelector" "numaTopology" "realTimeKernel" "globallyDisableIrqLoadBalancing" "hugepages" -}}
   {{- $validWpHugepagesKeys := list "defaultSize" "pages" -}}
   {{- $validWpPageKeys := list "size" "count" "node" -}}
   {{- $validNumaTopologies := list "single-numa-node" "best-effort" "restricted" -}}
@@ -131,11 +131,45 @@ Returns newline-separated error strings (empty string = no errors).
 {{ printf "%s: workloadPartitioning.%s is not a recognized field (valid: %s)" $path $key (join ", " $validWpKeys) }}
     {{- end -}}
   {{- end -}}
+  {{- /* Full mode (performanceProfile) and simple mode (the other keys) are exclusive within one
+         block. rendered-config deep-merges blocks, so a cluster may still set performanceProfile
+         under a clusterset that uses simple mode; the policy lets performanceProfile win there. */ -}}
+  {{- if hasKey $wp "performanceProfile" -}}
+    {{- $pp := index $wp "performanceProfile" -}}
+    {{- range $key := (list "reservedCpus" "isolatedCpus" "nodeSelector" "machineConfigPoolSelector" "numaTopology" "realTimeKernel" "globallyDisableIrqLoadBalancing" "hugepages") -}}
+      {{- if hasKey $wp $key }}
+{{ printf "%s: workloadPartitioning.%s cannot be combined with workloadPartitioning.performanceProfile; use one mode" $path $key }}
+      {{- end -}}
+    {{- end -}}
+    {{- if not (kindIs "map" $pp) }}
+{{ printf "%s: workloadPartitioning.performanceProfile must be a map with a spec" $path }}
+    {{- else -}}
+      {{- range $key, $_ := $pp -}}
+        {{- if eq $key "name" }}
+{{ printf "%s: workloadPartitioning.performanceProfile.name is not supported; the profile is always named workload-partitioning" $path }}
+        {{- else if not (has $key (list "spec" "annotations")) }}
+{{ printf "%s: workloadPartitioning.performanceProfile.%s is not a recognized field (valid: spec, annotations)" $path $key }}
+        {{- end -}}
+      {{- end -}}
+      {{- $ppSpec := index $pp "spec" -}}
+      {{- if not (kindIs "map" $ppSpec) }}
+{{ printf "%s: workloadPartitioning.performanceProfile.spec is required and must be a map" $path }}
+      {{- else -}}
+        {{- if not (and (dig "cpu" "reserved" "" $ppSpec) (dig "cpu" "isolated" "" $ppSpec)) }}
+{{ printf "%s: workloadPartitioning.performanceProfile.spec.cpu.reserved and .isolated are required" $path }}
+        {{- end -}}
+        {{- if not (dig "nodeSelector" dict $ppSpec) }}
+{{ printf "%s: workloadPartitioning.performanceProfile.spec.nodeSelector is required" $path }}
+        {{- end -}}
+      {{- end -}}
+    {{- end -}}
+  {{- else -}}
   {{- if and (index $wp "reservedCpus") (not (index $wp "isolatedCpus")) }}
 {{ printf "%s: workloadPartitioning.isolatedCpus is required when reservedCpus is set" $path }}
   {{- end -}}
   {{- if and (index $wp "isolatedCpus") (not (index $wp "reservedCpus")) }}
 {{ printf "%s: workloadPartitioning.reservedCpus is required when isolatedCpus is set" $path }}
+  {{- end -}}
   {{- end -}}
   {{- $wpNuma := (index $wp "numaTopology" | default "") -}}
   {{- if and (not (empty $wpNuma)) (not (has (toString $wpNuma) $validNumaTopologies)) }}
