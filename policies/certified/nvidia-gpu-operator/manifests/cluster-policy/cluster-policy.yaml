@@ -22,8 +22,8 @@
 # edit is reverted on the next evaluation.
 #
 # The base also states the values the ClusterPolicy CRD defaults under the objects
-# it sets (cdi.default, operator.defaultRuntime and runtimeClass, toolkit.installDir),
-# so the rendered spec already matches what the API server stores. A config object
+# it sets (cdi.default, operator.runtimeClass, toolkit.installDir), plus
+# operator.defaultRuntime set to crio as OpenShift documents, so the rendered spec already matches what the API server stores. A config object
 # that brings in a new sub-object with CRD defaults of its own (devicePlugin.mps, for
 # example) should state those defaults too.
 #
@@ -52,10 +52,10 @@ object-templates-raw: |
   {{hub- $spec := (`
   operator:
     use_ocp_driver_toolkit: true
-    # CRD defaults, stated so mustonlyhave matches the stored object. The operator
-    # detects CRI-O from the nodes; defaultRuntime is only its fallback, and docker
-    # is what every ClusterPolicy created without the field already carries.
-    defaultRuntime: docker
+    # OpenShift runs CRI-O, as in the OpenShift documentation's ClusterPolicy
+    # example. The operator detects the runtime from the nodes and uses this value
+    # only as its fallback. Stated, with runtimeClass, so mustonlyhave owns it.
+    defaultRuntime: crio
     runtimeClass: nvidia
   cdi:
     enabled: false
