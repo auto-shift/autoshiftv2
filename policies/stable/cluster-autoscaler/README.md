@@ -37,6 +37,10 @@ value wins.
 `resourceLimits.maxNodesTotal` is required on purpose: the policy refuses to turn on autoscaling
 without a ceiling on how far it can scale.
 
+The `ClusterAutoscaler` is enforced with `mustonlyhave`: its whole spec comes from this policy, so
+a list such as `resourceLimits.gpus` is replaced when the configuration changes, and an entry
+removed from the configuration is removed from the cluster.
+
 The `cores` and `memory` minimums matter for scale-down. The autoscaler never removes a node if
 doing so would take the cluster below them, so set them below what the smallest cluster you
 want would have, not at its current size (Red Hat solution 6573321).
@@ -58,6 +62,30 @@ with one worker machine set per zone and `minReplicas: 3` keeps at least three w
 zone.
 
 A machine set must have at least one machine when its `MachineAutoscaler` is first created.
+
+### Replica ownership with the node policies
+
+The `worker-nodes` and `infra-nodes` policies enforce `spec.replicas` on the machine sets they
+manage, and they name those machine sets `<infrastructure ID>-<role>-<zone>`, the same names the
+installer gives the default worker machine sets. A `MachineAutoscaler` on the same machine set
+changes `spec.replicas`, the node policy sets it back on its next evaluation, and the count flaps.
+
+Until the node policies stop enforcing the count on autoscaled machine sets, choose one owner
+per class: do not set `machineSets.worker` on a cluster that carries `autoshift.io/worker-nodes`,
+or `machineSets.infra` on a cluster with a non-zero `autoshift.io/infra-nodes`. A fixed count
+comes from the node policy, a range from this one. Storage machine sets are never autoscaled, so
+`storage-nodes` is unaffected.
+
+### Removing a class
+
+A class removed from `machineSets` stops getting new `MachineAutoscaler` objects, but with
+`pruneObjectBehavior: None` the existing ones stay and keep scaling their machine sets. Delete them
+by hand after removing the class, for example for `gpu`:
+
+```bash
+oc get machineautoscalers.autoscaling.openshift.io -n openshift-machine-api
+oc delete machineautoscalers.autoscaling.openshift.io <name> -n openshift-machine-api
+```
 
 ### GPU machine sets
 

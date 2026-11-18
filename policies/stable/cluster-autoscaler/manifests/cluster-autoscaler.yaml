@@ -24,9 +24,17 @@
 #   infra    machine role infra.
 #   worker   machine role worker.
 #
+# Replica ownership: the worker-nodes and infra-nodes policies enforce spec.replicas on the
+# MachineSets they manage (musthave), so a MachineAutoscaler on the same MachineSet is reset on
+# every evaluation and the count flaps. Do not set machineSets.worker on a cluster with the
+# worker-nodes label, or machineSets.infra with a non-zero infra-nodes label (see the README).
+#
 # GPU autoscaling needs two things from whatever owns the GPU MachineSet: a
 # cluster-api/accelerator label whose value matches resourceLimits.gpus[].type, and NOT
 # enforcing spec.replicas, or the owner and the autoscaler fight over the count.
+#
+# The ClusterAutoscaler is mustonlyhave: its whole spec comes from this policy, and lists such
+# as resourceLimits.gpus must be replaced, not merged with entries from an earlier config.
 object-templates-raw: |
   {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "") hub}}
   {{hub- $cfg := ($raw | fromYaml | default dict) hub}}
@@ -48,7 +56,7 @@ object-templates-raw: |
   {{hub- if not (regexMatch "^[1-9][0-9]*$" (printf "%v" (dig "maxReplicas" "" $r))) hub}}{{hub fail (printf "cluster-autoscaler: machineSets.%s.maxReplicas must be a whole number above 0" $class) hub}}{{hub- end hub}}
   {{hub- if gt (atoi (printf "%v" (dig "minReplicas" "" $r))) (atoi (printf "%v" (dig "maxReplicas" "" $r))) hub}}{{hub fail (printf "cluster-autoscaler: machineSets.%s.minReplicas is above maxReplicas" $class) hub}}{{hub- end hub}}
   {{hub- end hub}}
-  - complianceType: musthave
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: autoscaling.openshift.io/v1
       kind: ClusterAutoscaler
