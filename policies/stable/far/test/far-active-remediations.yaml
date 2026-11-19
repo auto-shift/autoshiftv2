@@ -1,0 +1,13 @@
+# Inform: NonCompliant while any FenceAgentsRemediation exists in
+# openshift-workload-availability, which means Node Health Check is remediating a node.
+# Assertion-only: signals through fail, applies no objects.
+object-templates-raw: |
+  {{- $ns := "openshift-workload-availability" }}
+  {{- $items := dig "items" (list) ((lookup "fence-agents-remediation.medik8s.io/v1alpha1" "FenceAgentsRemediation" $ns "") | default dict) }}
+  {{- if $items }}
+  {{- $names := list }}
+  {{- range $r := $items }}
+  {{- $names = append $names (dig "metadata" "name" "" $r) }}
+  {{- end }}
+  {{- fail (printf "FAR: active FenceAgentsRemediation(s) present (Node Health Check is remediating): %s" (join ", " $names)) }}
+  {{- end }}

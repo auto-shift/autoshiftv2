@@ -1,15 +1,71 @@
+# PerformanceProfile workload-partitioning, from config.workloadPartitioning. Two modes:
+#
+#   full    performanceProfile.spec (and optional annotations) is passed through as the profile spec.
+#           spec.cpu.reserved, spec.cpu.isolated and spec.nodeSelector are required.
+#   simple  reservedCpus, isolatedCpus (required) and the optional nodeSelector,
+#           machineConfigPoolSelector, numaTopology, realTimeKernel, globallyDisableIrqLoadBalancing
+#           and hugepages are assembled into a spec.
+#
+# performanceProfile wins when both are present. rendered-config deep-merges cluster, clusterset and
+# global config, so a cluster can set performanceProfile under a clusterset that uses simple mode and
+# still inherit its simple keys; they are ignored here. Within one values block, the chart's
+# validator rejects setting both.
+#
+# The profile is always named workload-partitioning, in both modes, so switching modes updates the
+# same object instead of creating a second profile that selects the same nodes. performanceProfile.name
+# is rejected.
+#
+# musthave: a field removed from config, or left out after switching modes, stays on the profile
+# until it is removed by hand. mustonlyhave is deliberately not used: every spec change re-renders
+# MachineConfigs and can reboot nodes, so a policy that kept rewriting the spec would be dangerous.
+#
+# machineConfigPoolSelector, when not set in simple mode, is derived from the node-role.kubernetes.io/
+# <role> key in nodeSelector (pools.operator.machineconfiguration.openshift.io/<role>). The default
+# nodeSelector is the master role.
+#
+# Fails, rather than rendering nothing, when rendered-config is missing, when neither mode is
+# configured, when performanceProfile has no spec or lacks the required spec fields, when it sets
+# name, or when no machineConfigPoolSelector is given and nodeSelector does not name exactly one role.
 object-templates-raw: |
-  {{hub $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) hub}}
-  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) hub}}
-  {{hub- $wp := (index $config "workloadPartitioning" | default dict) hub}}
-  {{hub- $reservedCpus := (index $wp "reservedCpus" | default "") hub}}
-  {{hub- $isolatedCpus := (index $wp "isolatedCpus" | default "") hub}}
-  {{hub- if and (not (empty $reservedCpus)) (not (empty $isolatedCpus)) hub}}
-  {{hub- $nodeSelector := (index $wp "nodeSelector" | default dict) hub}}
-  {{hub- $numaTopology := (index $wp "numaTopology" | default "") hub}}
-  {{hub- $hugepages := (index $wp "hugepages" | default dict) hub}}
-  {{hub- $realTimeKernel := (index $wp "realTimeKernel" | default "false") hub}}
-  {{hub- $disableIrqBalancing := (index $wp "globallyDisableIrqLoadBalancing" | default "false") hub}}
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- $wp := (dig "workloadPartitioning" dict ($raw | fromYaml | default dict)) hub}}
+  {{hub- $pp := (dig "performanceProfile" dict $wp) hub}}
+  {{hub- if $pp hub}}
+  {{hub- if hasKey $pp "name" hub}}{{hub fail "workload-partitioning: config.workloadPartitioning.performanceProfile.name is not supported; the profile is always named workload-partitioning" hub}}{{hub- end hub}}
+  {{hub- $ppSpec := (dig "spec" dict $pp) hub}}
+  {{hub- if not $ppSpec hub}}{{hub fail "workload-partitioning: config.workloadPartitioning.performanceProfile needs a spec" hub}}{{hub- end hub}}
+  {{hub- if not (and (dig "cpu" "reserved" "" $ppSpec) (dig "cpu" "isolated" "" $ppSpec)) hub}}{{hub fail "workload-partitioning: config.workloadPartitioning.performanceProfile.spec needs cpu.reserved and cpu.isolated" hub}}{{hub- end hub}}
+  {{hub- if not (dig "nodeSelector" dict $ppSpec) hub}}{{hub fail "workload-partitioning: config.workloadPartitioning.performanceProfile.spec needs nodeSelector" hub}}{{hub- end hub}}
+  {{hub- $ppAnnotations := (dig "annotations" dict $pp) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: performance.openshift.io/v2
+      kind: PerformanceProfile
+      metadata:
+        name: workload-partitioning
+        {{hub- if $ppAnnotations hub}}
+        annotations:
+          {{hub $ppAnnotations | toYaml | autoindent hub}}
+        {{hub- end hub}}
+      spec:
+        {{hub $ppSpec | toYaml | autoindent hub}}
+  {{hub- else hub}}
+  {{hub- $reservedCpus := (dig "reservedCpus" "" $wp) hub}}
+  {{hub- $isolatedCpus := (dig "isolatedCpus" "" $wp) hub}}
+  {{hub- if not (and $reservedCpus $isolatedCpus) hub}}{{hub fail "workload-partitioning: config.workloadPartitioning needs reservedCpus and isolatedCpus, or a performanceProfile" hub}}{{hub- end hub}}
+  {{hub- $nodeSelector := (dig "nodeSelector" dict $wp) hub}}
+  {{hub- if not $nodeSelector hub}}{{hub- $nodeSelector = (dict "node-role.kubernetes.io/master" "") hub}}{{hub- end hub}}
+  {{hub- $mcpSelector := (dig "machineConfigPoolSelector" dict $wp) hub}}
+  {{hub- if not $mcpSelector hub}}
+  {{hub- $roles := list hub}}
+  {{hub- range $k, $_ := $nodeSelector hub}}{{hub- if hasPrefix "node-role.kubernetes.io/" $k hub}}{{hub- $roles = append $roles (replace "node-role.kubernetes.io/" "" $k) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if ne (len $roles) 1 hub}}{{hub fail "workload-partitioning: set config.workloadPartitioning.machineConfigPoolSelector; it can only be derived when nodeSelector has exactly one node-role.kubernetes.io/<role> key" hub}}{{hub- end hub}}
+  {{hub- $mcpSelector = (dict (printf "pools.operator.machineconfiguration.openshift.io/%s" (index $roles 0)) "") hub}}
+  {{hub- end hub}}
+  {{hub- $numaTopology := (dig "numaTopology" "" $wp) hub}}
+  {{hub- $realTimeKernel := (printf "%v" (dig "realTimeKernel" false $wp)) hub}}
+  {{hub- $disableIrqBalancing := (printf "%v" (dig "globallyDisableIrqLoadBalancing" false $wp)) hub}}
+  {{hub- $hugepages := (dig "hugepages" dict $wp) hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: performance.openshift.io/v2
@@ -18,47 +74,37 @@ object-templates-raw: |
         name: workload-partitioning
       spec:
         cpu:
-          reserved: {{hub $reservedCpus hub}}
-          isolated: {{hub $isolatedCpus hub}}
-  {{hub- if (gt (len (keys $nodeSelector)) 0) hub}}
+          reserved: {{hub $reservedCpus | toJson hub}}
+          isolated: {{hub $isolatedCpus | toJson hub}}
         nodeSelector:
           {{hub $nodeSelector | toYaml | autoindent hub}}
-  {{hub- else hub}}
-        nodeSelector:
-          node-role.kubernetes.io/master: ''
-  {{hub- end hub}}
         machineConfigPoolSelector:
-          matchLabels:
-  {{hub- if (gt (len (keys $nodeSelector)) 0) hub}}
-            {{hub $nodeSelector | toYaml | autoindent hub}}
-  {{hub- else hub}}
-            pools.operator.machineconfiguration.openshift.io/master: ''
-  {{hub- end hub}}
-  {{hub- if not (empty $numaTopology) hub}}
+          {{hub $mcpSelector | toYaml | autoindent hub}}
+        {{hub- if $numaTopology hub}}
         numa:
-          topologyPolicy: {{hub $numaTopology hub}}
-  {{hub- end hub}}
-  {{hub- if (eq $realTimeKernel "true") hub}}
+          topologyPolicy: {{hub $numaTopology | toJson hub}}
+        {{hub- end hub}}
+        {{hub- if eq $realTimeKernel "true" hub}}
         realTimeKernel:
           enabled: true
-  {{hub- end hub}}
-        globallyDisableIrqLoadBalancing: {{hub $disableIrqBalancing hub}}
-  {{hub- if (gt (len (keys $hugepages)) 0) hub}}
-  {{hub- $defaultSize := (index $hugepages "defaultSize" | default "") hub}}
-  {{hub- $pages := (index $hugepages "pages" | default list) hub}}
+        {{hub- end hub}}
+        globallyDisableIrqLoadBalancing: {{hub eq $disableIrqBalancing "true" hub}}
+        {{hub- if $hugepages hub}}
+        {{hub- $defaultSize := (dig "defaultSize" "" $hugepages) hub}}
+        {{hub- $pages := (dig "pages" (list) $hugepages) hub}}
         hugepages:
-  {{hub- if not (empty $defaultSize) hub}}
-          defaultHugepagesSize: {{hub $defaultSize hub}}
-  {{hub- end hub}}
-  {{hub- if (gt (len $pages) 0) hub}}
+          {{hub- if $defaultSize hub}}
+          defaultHugepagesSize: {{hub $defaultSize | toJson hub}}
+          {{hub- end hub}}
+          {{hub- if $pages hub}}
           pages:
-  {{hub- range $_, $page := $pages hub}}
-            - size: {{hub index $page "size" hub}}
-              count: {{hub index $page "count" hub}}
-  {{hub- if (index $page "node" | default "") hub}}
-              node: {{hub index $page "node" hub}}
-  {{hub- end hub}}
-  {{hub- end hub}}
-  {{hub- end hub}}
-  {{hub- end hub}}
+            {{hub- range $page := $pages hub}}
+            - size: {{hub (dig "size" "" $page) | toJson hub}}
+              count: {{hub (dig "count" 0 $page) hub}}
+              {{hub- if hasKey $page "node" hub}}
+              node: {{hub (dig "node" "" $page) hub}}
+              {{hub- end hub}}
+            {{hub- end hub}}
+          {{hub- end hub}}
+        {{hub- end hub}}
   {{hub- end hub}}
