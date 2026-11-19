@@ -1,0 +1,45 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: proxy
+# Multiple policies share one placement, so the binding must be named.
+placementBindingDefaults:
+  name: binding-policy-proxy
+# Day-2 OpenShift proxy can be configured during install and enforced as a day 2 operation
+
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1. Proxy (enforce, unconditional) — cluster proxy will be configured with specified httpProxy,
+  #    httpsProxy, noProxy variables, and a trustedCA config map
+  - name: policy-proxy
+    dependencies:
+      - name: policy-check-proxy-trusted-ca
+        compliance: Compliant
+    manifests:
+      - path: manifests/proxy.yaml
+
+  # 2. Resource exists (inform) — Compliant if the cluster has the specified CA configmap.
+  - name: policy-check-proxy-trusted-ca
+    remediationAction: inform
+    manifests:
+      - path: test/check-proxy-trusted-ca.yaml
+    customMessage:
+      noncompliant: >
+        Cluster does not have required trustedCA config map. 
+        proxy cannot be applied until a CA in the correctly
+        named config map is applied to cluster.
