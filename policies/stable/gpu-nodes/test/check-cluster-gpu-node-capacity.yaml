@@ -10,10 +10,32 @@
 # the node. The placement selects only clusters with a non-zero autoshift.io/gpu-nodes, so a cluster
 # with no GPU node yet is still coming up, and the policy fails rather than rendering an empty check
 # that would report Compliant.
+#
+# Nodes on their way out are skipped: a node with a deletionTimestamp, a node the cluster autoscaler
+# has tainted ToBeDeletedByClusterAutoscaler, or a node whose Machine is being deleted. During a
+# normal autoscaler scale-down such a node goes NotReady while it drains, and checking it would
+# report NonCompliant for a cluster doing exactly what it is configured to do. If every GPU node is
+# leaving, the policy fails rather than rendering an empty check.
+
 object-templates-raw: |
   {{- $gpu_nodes := (lookup "v1" "Node" "" "" "node-role.kubernetes.io/gpu").items }}
   {{- if eq 0 (len $gpu_nodes) }}{{ fail "no node carries node-role.kubernetes.io/gpu yet; the GPU MachineSet has not produced a node" }}{{- end }}
+  {{- $active := list }}
   {{- range $gpu_nodes }}
+    {{- $leaving := not (empty (dig "metadata" "deletionTimestamp" "" .)) }}
+    {{- range (dig "spec" "taints" (list) .) }}
+      {{- if eq (dig "key" "" .) "ToBeDeletedByClusterAutoscaler" }}{{- $leaving = true }}{{- end }}
+    {{- end }}
+    {{- $machineRef := dig "metadata" "annotations" "machine.openshift.io/machine" "" . }}
+    {{- if and (not $leaving) (contains "/" $machineRef) }}
+      {{- $parts := splitList "/" $machineRef }}
+      {{- $machine := lookup "machine.openshift.io/v1beta1" "Machine" (index $parts 0) (index $parts 1) }}
+      {{- if not (empty (dig "metadata" "deletionTimestamp" "" $machine)) }}{{- $leaving = true }}{{- end }}
+    {{- end }}
+    {{- if not $leaving }}{{- $active = append $active . }}{{- end }}
+  {{- end }}
+  {{- if eq 0 (len $active) }}{{ fail "every node with node-role.kubernetes.io/gpu is being removed; no GPU node is left to serve" }}{{- end }}
+  {{- range $active }}
     {{- if not (hasKey (.status.allocatable | default dict) "nvidia.com/gpu") }}
       {{- fail (printf "GPU node %s reports no nvidia.com/gpu in status.allocatable; the NVIDIA driver stack has not finished on it" .metadata.name) }}
     {{- end }}

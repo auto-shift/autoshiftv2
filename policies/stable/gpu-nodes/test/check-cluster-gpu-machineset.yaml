@@ -23,6 +23,15 @@ object-templates-raw: |
   {{- end }}
   {{- if eq 0 (len $zones) }}{{ fail "no autoshift.io/gpu-nodes-zone-N label and no worker MachineSet to take the zone from" }}{{- end }}
   {{- range $zone := $zones }}
+  {{- /* Once a MachineAutoscaler owns the MachineSet (it marks it with the
+         autoscaling.openshift.io/machineautoscaler annotation), the autoscaler sets the replica
+         count and the label is only the starting size. The check then asks whether every machine
+         the autoscaler wants is ready, rather than holding it to the label. */ -}}
+  {{- $live := (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" (printf "%s-%s-%s" $infrastructure_id $machineset_role $zone)) }}
+  {{- $target := $want }}
+  {{- if hasKey (dig "metadata" "annotations" dict $live) "autoscaling.openshift.io/machineautoscaler" }}
+    {{- $target = (printf "%v" (dig "spec" "replicas" $want $live)) }}
+  {{- end }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: machine.openshift.io/v1beta1
@@ -33,5 +42,5 @@ object-templates-raw: |
         name: {{ $infrastructure_id }}-{{ $machineset_role }}-{{ $zone }}
         namespace: openshift-machine-api
       status:
-        readyReplicas: {{ $want }}
+        readyReplicas: {{ $target }}
   {{- end }}

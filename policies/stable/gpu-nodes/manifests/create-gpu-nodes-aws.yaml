@@ -35,6 +35,22 @@ object-templates-raw: |
   {{- end }}
   {{- $base := index $workers_by_zone $zone }}
   {{- $provider := $base.spec.template.spec.providerSpec.value }}
+  {{- $msname := printf "%s-%s-%s" $infrastructure_id $machineset_role $zone }}
+  {{- $itype := "{{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes-instance-type" hub}}" | default $provider.instanceType }}
+  {{- /* cluster-api/accelerator tells the cluster autoscaler what GPU this MachineSet adds; its
+         value must match a ClusterAutoscaler resourceLimits.gpus[].type. Derived from the
+         instance family, or set with autoshift.io/gpu-nodes-accelerator. An unknown family is
+         used as is, which still gives the autoscaler a stable name to match. */ -}}
+  {{- $families := dict "g4dn" "nvidia-t4" "g5" "nvidia-a10g" "g6" "nvidia-l4" "g6e" "nvidia-l40s" "p4d" "nvidia-a100" "p4de" "nvidia-a100" "p5" "nvidia-h100" "p5e" "nvidia-h200" "p5en" "nvidia-h200" }}
+  {{- $family := index (splitList "." $itype) 0 }}
+  {{- $accelerator := "{{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes-accelerator" hub}}" | default (index $families $family | default $family) }}
+  {{- /* Once a MachineAutoscaler targets this MachineSet, the autoscaler owns the replica count.
+         Setting it here as well would have the two overwrite each other, so replicas is only
+         written while nothing autoscales the set. The MachineAutoscaler controller marks the
+         MachineSet it manages with the autoscaling.openshift.io/machineautoscaler annotation;
+         reading that needs only the MachineSet API, not the autoscaling CRDs. */ -}}
+  {{- $live := (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" $msname) }}
+  {{- $autoscaled := hasKey (dig "metadata" "annotations" dict $live) "autoscaling.openshift.io/machineautoscaler" }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: machine.openshift.io/v1beta1
@@ -45,7 +61,9 @@ object-templates-raw: |
         name: {{ $infrastructure_id }}-{{ $machineset_role }}-{{ $zone }}
         namespace: openshift-machine-api
       spec:
+        {{- if not $autoscaled }}
         replicas: {{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes" | default "0" hub}}
+        {{- end }}
         selector:
           matchLabels:
             machine.openshift.io/cluster-api-cluster: {{ $infrastructure_id }}
@@ -62,6 +80,7 @@ object-templates-raw: |
               labels:
                 node-role.kubernetes.io/gpu: ''
                 node-role.kubernetes.io/worker: ''
+                cluster-api/accelerator: {{ $accelerator }}
             # Taint so that only pods explicitly tolerating a GPU land on an expensive instance.
             # The NVIDIA GPU operator's own operands tolerate this key, as do the RHOAI serving
             # runtimes, so tainting does not stop the driver stack installing.
@@ -82,7 +101,7 @@ object-templates-raw: |
                 placement:
                   availabilityZone: {{ $zone }}
                   region: {{ "{{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes-region" hub}}" | default $provider.placement.region }}
-                instanceType: {{ "{{hub index .ManagedClusterLabels "autoshift.io/gpu-nodes-instance-type" hub}}" | default $provider.instanceType }}
+                instanceType: {{ $itype }}
                 {{- if eq $spot "true" }}
                 # An empty spotMarketOptions means "bid up to the on-demand price", which is the
                 # documented recommendation. Note there is no fallback to on-demand: if spot
