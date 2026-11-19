@@ -78,7 +78,7 @@ Machines keep the node labels they were created with. A GPU node that existed be
 set `cluster-api/accelerator` has no such label until it is replaced or labeled by hand:
 `oc label node <node> cluster-api/accelerator=<type>`.
 
-Observed on OpenShift 4.22.18 with a `MachineAutoscaler` of 1 to 2 on the GPU MachineSet. On resume
+Observed on Red Hat OpenShift Container Platform 4.22.18 with a `MachineAutoscaler` of 1 to 2 on the GPU MachineSet. On resume
 from a stopped state, EC2 refused to start the existing `g6.xlarge` for lack of capacity, so its
 node stayed NotReady and the model pod went Pending. The autoscaler scaled the MachineSet from 1 to 2,
 the new node took the pod, and once the original node returned the autoscaler scaled back to 1.
