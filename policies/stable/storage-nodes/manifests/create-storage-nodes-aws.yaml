@@ -20,6 +20,17 @@ object-templates-raw: |
     {{- fail (printf "no worker MachineSet in zone %s to copy the subnet and security groups from, so the storage MachineSet for that zone cannot be built; use a zone that has workers" $zone) }}
   {{- end }}
   {{- $zone_provider := (index $workers_by_zone $zone).spec.template.spec.providerSpec.value }}
+  {{- /* musthave merges lists and never removes entries, so a MachineSet created with a different
+         subnet or security groups (by an older version of this policy, or by hand) would keep the old
+         entries beside the worker's and still report Compliant. Fail instead, naming the MachineSet. */ -}}
+  {{- $ms_name := printf "%s-%s-%s" $infrastructure_id $machineset_role $zone }}
+  {{- $existing := lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" $ms_name }}
+  {{- if $existing }}
+    {{- $live := $existing.spec.template.spec.providerSpec.value }}
+    {{- if or (ne ($live.subnet | toJson) ($zone_provider.subnet | toJson)) (ne ($live.securityGroups | toJson) ($zone_provider.securityGroups | toJson)) }}
+      {{- fail (printf "MachineSet %s has a subnet or security groups that differ from the worker MachineSet in zone %s, and this policy cannot remove list entries. Set its providerSpec subnet and securityGroups to the worker's, or delete the MachineSet (which replaces its machines) so the policy recreates it" $ms_name $zone) }}
+    {{- end }}
+  {{- end }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: machine.openshift.io/v1beta1
