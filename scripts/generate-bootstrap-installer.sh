@@ -76,7 +76,7 @@ helm upgrade --install advanced-cluster-management ${OCI_BOOTSTRAP_REPO}/advance
     ${CLI_IMAGE:+--set image="${CLI_IMAGE}"} \
     --create-namespace \
     --wait \
-    --timeout 15m
+    --timeout 20m
 
 log "✓ Advanced Cluster Management installed"
 echo ""
@@ -461,7 +461,7 @@ GUIDE_VERSION
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
   --create-namespace \
   --wait \
-  --timeout 15m
+  --timeout 20m
 
 # Verify installation (may take 10+ minutes)
 oc get multiclusterhub -n open-cluster-management

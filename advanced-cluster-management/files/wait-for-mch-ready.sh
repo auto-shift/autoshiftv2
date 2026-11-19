@@ -44,15 +44,26 @@ crd_exists() {
   oc get crd "$CRD" >/dev/null 2>&1
 }
 
+# The API server routes admission webhooks through the core Endpoints object, which the endpoints
+# controller fills after the EndpointSlice. Require a ready address in both, so the hub is not
+# created in the window where the EndpointSlice is ready and Endpoints is not yet.
 webhook_has_ready_endpoint() {
   oc get endpointslices -n "$NAMESPACE" -l "kubernetes.io/service-name=${WEBHOOK_SERVICE}" \
     -o jsonpath='{range .items[*].endpoints[*]}{.conditions.ready}{"\n"}{end}' 2>/dev/null \
-    | grep -qx true
+    | grep -qx true || return 1
+  [ -n "$(oc get endpoints "$WEBHOOK_SERVICE" -n "$NAMESPACE" \
+    -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null)" ]
 }
 
 wait_for "CRD ${CRD}" crd_exists || exit 1
 wait_for "a ready endpoint on Service ${NAMESPACE}/${WEBHOOK_SERVICE}" webhook_has_ready_endpoint || {
   echo "The ACM operator is installed but its validating webhook is not serving. Check the" >&2
   echo "multiclusterhub-operator pods in ${NAMESPACE}." >&2
+  echo "The MultiClusterHub is a post-install hook, so a later helm upgrade will not create it." >&2
+  echo "Once the webhook serves, create it without touching an existing hub:" >&2
+  echo "  helm template advanced-cluster-management <chart> --show-only templates/acm-mch.yaml | oc apply -f -" >&2
   exit 1
 }
+
+# Let the API server's view of the endpoint catch up before Helm creates the hub.
+sleep "$POLL_SECONDS"
