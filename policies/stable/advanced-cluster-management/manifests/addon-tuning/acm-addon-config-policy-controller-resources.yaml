@@ -1,14 +1,18 @@
-apiVersion: addon.open-cluster-management.io/v1alpha1
-kind: AddOnDeploymentConfig
-metadata:
-  name: config-policy-controller-tuning
-  namespace: open-cluster-management
-spec:
-  resourceRequirements:
-  - containerID: deployments:config-policy-controller:config-policy-controller
-    resources:
-      requests:
-        memory: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-mem-request" | default "256Mi" hub}}'
-        cpu: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-cpu-request" | default "150m" hub}}'
-      limits:
-        memory: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-mem-limit" | default "1Gi" hub}}'
+object-templates-raw: |
+  {{- /* AddOnDeploymentConfig for the config-policy-controller addon. musthave would append a second
+         resourceRequirements entry for the same containerID when the live values differ, which the
+         API rejects. Copy the live spec, replace only resourceRequirements, and enforce mustonlyhave,
+         so fields set by others (agentInstallNamespace) are kept. */}}
+  {{- $adc := ((lookup "addon.open-cluster-management.io/v1alpha1" "AddOnDeploymentConfig" "open-cluster-management" "config-policy-controller-tuning") | default dict) }}
+  {{- $spec := (dig "spec" dict $adc) }}
+  {{- $req := dict "memory" "{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-mem-request" | default "256Mi" hub}}" "cpu" "{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-cpu-request" | default "150m" hub}}" }}
+  {{- $lim := dict "memory" "{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-mem-limit" | default "1Gi" hub}}" }}
+  {{- $_ := set $spec "resourceRequirements" (list (dict "containerID" "deployments:config-policy-controller:config-policy-controller" "resources" (dict "requests" $req "limits" $lim))) }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: addon.open-cluster-management.io/v1alpha1
+      kind: AddOnDeploymentConfig
+      metadata:
+        name: config-policy-controller-tuning
+        namespace: open-cluster-management
+      spec: {{ $spec | toRawJson }}

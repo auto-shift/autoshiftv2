@@ -1,14 +1,18 @@
-apiVersion: addon.open-cluster-management.io/v1alpha1
-kind: AddOnDeploymentConfig
-metadata:
-  name: governance-policy-framework-tuning
-  namespace: open-cluster-management
-spec:
-  resourceRequirements:
-  - containerID: deployments:governance-policy-framework:governance-policy-framework-addon
-    resources:
-      requests:
-        memory: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-mem-request" | default "256Mi" hub}}'
-        cpu: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-cpu-request" | default "100m" hub}}'
-      limits:
-        memory: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-mem-limit" | default "1Gi" hub}}'
+object-templates-raw: |
+  {{- /* AddOnDeploymentConfig for the governance-policy-framework addon. musthave would append a second
+         resourceRequirements entry for the same containerID when the live values differ, which the
+         API rejects. Copy the live spec, replace only resourceRequirements, and enforce mustonlyhave,
+         so fields set by others (agentInstallNamespace) are kept. */}}
+  {{- $adc := ((lookup "addon.open-cluster-management.io/v1alpha1" "AddOnDeploymentConfig" "open-cluster-management" "governance-policy-framework-tuning") | default dict) }}
+  {{- $spec := (dig "spec" dict $adc) }}
+  {{- $req := dict "memory" "{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-mem-request" | default "256Mi" hub}}" "cpu" "{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-cpu-request" | default "100m" hub}}" }}
+  {{- $lim := dict "memory" "{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-mem-limit" | default "1Gi" hub}}" }}
+  {{- $_ := set $spec "resourceRequirements" (list (dict "containerID" "deployments:governance-policy-framework:governance-policy-framework-addon" "resources" (dict "requests" $req "limits" $lim))) }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: addon.open-cluster-management.io/v1alpha1
+      kind: AddOnDeploymentConfig
+      metadata:
+        name: governance-policy-framework-tuning
+        namespace: open-cluster-management
+      spec: {{ $spec | toRawJson }}
