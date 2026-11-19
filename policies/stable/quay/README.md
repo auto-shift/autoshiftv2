@@ -476,7 +476,7 @@ Day 2 failures that otherwise go unnoticed:
 |---|---|---|---|
 | `QuayGarbageCollectionStalled` | A namespace or repository garbage collection queue has held items for the threshold | `garbageCollectionStalledFor` | `6h` |
 | `QuayMirrorNotSynced` | Repositories configured for repository or organization mirroring have stayed unsynced for the threshold | `mirrorUnsyncedFor` | `2h` |
-| `QuaySecurityScanStalled` | Images were pushed within the threshold and none were scanned. An idle registry does not fire it. Set at least `15m`, the time the alert waits before firing | `scanStalledFor` | `1h` |
+| `QuaySecurityScanStalled` | Images were pushed within the threshold and none were scanned. An idle registry does not fire it. Set more than `15m`, the time the alert waits before firing, because at `15m` a single push leaves the window as the wait ends | `scanStalledFor` | `1h` |
 
 Each threshold is a Prometheus duration under `config.quay.alerts`, and `severity` sets the label on
 all three:

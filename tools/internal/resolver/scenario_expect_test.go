@@ -256,9 +256,10 @@ func loadObjectDir(dir, sub string) ([]expectedObject, error) {
 // subsetMismatches compares a partial expected value with a rendered one, the way an ACM musthave
 // object template compares with a live object, and returns every difference. Maps match by key and
 // lists of objects by any entry that contains the expected one; scalars must be equal, including
-// type. Two additions for tests: a null expected value asserts the key is absent, and an expected
-// map compared with a string parses the string as YAML, so an embedded config file such as a
-// Secret's config.yaml can be checked by key.
+// type. Two additions for tests: a null expected value asserts the key is absent, and a rendered
+// null does not count as absent because musthave writes it over the live value. An expected map
+// compared with a string parses the string as YAML, so an embedded config file such as a Secret's
+// config.yaml can be checked by key.
 func subsetMismatches(want, got any, path string) []string {
 	switch w := want.(type) {
 	case map[string]any:
@@ -280,7 +281,7 @@ func subsetMismatches(want, got any, path string) []string {
 			}
 			gv, has := g[k]
 			if w[k] == nil {
-				if has && gv != nil {
+				if has {
 					out = append(out, fmt.Sprintf("%s: expected absent, found %s", kp, brief(gv)))
 				}
 				continue
@@ -507,6 +508,7 @@ func TestSubsetMismatches(t *testing.T) {
 kind: QuayRegistry
 spec:
   flag: false
+  cleared: null
   components:
     - {kind: postgres, managed: false}
     - {kind: redis, managed: true, overrides: {replicas: 2}}
@@ -526,6 +528,7 @@ data:
 		{"empty map means exists", "spec: {components: [{kind: redis, overrides: {}}]}", true},
 		{"null means absent", "spec: {missing: null}", true},
 		{"null on a present key", "spec: {flag: null}", false},
+		{"null on a key rendered null", "spec: {cleared: null}", false},
 		{"missing key", "spec: {other: 1}", false},
 		{"embedded YAML by key", "data: {config.yaml: {DB_URI: postgresql://db}}", true},
 		{"embedded YAML key differs", "data: {config.yaml: {DB_URI: postgresql://other}}", false},

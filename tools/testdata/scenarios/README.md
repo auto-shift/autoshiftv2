@@ -45,7 +45,9 @@ scenarios/<name>/
 6. Each object in `expected/` is compared with the objects the placed policies would apply, and no
    object in `absent/` may be among them.
 7. In each chart an expected object came from, a placed `ConfigurationPolicy` that applies nothing
-   fails. It would report Compliant while enforcing nothing. There is no allowlist.
+   fails. It would report Compliant while enforcing nothing. There is no allowlist. The one
+   exception is a policy whose manifest only calls `fail` and holds no `objectDefinition`: it
+   renders nothing when its checks pass, so empty is its success state.
 
 Scenarios resolve against the hub profile. To model a managed cluster, set `self-managed: 'false'`
 in the scenario's labels.
