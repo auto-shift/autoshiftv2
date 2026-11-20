@@ -190,19 +190,26 @@ object-templates-raw: |
   {{- $alreadyInstalled := (index ($existingCD.spec | default dict) "installed" | default false) }}
       {{- $parts := (index $ci "diskPartitions" | default dict) }}
       {{- $partList := (index $parts "partitions" | default list) }}
-      {{- if $partList }}
-  {{- /* Day 1 disk partitioning, for the partition-for-var-log* rules. Hive injects extra install
-         manifests through provisioning.manifestsConfigMapRef, which is this cluster's equivalent of
-         the SiteConfig extraManifestsRefs used on bare metal. On a cloud instance the install disk
-         is usually an NVMe device, so set diskPartitions.device to match rather than assuming sda. */}}
-  - complianceType: musthave
+      {{- $extraManifests := (index $ci "extraManifests" | default dict) }}
+  {{- /* provisioning.manifestsConfigMapRef is immutable once the ClusterDeployment exists, so an
+         installed cluster keeps the ConfigMap name it was created with. */}}
+      {{- $manifestsCM := (dig "spec" "provisioning" "manifestsConfigMapRef" "name" "autoshift-install-manifests" $existingCD) }}
+      {{- if or $partList $extraManifests }}
+  {{- /* Install-time manifests: the Day 1 disk partitioning for the partition-for-var-log* rules,
+         and the extraManifests from config. Hive takes extra install manifests from one ConfigMap,
+         provisioning.manifestsConfigMapRef, which is this cluster's equivalent of the SiteConfig
+         extraManifestsRefs used on bare metal, so both share it. mustonlyhave, so a manifest
+         removed from config also leaves the ConfigMap. On a cloud instance the install disk is
+         usually an NVMe device, so set diskPartitions.device to match rather than assuming sda. */}}
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: v1
       kind: ConfigMap
       metadata:
-        name: autoshift-partitions-config
+        name: {{ $manifestsCM }}
         namespace: {{ $clusterName }}
       data:
+      {{- if $partList }}
       {{- range $_, $role := (index $parts "roles" | default (list "master" "worker")) }}
         autoshift-partitions-{{ $role }}.yaml: |
           apiVersion: machineconfiguration.openshift.io/v1
@@ -263,6 +270,11 @@ object-templates-raw: |
                 {{- end }}
       {{- end }}
       {{- end }}
+      {{- range $emKey, $emObj := $extraManifests }}
+        {{ $emKey }}.yaml: |
+          {{ $emObj | toYaml | autoindent }}
+      {{- end }}
+      {{- end }}
 
   - complianceType: musthave
     objectDefinition:
@@ -289,9 +301,9 @@ object-templates-raw: |
               name: {{ $clusterName }}-aws-creds
             region: {{ $region }}
         provisioning:
-        {{- if $partList }}
+        {{- if or $partList $extraManifests }}
           manifestsConfigMapRef:
-            name: autoshift-partitions-config
+            name: {{ $manifestsCM }}
         {{- end }}
           installConfigSecretRef:
             name: {{ $clusterName }}-install-config

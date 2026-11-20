@@ -1,0 +1,154 @@
+# ==============================================================================
+# Bare Metal Cluster Install Example: br-ex on an OVS bond (balance-slb)
+# ==============================================================================
+# Same as _example-cluster-install-baremetal.yaml, but the cluster network runs
+# on a custom br-ex bridge over an Open vSwitch bond instead of a kernel bond.
+# This is the balance-slb layout from the OpenShift networking documentation:
+# br-ex patched to an auxiliary br-phy bridge that owns the bond. balance-slb
+# load balances virtual machine traffic across the bond ports without any
+# negotiation with the switch.
+# https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/advanced_networking/network-bonding-considerations
+#
+# networking.brEx generates everything:
+#   - Install: each host's NMStateConfig brings up the bond ports, with the
+#     host address on the first port, because br-ex does not exist yet.
+#   - First boot: a MachineConfig per role (10-br-ex-master, 10-br-ex-worker)
+#     writes each host's nmstate to /etc/nmstate/openshift/<short hostname>.yml,
+#     and the node builds br-ex, br-phy and the bond from it.
+#
+# Install time only. A host added after installation needs its own file added to
+# the MachineConfig on the cluster.
+#
+# Prerequisites, secrets and the rest of the clusterInstall settings are the
+# same as _example-cluster-install-baremetal.yaml and docs/cluster-install.md.
+# ==============================================================================
+
+clusters:
+  my-ovs-bond-cluster:
+    config:
+      clusterSet: managed
+
+      # =====================================================================
+      # Networking
+      # =====================================================================
+      networking:
+        clusterNetwork:
+          cidr: 10.128.0.0/14
+          hostPrefix: 23
+        machineNetwork:
+          cidr: '192.168.12.0/24'
+        serviceNetwork:
+          - 172.30.0.0/16
+
+        # Custom br-ex on an OVS bond. Per-host addresses live under
+        # hosts.<name>.networking.brEx. Do not list the bond ports under
+        # networking.interfaces, and do not route through br-ex in
+        # networking.routes: gateway is the default route on br-ex.
+        brEx:
+          mode: 'balance-slb'              # required: 'balance-slb' or 'active-backup'
+          ports:                           # bond ports, at least two; a host can override
+            - 'enp1s0'
+            - 'enp7s0'
+          mtu: 1500                        # optional: set on br-ex and every port; unset keeps the NIC's own
+          ipv4: 'static'                   # required: 'static' or 'dhcp'
+          gateway: '192.168.12.1'          # required for static
+          bondOtherConfig:                 # optional OVS other_config on the bond
+            bond-rebalance-interval: '0'
+
+        # Written into br-ex's nmstate as well as the install network.
+        dns:
+          servers:
+            - '192.168.12.53'
+
+      # =====================================================================
+      # Hosts
+      # =====================================================================
+      hosts:
+        ctrl-0:
+          role: 'master'
+          bmcIP: '192.168.1.20'
+          bmcPrefix: 'redfish-virtualmedia'
+          bootMACAddress: 'aa:bb:cc:dd:ef:01'
+          interfaces:                      # hardware interfaces for NMStateConfig
+            - macAddress: 'aa:bb:cc:dd:ef:01'
+              name: 'enp1s0'
+            - macAddress: 'aa:bb:cc:dd:ef:02'
+              name: 'enp7s0'
+          networking:
+            brEx:
+              # ports:                     # optional per-host override
+              #   - 'eno1'
+              #   - 'eno2'
+              ipv4:
+                addresses:
+                  - ip: '192.168.12.120'
+                    prefixLength: 24
+        ctrl-1:
+          role: 'master'
+          bmcIP: '192.168.1.21'
+          bmcPrefix: 'redfish-virtualmedia'
+          bootMACAddress: 'aa:bb:cc:dd:ef:11'
+          interfaces:
+            - macAddress: 'aa:bb:cc:dd:ef:11'
+              name: 'enp1s0'
+            - macAddress: 'aa:bb:cc:dd:ef:12'
+              name: 'enp7s0'
+          networking:
+            brEx:
+              ipv4:
+                addresses:
+                  - ip: '192.168.12.121'
+                    prefixLength: 24
+        ctrl-2:
+          role: 'master'
+          bmcIP: '192.168.1.22'
+          bmcPrefix: 'redfish-virtualmedia'
+          bootMACAddress: 'aa:bb:cc:dd:ef:21'
+          interfaces:
+            - macAddress: 'aa:bb:cc:dd:ef:21'
+              name: 'enp1s0'
+            - macAddress: 'aa:bb:cc:dd:ef:22'
+              name: 'enp7s0'
+          networking:
+            brEx:
+              ipv4:
+                addresses:
+                  - ip: '192.168.12.122'
+                    prefixLength: 24
+        compute-0:
+          role: 'worker'
+          bmcIP: '192.168.1.23'
+          bmcPrefix: 'redfish-virtualmedia'
+          bootMACAddress: 'aa:bb:cc:dd:ef:31'
+          interfaces:
+            - macAddress: 'aa:bb:cc:dd:ef:31'
+              name: 'enp1s0'
+            - macAddress: 'aa:bb:cc:dd:ef:32'
+              name: 'enp7s0'
+          networking:
+            brEx:
+              ipv4:
+                addresses:
+                  - ip: '192.168.12.123'
+                    prefixLength: 24
+
+      # =====================================================================
+      # Cluster Install
+      # =====================================================================
+      clusterInstall:
+        createCluster: 'true'
+        platform: 'baremetal'
+        baseDomain: 'example.com'
+        openshiftVersion: '4.22.8'
+        cpuArch: 'x86_64'
+        openshiftChannel: 'stable'
+        controlPlaneAgents: 3
+        apiVip: '192.168.12.5'
+        ingressVip: '192.168.12.6'
+        sshPublicKey: 'ssh-rsa AAAAB3...'
+        pullSecretRef: 'default-pull-secret'
+        bmcCredentialRef: 'default-bmc-cred'
+        bmcEndpoint: '/redfish/v1/Systems/1'
+        secretSourceNamespace: 'cluster-install-secrets'
+        # ntpSources:                     # optional NTP servers
+        #   - '192.168.12.53'

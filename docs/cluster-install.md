@@ -136,6 +136,64 @@ networking:
 
 See `policies/stable/nmstate/README.md` for the full interface config reference.
 
+#### br-ex on an OVS bond
+
+On bare metal, `networking.brEx` runs the cluster network on a custom `br-ex` bridge over an
+Open vSwitch bond, the `balance-slb` layout in
+[Network bonding considerations](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/advanced_networking/network-bonding-considerations):
+`br-ex` patched to an auxiliary `br-phy` bridge that owns the bond. OpenShift supports two OVS bond
+modes, `balance-slb` and `active-backup`; for LACP, use a kernel bond under `networking.interfaces`. `balance-slb` balances virtual machine
+traffic across the bond ports with no negotiation with the switch. The full example is
+`autoshift/values/clusters/_example-cluster-install-baremetal-ovs-bond.yaml`.
+
+```yaml
+networking:
+  brEx:
+    mode: 'balance-slb'          # required: 'balance-slb' or 'active-backup'
+    ports:                       # required: at least two bond ports
+      - 'enp1s0'
+      - 'enp7s0'
+    mtu: 1500                    # optional: unset keeps the interface MTU
+    ipv4: 'static'               # required: 'static' or 'dhcp'
+    gateway: '192.168.12.1'      # required for static: the default route on br-ex
+    bondOtherConfig:             # optional: OVS other_config on the bond
+      bond-rebalance-interval: '0'
+  dns:
+    servers:
+      - '192.168.12.53'
+hosts:
+  ctrl-0:
+    networking:
+      brEx:
+        # ports: [...]           # optional per-host override
+        ipv4:
+          addresses:
+            - ip: '192.168.12.120'
+              prefixLength: 24
+```
+
+AutoShift generates two things from it:
+
+- **Install network.** `br-ex` does not exist until the installed node first boots, so each host's
+  `NMStateConfig` brings up the bond ports directly. The first port carries the host address and the
+  default route, and the others come up with no address.
+- **`br-ex` itself.** One `MachineConfig` per role, `10-br-ex-master` and `10-br-ex-worker`, holds a
+  file per host at `/etc/nmstate/openshift/<short hostname>.yml`. On first boot each node applies its
+  own file and builds `br-ex`, `br-phy`, the patch ports and the bond. The machine configs travel in
+  the `autoshift-extra-manifests` ConfigMap, under keys starting with `autoshift-br-ex-`.
+
+`networking.dns` goes into both. Nothing else in `networking` reaches the `br-ex` file, so:
+
+- do not list a bond port under `networking.interfaces`
+- do not route through `br-ex` in `networking.routes`; `gateway` is the default route
+
+The Helm chart rejects a configuration that breaks either rule, has fewer than two ports, or uses
+`static` without a `gateway` or without addresses on every host.
+
+This is install-time only. A host added after installation needs its own file added to the
+`MachineConfig` on the cluster. To attach virtual machines to `br-ex` through a localnet, use
+`networking.ovnMappings` from the nmstate policy after installation.
+
 ### hosts
 
 Per-host hardware and networking configuration. Each key is the short hostname (siteconfig constructs the FQDN as `{key}.{clusterName}.{baseDomain}`).
@@ -302,6 +360,76 @@ clusterInstall:
     - certPolicyController
     - policyController
 ```
+
+### Extra install manifests
+
+`clusterInstall.extraManifests` adds your own manifests to the installation, applied before the
+first boot. Use it for a `MachineConfig` that must be in place from the start, such as NTP servers,
+kernel arguments or a systemd unit. The nodes then do not reboot to apply it after the installation.
+It works on every platform.
+
+The value is a map from a file name to a complete Kubernetes object. Each entry becomes
+`<key>.yaml` in an install ConfigMap. This example is the chrony configuration from
+[Customizing nodes](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/installation_configuration/installing-customizing)
+in the OpenShift documentation, which sets the NTP servers for compute nodes:
+
+```yaml
+clusterInstall:
+  extraManifests:
+    99-worker-chrony:
+      apiVersion: 'machineconfiguration.openshift.io/v1'
+      kind: 'MachineConfig'
+      metadata:
+        name: '99-worker-chrony'
+        labels:
+          machineconfiguration.openshift.io/role: 'worker'
+      spec:
+        config:
+          ignition:
+            version: '3.2.0'
+          storage:
+            files:
+              - path: '/etc/chrony.conf'
+                mode: 420
+                overwrite: true
+                contents:
+                  source: 'data:text/plain;charset=utf-8;base64,cG9vbCAwLnJoZWwucG9vbC5udHAub3JnIGlidXJzdApkcmlmdGZpbGUgL3Zhci9saWIvY2hyb255L2RyaWZ0Cm1ha2VzdGVwIDEuMCAzCnJ0Y3N5bmMKbG9nZGlyIC92YXIvbG9nL2Nocm9ueQo='
+```
+
+Add a second entry with the `master` role for the control plane nodes.
+
+Each value is a finished `MachineConfig`, not a Butane config. Ignition takes file content as a data
+URL, so encode it first: `base64 -w0 chrony.conf` on Linux, `base64 -i chrony.conf` on macOS. Or
+write a Butane config and paste in the `MachineConfig` that `butane` produces, which does the
+encoding for you.
+
+On bare metal, `clusterInstall.ntpSources` sets the NTP servers of the discovery image. A chrony
+`MachineConfig` replaces the whole `/etc/chrony.conf`, so do not combine the two without checking the
+result on an installed node. AWS nodes use the Amazon Time Sync Service by default.
+
+A map rather than a list lets a clusterset define shared manifests and a cluster add or override
+one by name.
+
+| Platform | ConfigMap | How the installation program receives it |
+|---|---|---|
+| Bare metal | `autoshift-extra-manifests` | `ClusterInstance.extraManifestsRefs`, next to the IDMS and partition ConfigMaps |
+| AWS, vSphere | `autoshift-install-manifests`, shared with the `diskPartitions` `MachineConfig` objects | `ClusterDeployment.spec.provisioning.manifestsConfigMapRef`, which takes a single ConfigMap |
+
+The policy enforces the ConfigMap with `mustonlyhave`, so removing an entry from values also removes it from
+the ConfigMap.
+
+On AWS and vSphere, `manifestsConfigMapRef` cannot change after the `ClusterDeployment` exists. A
+cluster provisioned before this setting existed keeps its original ConfigMap name, which is
+`autoshift-partitions-config` when it used `diskPartitions`.
+
+These are install-time manifests only. Changing `extraManifests` after the installation has no effect on
+the nodes; manage changes after installation with a policy.
+
+The Helm chart rejects an entry when:
+
+- the key has characters other than letters, digits, `-`, `_` and `.`
+- the key starts with `autoshift-`, a prefix reserved for the manifests AutoShift generates
+- the value has no `apiVersion`, `kind` or `metadata.name`
 
 ## Step-by-step guide
 

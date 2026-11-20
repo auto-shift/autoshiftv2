@@ -198,6 +198,126 @@ object-templates-raw: |
       {{- end }}
       {{- end }}
 
+      {{- $extraManifests := (index $ci "extraManifests" | default dict) }}
+  {{- /* networking.brEx: a custom br-ex on an OVS bond, the layout the OpenShift documentation gives
+         for balance-slb. On first boot a node applies /etc/nmstate/openshift/<short hostname>.yml,
+         so each host's nmstate is written into one MachineConfig per role. */}}
+      {{- $brEx := (index $networking "brEx" | default dict) }}
+      {{- $brExMtu := (index $brEx "mtu" | default "") }}
+      {{- $brExIpv4 := (index $brEx "ipv4" | default "") }}
+      {{- $brExFiles := dict }}
+      {{- if $brEx }}
+      {{- $brOther := dict }}
+      {{- range $k, $v := (index $brEx "bondOtherConfig" | default dict) }}
+      {{- $_ := set $brOther $k (printf "%v" $v) }}
+      {{- end }}
+      {{- $brDns := (index $networking "dns" | default dict) }}
+      {{- range $hostname, $host := $hosts }}
+      {{- $hostBrEx := (dig "networking" "brEx" dict $host) }}
+      {{- $brPorts := (index $hostBrEx "ports" | default (index $brEx "ports")) }}
+      {{- $bondPorts := list }}
+      {{- $portIfaces := list }}
+      {{- range $_, $port := $brPorts }}
+      {{- $bondPorts = append $bondPorts (dict "name" $port) }}
+      {{- $portIface := (dict "name" $port "type" "ethernet" "state" "up" "ipv4" (dict "enabled" false) "ipv6" (dict "enabled" false)) }}
+      {{- if $brExMtu }}
+      {{- $_ := set $portIface "mtu" $brExMtu }}
+      {{- end }}
+      {{- $portIfaces = append $portIfaces $portIface }}
+      {{- end }}
+      {{- $lag := (dict "mode" (index $brEx "mode") "port" $bondPorts) }}
+      {{- if $brOther }}
+      {{- $_ := set $lag "ovs-db" (dict "other_config" $brOther) }}
+      {{- end }}
+      {{- $brIpv4 := (dict "enabled" true "dhcp" true "auto-route-metric" 48) }}
+      {{- if eq $brExIpv4 "static" }}
+      {{- $brAddrs := list }}
+      {{- range $_, $addr := (dig "ipv4" "addresses" list $hostBrEx) }}
+      {{- $brAddrs = append $brAddrs (dict "ip" (index $addr "ip") "prefix-length" (index $addr "prefixLength" | toInt)) }}
+      {{- end }}
+      {{- $brIpv4 = (dict "enabled" true "dhcp" false "address" $brAddrs) }}
+      {{- end }}
+      {{- $brIfaces := (list
+          (dict "name" "br-ex" "type" "ovs-bridge" "state" "up"
+              "bridge" (dict "allow-extra-patch-ports" true "port" (list (dict "name" "br-ex") (dict "name" "patch-ex-to-phy")))
+              "ovs-db" (dict "external_ids" (dict "bridge-uplink" "patch-ex-to-phy")))
+          (dict "name" "br-ex" "type" "ovs-interface" "state" "up" "copy-mac-from" (first $brPorts)
+              "ipv4" $brIpv4 "ipv6" (dict "enabled" false "dhcp" false))
+          (dict "name" "br-phy" "type" "ovs-bridge" "state" "up"
+              "ipv4" (dict "enabled" false) "ipv6" (dict "enabled" false)
+              "bridge" (dict "allow-extra-patch-ports" true "port" (list (dict "name" "patch-phy-to-ex") (dict "name" "ovs-bond" "link-aggregation" $lag))))
+          (dict "name" "patch-ex-to-phy" "type" "ovs-interface" "state" "up" "patch" (dict "peer" "patch-phy-to-ex"))
+          (dict "name" "patch-phy-to-ex" "type" "ovs-interface" "state" "up" "patch" (dict "peer" "patch-ex-to-phy"))
+      ) }}
+      {{- if $brExMtu }}
+      {{- $_ := set (index $brIfaces 1) "mtu" $brExMtu }}
+      {{- end }}
+      {{- $brState := (dict "interfaces" (concat $brIfaces $portIfaces)) }}
+      {{- if eq $brExIpv4 "static" }}
+      {{- $_ := set $brState "routes" (dict "config" (list (dict "destination" "0.0.0.0/0" "next-hop-address" (index $brEx "gateway") "next-hop-interface" "br-ex" "table-id" 254))) }}
+      {{- end }}
+      {{- if (index $brDns "servers") }}
+      {{- $brResolver := (dict "server" (index $brDns "servers")) }}
+      {{- if (index $brDns "search") }}
+      {{- $_ := set $brResolver "search" (index $brDns "search") }}
+      {{- end }}
+      {{- $_ := set $brState "dns-resolver" (dict "config" $brResolver) }}
+      {{- end }}
+      {{- $brRole := (index $host "role" | default "master") }}
+      {{- $roleFiles := (index $brExFiles $brRole | default dict) }}
+      {{- $_ := set $roleFiles $hostname ($brState | toYaml | base64enc) }}
+      {{- $_ := set $brExFiles $brRole $roleFiles }}
+      {{- end }}
+      {{- end }}
+      {{- if or $extraManifests $brExFiles }}
+  {{- /* Install-time manifests from config, such as MachineConfigs that must be in place before
+         the first boot. mustonlyhave, so a manifest removed from config also leaves the ConfigMap. */}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: autoshift-extra-manifests
+        namespace: {{ $clusterName }}
+      data:
+      {{- range $emKey, $emObj := $extraManifests }}
+        {{ $emKey }}.yaml: |
+          {{ $emObj | toYaml | autoindent }}
+      {{- end }}
+      {{- range $brRole, $files := $brExFiles }}
+        autoshift-br-ex-{{ $brRole }}.yaml: |
+          apiVersion: machineconfiguration.openshift.io/v1
+          kind: MachineConfig
+          metadata:
+            name: 10-br-ex-{{ $brRole }}
+            labels:
+              machineconfiguration.openshift.io/role: {{ $brRole }}
+          spec:
+            config:
+              ignition:
+                version: 3.2.0
+              storage:
+                files:
+          {{- range $shortName, $b64 := $files }}
+                  - path: /etc/nmstate/openshift/{{ $shortName }}.yml
+                    mode: 420
+                    overwrite: true
+                    contents:
+                      source: data:text/plain;charset=utf-8;base64,{{ $b64 }}
+          {{- end }}
+      {{- end }}
+      {{- end }}
+      {{- $manifestRefs := list }}
+      {{- if (gt (len $mirrors) 0) }}
+      {{- $manifestRefs = append $manifestRefs "autoshift-idms-config" }}
+      {{- end }}
+      {{- if $partList }}
+      {{- $manifestRefs = append $manifestRefs "autoshift-partitions-config" }}
+      {{- end }}
+      {{- if or $extraManifests $brExFiles }}
+      {{- $manifestRefs = append $manifestRefs "autoshift-extra-manifests" }}
+      {{- end }}
+
   {{- /* The ClusterInstance extraManifestsRefs reach the installer only through this template:
          the SiteConfig operator renders them into manifestsConfigMapRefs here, nowhere else. */}}
   - complianceType: musthave
@@ -254,13 +374,10 @@ object-templates-raw: |
               - {{ $network }}
           {{- end }}
             sshPublicKey: {{ $sshPublicKey }}
-          {{- if or (gt (len $mirrors) 0) $partList }}
+          {{- if $manifestRefs }}
             manifestsConfigMapRefs:
-          {{- if (gt (len $mirrors) 0) }}
-              - name: autoshift-idms-config
-          {{- end }}
-          {{- if $partList }}
-              - name: autoshift-partitions-config
+          {{- range $_, $ref := $manifestRefs }}
+              - name: {{ $ref }}
           {{- end }}
           {{- end }}
 
@@ -406,6 +523,7 @@ object-templates-raw: |
       {{- $netInterfaces := (index $networking "interfaces" | default dict) }}
       {{- $hostNet := (index $host "networking" | default dict) }}
       {{- $hostNetIfaces := (index $hostNet "interfaces" | default dict) }}
+      {{- $hostBrEx := (index $hostNet "brEx" | default dict) }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -435,6 +553,38 @@ object-templates-raw: |
       {{- end }}
       {{- end }}
               interfaces:
+      {{- if $brEx }}
+  {{- /* br-ex does not exist until the installed node first boots, so the install network uses
+         the bond ports directly: the first port carries the host address, as in the documented
+         install-config networkConfig for balance-slb. */}}
+        {{- range $idx, $port := (index $hostBrEx "ports" | default (index $brEx "ports")) }}
+                - name: {{ $port }}
+                  type: ethernet
+                  state: up
+          {{- if $brExMtu }}
+                  mtu: {{ $brExMtu }}
+          {{- end }}
+          {{- if ne $idx 0 }}
+                  ipv4:
+                    enabled: false
+          {{- else if eq $brExIpv4 "static" }}
+                  ipv4:
+                    enabled: true
+                    dhcp: false
+                    address:
+            {{- range $_, $addr := (dig "ipv4" "addresses" list $hostBrEx) }}
+                      - ip: {{ index $addr "ip" }}
+                        prefix-length: {{ index $addr "prefixLength" }}
+            {{- end }}
+          {{- else }}
+                  ipv4:
+                    enabled: true
+                    dhcp: true
+          {{- end }}
+                  ipv6:
+                    enabled: false
+        {{- end }}
+      {{- end }}
       {{- range $ifaceId, $topoIface := $netInterfaces }}
         {{- $ifaceType := (index $topoIface "type" | default "ethernet") }}
         {{- $ifaceName := (index $topoIface "name" | default "") }}
@@ -537,9 +687,20 @@ object-templates-raw: |
         {{- end }}
       {{- end }}{{- $netRoutes := (index $networking "routes" | default dict) }}
       {{- $hostRoutes := (index $hostNet "routes" | default dict) }}
-      {{- if or (gt (len (keys $netRoutes)) 0) (gt (len (keys $hostRoutes)) 0) }}
+      {{- $brExGateway := "" }}
+      {{- if $brEx }}
+      {{- if eq $brExIpv4 "static" }}
+      {{- $brExGateway = (index $brEx "gateway") }}
+      {{- end }}
+      {{- end }}
+      {{- if or (gt (len (keys $netRoutes)) 0) (gt (len (keys $hostRoutes)) 0) $brExGateway }}
               routes:
                 config:
+        {{- if $brExGateway }}
+                  - destination: 0.0.0.0/0
+                    next-hop-address: {{ $brExGateway }}
+                    next-hop-interface: {{ first (index $hostBrEx "ports" | default (index $brEx "ports")) }}
+        {{- end }}
         {{- range $_, $route := $netRoutes }}
                   - destination: {{ index $route "destination" }}
                     next-hop-address: {{ index $route "gateway" }}
@@ -593,13 +754,10 @@ object-templates-raw: |
         pullSecretRef:
           name: {{ printf "%s-pull-secret" $clusterName }}
         sshPublicKey: {{ $sshPublicKey }}
-      {{- if or (gt (len $mirrors) 0) $partList }}
+      {{- if $manifestRefs }}
         extraManifestsRefs:
-      {{- if (gt (len $mirrors) 0) }}
-          - name: autoshift-idms-config
-      {{- end }}
-      {{- if $partList }}
-          - name: autoshift-partitions-config
+      {{- range $_, $ref := $manifestRefs }}
+          - name: {{ $ref }}
       {{- end }}
       {{- end }}
         templateRefs:

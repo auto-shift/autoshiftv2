@@ -228,9 +228,9 @@ Collects all errors and reports them together.
 {{- define "autoshift.validate-cluster-install" -}}
 
 {{/* ===== Valid key lists — add new fields here ===== */}}
-{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" "diskPartitions" }}
+{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" "diskPartitions" "extraManifests" }}
 {{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
-{{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
+{{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" "brEx" }}
 {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
 {{- $validRouteKeys := list "destination" "gateway" "interface" "metric" "tableId" }}
 {{- $validSshRefKeys := list "name" "key" "namespace" }}
@@ -336,6 +336,30 @@ Collects all errors and reports them together.
         {{- $hint := (dig "rootDeviceHints" "deviceName" "" $host) }}
         {{- if and $hint (ne $hint $dpDevice) }}
           {{- $errors = append $errors (printf "%s host %s: rootDeviceHints.deviceName is %s but clusterInstall.diskPartitions.device is %s; the partition would be created on a different disk from the one the OS installs to" $path $hostname $hint $dpDevice) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{/* extraManifests become keys of an install ConfigMap, so each key must be a valid ConfigMap
+         key. The autoshift- prefix is reserved: on AWS and VMware the partition MachineConfigs
+         share that ConfigMap. The installer applies each value as an object, so it needs the
+         fields every object has. */}}
+    {{- $extraManifests := (dig "config" "clusterInstall" "extraManifests" dict $cluster) }}
+    {{- if not (kindIs "map" $extraManifests) }}
+      {{- $errors = append $errors (printf "%s: clusterInstall.extraManifests must be a map of file name to manifest" $path) }}
+    {{- else }}
+      {{- range $emKey, $emObj := $extraManifests }}
+        {{- $emPath := (printf "%s: clusterInstall.extraManifests.%s" $path $emKey) }}
+        {{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $emKey) }}
+          {{- $errors = append $errors (printf "%s: the key becomes a ConfigMap key and may contain only letters, digits, '-', '_' and '.'" $emPath) }}
+        {{- end }}
+        {{- if hasPrefix "autoshift-" $emKey }}
+          {{- $errors = append $errors (printf "%s: keys starting with autoshift- are reserved for manifests AutoShift generates" $emPath) }}
+        {{- end }}
+        {{- if not (kindIs "map" $emObj) }}
+          {{- $errors = append $errors (printf "%s: the value must be a Kubernetes object" $emPath) }}
+        {{- else if not (and (dig "apiVersion" "" $emObj) (dig "kind" "" $emObj) (dig "metadata" "name" "" $emObj)) }}
+          {{- $errors = append $errors (printf "%s: the manifest needs apiVersion, kind and metadata.name" $emPath) }}
         {{- end }}
       {{- end }}
     {{- end }}
@@ -775,6 +799,78 @@ Collects all errors and reports them together.
       {{- end }}
       {{- if not $route.interface }}
         {{- $errors = append $errors (printf "%s route %s: interface is required" $path $routeId) }}
+      {{- end }}
+    {{- end }}
+
+    {{/* networking.brEx builds a custom br-ex on an OVS bond. The bond ports leave the install
+         network once br-ex exists, so no topology interface may claim them, and no route may name
+         br-ex because the install network has no br-ex yet. */}}
+    {{- $brEx := (dig "brEx" dict $networking) }}
+    {{- if $brEx }}
+      {{- $validBrExKeys := list "mode" "ports" "mtu" "ipv4" "gateway" "bondOtherConfig" }}
+      {{- $validHostBrExKeys := list "ports" "ipv4" }}
+      {{- range $key, $_ := $brEx }}
+        {{- if not (has $key $validBrExKeys) }}
+          {{- $errors = append $errors (printf "%s: networking.brEx.%s is not a recognized field (valid: %s)" $path $key (join ", " $validBrExKeys)) }}
+        {{- end }}
+      {{- end }}
+      {{- $brMode := ($brEx.mode | default "" | toString) }}
+      {{- if not (has $brMode (list "balance-slb" "active-backup")) }}
+        {{- $errors = append $errors (printf "%s: networking.brEx.mode is required and must be balance-slb or active-backup (got: '%s')" $path $brMode) }}
+      {{- end }}
+      {{- $brIpv4 := ($brEx.ipv4 | default "" | toString) }}
+      {{- if not (has $brIpv4 (list "static" "dhcp")) }}
+        {{- $errors = append $errors (printf "%s: networking.brEx.ipv4 is required and must be static or dhcp (got: '%s')" $path $brIpv4) }}
+      {{- end }}
+      {{- if and (eq $brIpv4 "static") (not $brEx.gateway) }}
+        {{- $errors = append $errors (printf "%s: networking.brEx.gateway is required when networking.brEx.ipv4 is static; it becomes the default route on br-ex" $path) }}
+      {{- end }}
+      {{- $claimed := dict }}
+      {{- range $ifaceId, $iface := $netInterfaces }}
+        {{- if $iface.name }}
+          {{- $_ := set $claimed (toString $iface.name) $ifaceId }}
+        {{- end }}
+        {{- range $_, $port := ($iface.ports | default list) }}
+          {{- $_ := set $claimed (toString $port) $ifaceId }}
+        {{- end }}
+      {{- end }}
+      {{- range $routeId, $route := (dig "routes" dict $networking) }}
+        {{- if eq (toString ($route.interface | default "")) "br-ex" }}
+          {{- $errors = append $errors (printf "%s route %s: interface br-ex does not exist on the install network; networking.brEx.gateway sets the default route on br-ex" $path $routeId) }}
+        {{- end }}
+      {{- end }}
+      {{- range $hostname, $host := $hosts }}
+        {{- $hostBrEx := (dig "networking" "brEx" dict $host) }}
+        {{- range $key, $_ := $hostBrEx }}
+          {{- if not (has $key $validHostBrExKeys) }}
+            {{- $errors = append $errors (printf "%s host %s: networking.brEx.%s is not a recognized field (valid: %s)" $path $hostname $key (join ", " $validHostBrExKeys)) }}
+          {{- end }}
+        {{- end }}
+        {{- $brPorts := ($hostBrEx.ports | default $brEx.ports | default list) }}
+        {{- if lt (len $brPorts) 2 }}
+          {{- $errors = append $errors (printf "%s host %s: networking.brEx.ports needs at least two interfaces for the OVS bond" $path $hostname) }}
+        {{- end }}
+        {{- range $_, $port := $brPorts }}
+          {{- if hasKey $claimed (toString $port) }}
+            {{- $errors = append $errors (printf "%s host %s: networking.brEx port %s is also used by networking.interfaces.%s" $path $hostname $port (index $claimed (toString $port))) }}
+          {{- end }}
+        {{- end }}
+        {{- if eq $brIpv4 "static" }}
+          {{- $brAddrs := (dig "ipv4" "addresses" list $hostBrEx) }}
+          {{- if not $brAddrs }}
+            {{- $errors = append $errors (printf "%s host %s: networking.brEx.ipv4 is static but the host has no networking.brEx.ipv4.addresses" $path $hostname) }}
+          {{- end }}
+          {{- range $idx, $addr := $brAddrs }}
+            {{- if not (and (index $addr "ip") (index $addr "prefixLength")) }}
+              {{- $errors = append $errors (printf "%s host %s: networking.brEx.ipv4.addresses[%d] needs ip and prefixLength" $path $hostname $idx) }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+        {{- range $routeId, $route := (dig "networking" "routes" dict $host) }}
+          {{- if eq (toString ($route.interface | default "")) "br-ex" }}
+            {{- $errors = append $errors (printf "%s host %s route %s: interface br-ex does not exist on the install network; networking.brEx.gateway sets the default route on br-ex" $path $hostname $routeId) }}
+          {{- end }}
+        {{- end }}
       {{- end }}
     {{- end }}
 
