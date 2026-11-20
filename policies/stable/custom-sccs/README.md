@@ -23,7 +23,7 @@ other entry still applies. See [Status](#status).
 | `policy-custom-sccs` | `${REMEDIATION}`: enforce, or inform under `autoshift.dryRun` | Creates and corrects the declared SCCs, their ClusterRoles and RoleBindings from `manifests/sccs.yaml`, and writes the `custom-sccs-status` ConfigMap while there are errors |
 | `policy-custom-sccs-test` | Always inform | From `test/sccs.yaml`: reports objects that are no longer declared and asserts that the status ConfigMap is absent. It never changes anything |
 
-Both files are the same template and differ only in the `$want` line, which a test enforces. The
+Both files are the same template and differ only in the `$want` line. The
 inform-only checks are a policy of their own, as the [developer
 guide](../../../docs/developer-guide.md#gating-on-cluster-state) requires: a `remediationAction` on
 the root of one Policy overrides all of its children, so a check bundled into the enforcing Policy

@@ -1,7 +1,7 @@
 # Project onboarding, from config.projects (per project) and config.projectDefaults (shared).
 # Rendered twice, identically except for $want on the next line: manifests/projects.yaml is the
 # enforce ConfigurationPolicy, test/projects.yaml the inform one. Each renders only the projects
-# whose effective mode equals $want. Keep the two files in sync (a test enforces it).
+# whose effective mode equals $want. Keep the two files in sync.
 #
 # Shards: eight enforcing Policies, policy-project-onboarding-0 to -7, render manifests/, and their
 # eight inform-only Policies, policy-project-onboarding-0-test to -7-test, render test/. Each reads
@@ -32,8 +32,7 @@
 # a managed-cluster action. Base64, not quoted JSON: config-policy-controller rewrites the template
 # text with regexes before parsing it (toInt, toBool, toLiteral, autoindent), and those match inside
 # a quoted string; base64 has no character they need. Only constants, numbers, booleans and values
-# the hub validated against a strict pattern are emitted directly;
-# TestProjectOnboarding_NoUserStringAsSpokeTemplateText lists them.
+# the hub validated against a strict pattern are emitted directly.
 #
 # Effective mode: the project's mode when it sets one (any non-null value); inform when it sets
 # adopt: true and no mode; otherwise enforce. A mode other than enforce or inform (false and 0
@@ -245,10 +244,9 @@
 #
 # Size, per shard Policy: a base for the static template text ($sizeBase, measured on an empty shard:
 # 36887 bytes at most with namespace deletion off, 40453 with it and the breaker on, plus shard 0's
-# status lines for an invalid maxNamespaceDeletes or grace period; TestProjectOnboarding_SizeEstimateCovers
-# includes those modes), then the hub estimates each project's share of the resolved Policy ($est; invalid projects pay
-# their status $overhead; TestProjectOnboarding_SizeEstimateCovers holds it at or above the measured
-# size for every feature) and keeps the total below $sizeLimit (1 MiB, well under the 1.5 MiB etcd
+# status lines for an invalid maxNamespaceDeletes or grace period), then the hub estimates each
+# project's share of the resolved Policy ($est, kept at or above the measured size for every
+# feature; invalid projects pay their status $overhead) and keeps the total below $sizeLimit (1 MiB, well under the 1.5 MiB etcd
 # request limit). Status messages are cut to 400 characters. The total is published as a comment.
 # Backstops that fail the hub template, so nothing is applied: more than $maxProjects (3200) projects in total,
 # or a total with the bookkeeping of skipped projects (charged per JSON-encoded name length) over

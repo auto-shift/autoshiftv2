@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
-	"text/template"
 
 	"github.com/stolostron/go-template-utils/v7/pkg/templates"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -223,68 +221,6 @@ type ResolvePolicyResult struct {
 // rather than failing the entire chart. This allows charts with some
 // `{{hub lookup ... hub}}` calls (which fail without real API resources) to
 // still contribute their successfully-resolved Policy documents.
-// hubFromYAML, when set, replaces the fromYaml and fromYAML functions of the hub pass. The
-// integration tests set it to a memoized copy of the library's own function (yaml.v3 Unmarshal into
-// any; harness_cache_test.go): every shard Policy of a run reads the same rendered config, so it is
-// otherwise parsed again for each of them.
-var hubFromYAML func(string) (any, error)
-
-// hubResolveOptions returns the ResolveOptions of the hub pass.
-func hubResolveOptions(inputIsYAML bool) *templates.ResolveOptions {
-	opts := &templates.ResolveOptions{InputIsYAML: inputIsYAML}
-	if hubFromYAML != nil {
-		opts.CustomFunctions = template.FuncMap{"fromYaml": hubFromYAML, "fromYAML": hubFromYAML}
-	}
-	return opts
-}
-
-// policyDocMemo, when set, caches parsePolicyDoc by document text. The integration tests set it
-// (harness_cache_test.go): they hub-resolve the same rendered Policies hundreds of times, and the
-// YAML parse of a large Policy is a large part of each resolution. A cached parse is only read.
-var policyDocMemo *sync.Map
-
-// policyDoc is one parsed input document of ResolvePolicy: obj is nil when the document is not
-// YAML or holds no map; json is set for a Policy, and yaml is the template text the resolver
-// would derive from it (templates.JSONToYAML, as ResolveTemplate does for JSON input).
-type policyDoc struct {
-	obj     map[string]interface{}
-	json    []byte
-	jsonErr error
-	yaml    []byte
-	yamlErr error
-}
-
-func parsePolicyDoc(doc string) policyDoc {
-	if policyDocMemo != nil {
-		if v, ok := policyDocMemo.Load(doc); ok {
-			return v.(policyDoc)
-		}
-	}
-	var pd policyDoc
-	var obj map[string]interface{}
-	if err := sigsyaml.Unmarshal([]byte(doc), &obj); err == nil {
-		pd.obj = obj
-		if kind, _ := obj["kind"].(string); kind == "Policy" {
-			pd.json, pd.jsonErr = json.Marshal(obj)
-			if pd.jsonErr == nil {
-				pd.yaml, pd.yamlErr = templates.JSONToYAML(pd.json)
-			}
-		}
-	}
-	if policyDocMemo != nil {
-		policyDocMemo.Store(doc, pd)
-	}
-	return pd
-}
-
-func copyMap(m map[string]interface{}) map[string]interface{} {
-	out := make(map[string]interface{}, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
-}
-
 func (r *Resolver) ResolvePolicy(rawYAML string, ctx HubContext) ResolvePolicyResult {
 	r.refreshLocal()
 	docs := splitYAMLDocuments(rawYAML)
@@ -297,12 +233,16 @@ func (r *Resolver) ResolvePolicy(rawYAML string, ctx HubContext) ResolvePolicyRe
 			continue
 		}
 
-		// Parse to check the kind field. If it doesn't parse as YAML (e.g. a comment block), pass
-		// through.
-		pd := parsePolicyDoc(doc)
-		obj := pd.obj
+		// Parse to check the kind field.
+		var obj map[string]interface{}
+		if err := sigsyaml.Unmarshal([]byte(doc), &obj); err != nil {
+			// If it doesn't parse as YAML (e.g. a comment block), pass through.
+			resolved = append(resolved, doc)
+			continue
+		}
+
 		kind, _ := obj["kind"].(string)
-		if obj == nil || kind != "Policy" {
+		if kind != "Policy" {
 			// Placement, PlacementBinding, etc. — pass through unchanged.
 			resolved = append(resolved, doc)
 			continue
@@ -312,7 +252,7 @@ func (r *Resolver) ResolvePolicy(rawYAML string, ctx HubContext) ResolvePolicyRe
 		policyNamespace, _ := nestedString(obj, "metadata", "namespace")
 
 		// JSON-marshal the Policy for the resolver (it expects JSON input).
-		jsonBytes, err := pd.json, pd.jsonErr
+		jsonBytes, err := json.Marshal(obj)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: marshal to JSON: %v", policyName, err))
 			resolved = append(resolved, doc) // pass through the original
@@ -323,23 +263,14 @@ func (r *Resolver) ResolvePolicy(rawYAML string, ctx HubContext) ResolvePolicyRe
 		// .PolicyMetadata.namespace etc. (ACM injects this on the real hub).
 		docCtx := ctx
 		metadata, _ := obj["metadata"].(map[string]interface{})
-		// Copies, so a parse shared through policyDocMemo is never reachable from a template.
 		docCtx.PolicyMetadata = map[string]interface{}{
 			"name":        policyName,
 			"namespace":   policyNamespace,
-			"annotations": copyMap(mapOrEmpty(metadata, "annotations")),
-			"labels":      copyMap(mapOrEmpty(metadata, "labels")),
+			"annotations": mapOrEmpty(metadata, "annotations"),
+			"labels":      mapOrEmpty(metadata, "labels"),
 		}
 
-		// Hand the resolver the YAML it would derive from jsonBytes itself, so a memoized parse
-		// (policyDocMemo) also skips that conversion. On a conversion error, the JSON path reports it
-		// exactly as before.
-		var result templates.TemplateResult
-		if pd.yamlErr == nil && pd.yaml != nil {
-			result, err = r.inner.ResolveTemplate(pd.yaml, docCtx, hubResolveOptions(true))
-		} else {
-			result, err = r.inner.ResolveTemplate(jsonBytes, docCtx, hubResolveOptions(false))
-		}
+		result, err := r.inner.ResolveTemplate(jsonBytes, docCtx, &templates.ResolveOptions{})
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", policyName, err))
 			resolved = append(resolved, doc) // pass through the original
