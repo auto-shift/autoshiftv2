@@ -1,0 +1,60 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: namespace-rbac
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml — never in manifests/ or test/, whose
+# hub templates contain `$vars` that substitution would clobber.
+#
+# Two Policies from one template, see policies[] below: policy-namespace-rbac (manifests/, enforcing)
+# and the inform-only policy-namespace-rbac-test (test/). See "Policies" in the README.
+#
+# placementBindingDefaults.name is inert with one policy, but PolicyGenerator requires it as soon as
+# a second policies[] entry binds to the same placement.yaml.
+placementBindingDefaults:
+  name: binding-policy-namespace-rbac
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: medium
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Default Placement (placement.yaml at the dir root); policies with a different predicate set
+  # their own placement.placementPath. PG includes it and generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  # manifests/ and test/ hold the same template; only $want differs (a test holds them in sync).
+  # The enforcing Policy owns the ServiceAccounts, Roles, RoleBindings and the status ConfigMap.
+  # The -test Policy reports objects that are no longer declared and asserts the status ConfigMap
+  # is absent, so it is the one to depend on for "every declared entry applied". It never deletes.
+  # Dry-run (${REMEDIATION} = inform) makes the enforcing Policy inform too.
+  #
+  # No dependency either way (README, "Policies"): the -test Policy is NonCompliant exactly while
+  # the enforcing one has something to report, so gating the enforcing Policy on it would deadlock,
+  # and gating the -test Policy on the enforcing one would hide its report under dry run.
+  #
+  # Hub templates resolve as autoshift-policy-service-account, because they list the cluster-scoped
+  # ManagedClusters (a namespace named after one is refused). Without it, hub lookups are limited to
+  # the policy namespace. User data never reaches template text, so the account only runs the
+  # policy's own lookups.
+  - name: policy-namespace-rbac
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: manifests
+  - name: policy-namespace-rbac-test
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: test/namespace-rbac.yaml

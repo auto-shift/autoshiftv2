@@ -1,0 +1,70 @@
+# Stubs for namespace-rbac. They also register the ServiceAccount, Role and RoleBinding kinds with
+# the fake discovery client, which the policy's managed-cluster lookups need.
+#
+# example-team exists, so the _example entry renders its objects there.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-team
+---
+# example-vault holds the minter ServiceAccount of the token Secret tests (no workload rules there).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-vault
+---
+# Created by namespace-rbac earlier and set to false in the _example entry since: reported as stale.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: example-old-ci
+  namespace: example-team
+  labels:
+    autoshift.io/managed-by: namespace-rbac
+---
+# A Role and RoleBinding that namespace-rbac created and no entry declares any more: stale.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: example-retired
+  namespace: example-team
+  labels:
+    autoshift.io/managed-by: namespace-rbac
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - configmaps
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: example-retired
+  namespace: example-team
+  labels:
+    autoshift.io/managed-by: namespace-rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: example-retired
+subjects:
+  - kind: ServiceAccount
+    name: example-old-ci
+    namespace: example-team
+---
+# A cluster-wide binding that names no ServiceAccount, as every cluster has. The token Secret guard
+# lists every ClusterRoleBinding, and the test client serves a kind only once an object of it exists.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: example-cluster-readers
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-reader
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: example-auditors
