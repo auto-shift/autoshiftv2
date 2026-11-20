@@ -1,0 +1,164 @@
+# Project networks, from config.projectNetworks: one ClusterUserDefinedNetwork (k8s.ovn.org/v1) per
+# entry, named after the entry, with Localnet topology (always a secondary network) on an access VLAN.
+# Rendered twice, identically except for $want: manifests/ holds the enforce ConfigurationPolicy
+# (Policy policy-project-networks) and test/ the inform one (Policy policy-project-networks-test);
+# this file is one of the two. Keep the two files in sync (a test enforces it).
+#
+#   config:
+#     projectNetworks:
+#       vlan-70:
+#         vlan: 70                          # required, 1 to 4094
+#         physicalNetworkName: physnet-vlan70 # required, a localnet in the nmstate ovnMappings
+#         subnets: ['10.70.0.0/24']         # optional, one or two CIDRs; without, IPAM is disabled
+#         namespaceSelector:                # required, matchLabels and/or matchExpressions
+#           matchLabels:
+#             network.example.com/vlan-70: 'true'
+#
+# Any invalid entry fails the hub template of both ConfigurationPolicies, naming the entry and the
+# problem. Strings with {{ or }} are rejected, and the spec reaches the managed-cluster template pass
+# only as base64-encoded JSON in a quoted string. physicalNetworkName must not contain whitespace or control
+# characters, subnets must be a list (or unset) of IPv4 or IPv6 CIDRs, and matchLabels and
+# matchExpressions keys and values must be valid label keys and values.
+#
+# Namespace selector guard: OVN-Kubernetes creates the network in every namespace the selector
+# matches, so a selector that matches every namespace, openshift-* and kube-system included, is
+# refused. The selector needs a positive requirement: a matchLabels pair, or an In or Exists
+# expression, where Exists on kubernetes.io/metadata.name (every namespace has it) does not count.
+# A selector of only NotIn and DoesNotExist expressions is refused. A platform namespace name
+# ($platformNs) as a kubernetes.io/metadata.name value of matchLabels or In is refused as well.
+#
+# Ownership: the managed cluster looks each network up. The enforce ConfigurationPolicy applies it
+# (mustonlyhave spec, musthave metadata) when it is absent, or when it carries
+# autoshift.io/managed-by: project-networks and its spec.network equals the entry's. spec.network is
+# immutable in OVN-Kubernetes, so a changed vlan, physicalNetworkName or subnets would be rejected on
+# every evaluation; such an entry, and one whose live network lacks the managed-by label, is held: the
+# inform ConfigurationPolicy renders the declared object instead, which is NonCompliant and shows the
+# difference. Change a network under a new entry name, or delete and re-create it by hand.
+#
+# Deletion: never. An owned network that is no longer declared is reported by the inform
+# ConfigurationPolicy (mustnothave, which inform never enforces). Without the CRD nothing is applied,
+# and with entries declared the inform ConfigurationPolicy reports the CRD as missing.
+object-templates-raw: |
+  {{hub- $want := "inform" hub}}
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- if not $rcm hub}}{{hub- fail (printf "project-networks: cannot read %s.rendered-config" .ManagedClusterName) hub}}{{hub- end hub}}
+  {{hub- $cfg := index ($rcm.data | default dict) "config" | default "" | fromYaml hub}}
+  {{hub- if not (kindIs "map" $cfg) hub}}{{hub- fail (printf "project-networks: config in %s.rendered-config is not a map" .ManagedClusterName) hub}}{{hub- end hub}}
+  {{hub- $nets := index $cfg "projectNetworks" | default dict hub}}
+  {{hub- if not (kindIs "map" $nets) hub}}{{hub- fail "project-networks: config.projectNetworks is not a map keyed by network name" hub}}{{hub- end hub}}
+  {{hub- $specs := dict hub}}
+  {{hub- $platformNs := "^(kube-.*|openshift|openshift-.*|default|open-cluster-management.*|multicluster-engine|hive)$" hub}}
+  {{hub- $labelKey := "^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$" hub}}
+  {{hub- $labelValue := "^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$" hub}}
+  {{hub- $octet := "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])" hub}}
+  {{hub- $cidr4 := printf "^%s([.]%s){3}/([0-9]|[12][0-9]|3[0-2])$" $octet $octet hub}}
+  {{hub- $h := "[0-9A-Fa-f]{1,4}" hub}}
+  {{hub- $ip6 := printf "(%s:){7}%s|(%s:){1,7}:|(%s:){1,6}:%s|(%s:){1,5}(:%s){1,2}|(%s:){1,4}(:%s){1,3}|(%s:){1,3}(:%s){1,4}|(%s:){1,2}(:%s){1,5}|%s:(:%s){1,6}|:((:%s){1,7}|:)" $h $h $h $h $h $h $h $h $h $h $h $h $h $h $h $h hub}}
+  {{hub- $cidr6 := printf "^(%s)/([0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])$" $ip6 hub}}
+  {{hub- range $name, $e := $nets hub}}
+  {{hub- $at := printf "project-networks: config.projectNetworks.%s:" $name hub}}
+  {{hub- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $name) hub}}{{hub- fail (printf "%s name is not a valid DNS-1123 label" $at) hub}}{{hub- end hub}}
+  {{hub- if not (kindIs "map" $e) hub}}{{hub- fail (printf "%s entry is not a map" $at) hub}}{{hub- end hub}}
+  {{hub- range $k, $_ := $e hub}}{{hub- if not (has $k (list "vlan" "physicalNetworkName" "subnets" "namespaceSelector")) hub}}{{hub- fail (printf "%s key %s is not one of vlan, physicalNetworkName, subnets, namespaceSelector" $at $k) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $vlan := index $e "vlan" hub}}
+  {{hub- if not (and (or (kindIs "int" $vlan) (kindIs "int64" $vlan) (kindIs "float64" $vlan)) (regexMatch "^[0-9]{1,4}$" (printf "%v" $vlan))) hub}}{{hub- fail (printf "%s vlan is required and must be an integer from 1 to 4094" $at) hub}}{{hub- end hub}}
+  {{hub- if or (lt (int $vlan) 1) (gt (int $vlan) 4094) hub}}{{hub- fail (printf "%s vlan is required and must be an integer from 1 to 4094" $at) hub}}{{hub- end hub}}
+  {{hub- $phys := index $e "physicalNetworkName" hub}}
+  {{hub- if not (and (kindIs "string" $phys) $phys) hub}}{{hub- fail (printf "%s physicalNetworkName is required" $at) hub}}{{hub- end hub}}
+  {{hub- if or (contains "{{" $phys) (contains "}}" $phys) hub}}{{hub- fail (printf "%s physicalNetworkName contains template delimiters" $at) hub}}{{hub- end hub}}
+  {{hub- if regexMatch "[[:space:][:cntrl:]]" $phys hub}}{{hub- fail (printf "%s physicalNetworkName must not contain whitespace or control characters" $at) hub}}{{hub- end hub}}
+  {{hub- if or (regexMatch "[,:]" $phys) (gt (len $phys) 253) hub}}{{hub- fail (printf "%s physicalNetworkName must not contain , or : and must be 253 characters or fewer" $at) hub}}{{hub- end hub}}
+  {{hub- $subnets := index $e "subnets" hub}}
+  {{hub- if kindIs "invalid" $subnets hub}}{{hub- $subnets = list hub}}{{hub- end hub}}
+  {{hub- if not (and (kindIs "slice" $subnets) (le (len $subnets) 2)) hub}}{{hub- fail (printf "%s subnets must be a list of one or two CIDRs" $at) hub}}{{hub- end hub}}
+  {{hub- $v4 := 0 hub}}{{hub- $v6 := 0 hub}}
+  {{hub- range $s := $subnets hub}}{{hub- if not (and (kindIs "string" $s) (or (regexMatch $cidr4 $s) (regexMatch $cidr6 $s))) hub}}{{hub- fail (printf "%s subnets must be a list of one or two CIDRs, and %v is not an IPv4 or IPv6 CIDR" $at ($s | toJson)) hub}}{{hub- end hub}}{{hub- if contains ":" $s hub}}{{hub- $v6 = add1 $v6 hub}}{{hub- else hub}}{{hub- $v4 = add1 $v4 hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if or (gt $v4 1) (gt $v6 1) hub}}{{hub- fail (printf "%s subnets must not hold two subnets of the same IP family (at most one IPv4 and one IPv6)" $at) hub}}{{hub- end hub}}
+  {{hub- $sel := index $e "namespaceSelector" hub}}
+  {{hub- if not (and (kindIs "map" $sel) $sel) hub}}{{hub- fail (printf "%s namespaceSelector is required (matchLabels or matchExpressions)" $at) hub}}{{hub- end hub}}
+  {{hub- range $k, $_ := $sel hub}}{{hub- if not (has $k (list "matchLabels" "matchExpressions")) hub}}{{hub- fail (printf "%s namespaceSelector key %s is not one of matchLabels, matchExpressions" $at $k) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $matchLabels := index $sel "matchLabels" | default dict hub}}
+  {{hub- if not (kindIs "map" $matchLabels) hub}}{{hub- fail (printf "%s namespaceSelector.matchLabels is not a map" $at) hub}}{{hub- end hub}}
+  {{hub- range $k, $v := $matchLabels hub}}{{hub- if not (kindIs "string" $v) hub}}{{hub- fail (printf "%s namespaceSelector.matchLabels value of %s is not a string (quote it)" $at $k) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if not (kindIs "slice" (index $sel "matchExpressions" | default list)) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions is not a list" $at) hub}}{{hub- end hub}}
+  {{hub- if not (or $matchLabels (index $sel "matchExpressions")) hub}}{{hub- fail (printf "%s namespaceSelector is required (matchLabels or matchExpressions)" $at) hub}}{{hub- end hub}}
+  {{hub- $selStrings := list hub}}
+  {{hub- range $k, $v := $matchLabels hub}}{{hub- $selStrings = append (append $selStrings $k) $v hub}}{{hub- end hub}}
+  {{hub- range $x := index $sel "matchExpressions" | default list hub}}
+  {{hub- if not (kindIs "map" $x) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry is not a map" $at) hub}}{{hub- end hub}}
+  {{hub- range $k, $_ := $x hub}}{{hub- if not (has $k (list "key" "operator" "values")) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry has key %s, not one of key, operator, values" $at $k) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $xkey := index $x "key" hub}}
+  {{hub- if not (and (kindIs "string" $xkey) $xkey) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry needs a key" $at) hub}}{{hub- end hub}}
+  {{hub- $xop := index $x "operator" hub}}
+  {{hub- if not (and (kindIs "string" $xop) (has $xop (list "In" "NotIn" "Exists" "DoesNotExist"))) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry %s: operator must be In, NotIn, Exists or DoesNotExist" $at $xkey) hub}}{{hub- end hub}}
+  {{hub- $xvals := index $x "values" | default list hub}}
+  {{hub- if not (kindIs "slice" $xvals) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry %s: values is not a list" $at $xkey) hub}}{{hub- end hub}}
+  {{hub- if and (has $xop (list "In" "NotIn")) (not $xvals) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry %s: values is required with operator %s" $at $xkey $xop) hub}}{{hub- end hub}}
+  {{hub- if and (has $xop (list "Exists" "DoesNotExist")) $xvals hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry %s: values must be omitted with operator %s" $at $xkey $xop) hub}}{{hub- end hub}}
+  {{hub- range $k, $v := $x hub}}{{hub- $selStrings = append $selStrings $k hub}}{{hub- if kindIs "string" $v hub}}{{hub- $selStrings = append $selStrings $v hub}}{{hub- else if kindIs "slice" $v hub}}{{hub- $selStrings = concat $selStrings $v hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $str := $selStrings hub}}{{hub- if or (contains "{{" (printf "%v" $str)) (contains "}}" (printf "%v" $str)) hub}}{{hub- fail (printf "%s namespaceSelector contains template delimiters" $at) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $positive := gt (len $matchLabels) 0 hub}}
+  {{hub- range $k, $v := $matchLabels hub}}
+  {{hub- if not (and (le (len $k) 317) (regexMatch $labelKey $k) (le (len (last (splitList "/" $k))) 63)) hub}}{{hub- fail (printf "%s namespaceSelector.matchLabels key %s is not a valid label key" $at ($k | toJson)) hub}}{{hub- end hub}}
+  {{hub- if not (and (le (len $v) 63) (regexMatch $labelValue $v)) hub}}{{hub- fail (printf "%s namespaceSelector.matchLabels value %s of %s is not a valid label value" $at ($v | toJson) ($k | toJson)) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- with index $matchLabels "kubernetes.io/metadata.name" hub}}{{hub- if regexMatch $platformNs . hub}}{{hub- fail (printf "%s namespaceSelector selects the platform namespace %s, where project networks are not allowed" $at .) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $x := index $sel "matchExpressions" | default list hub}}
+  {{hub- $xkey := index $x "key" hub}}
+  {{hub- if not (and (le (len $xkey) 317) (regexMatch $labelKey $xkey) (le (len (last (splitList "/" $xkey))) 63)) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions key %s is not a valid label key" $at ($xkey | toJson)) hub}}{{hub- end hub}}
+  {{hub- range $v := index $x "values" | default list hub}}
+  {{hub- if not (kindIs "string" $v) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry %s: values must be strings (quote them)" $at $xkey) hub}}{{hub- end hub}}
+  {{hub- if not (and (le (len $v) 63) (regexMatch $labelValue $v)) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry %s: value %s is not a valid label value" $at $xkey ($v | toJson)) hub}}{{hub- end hub}}
+  {{hub- if and (eq $xkey "kubernetes.io/metadata.name") (eq (index $x "operator") "In") (regexMatch $platformNs $v) hub}}{{hub- fail (printf "%s namespaceSelector selects the platform namespace %s, where project networks are not allowed" $at $v) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if eq (index $x "operator") "In" hub}}{{hub- $positive = true hub}}{{hub- end hub}}
+  {{hub- if and (eq (index $x "operator") "Exists") (ne $xkey "kubernetes.io/metadata.name") hub}}{{hub- $positive = true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if not $positive hub}}{{hub- fail (printf "%s namespaceSelector can match every namespace, openshift-* and kube-system included: it needs a matchLabels pair or an In or Exists expression (Exists on kubernetes.io/metadata.name matches every namespace)" $at) hub}}{{hub- end hub}}
+  {{hub- $local := dict "role" "Secondary" "physicalNetworkName" $phys "vlan" (dict "mode" "Access" "access" (dict "id" (int $vlan))) hub}}
+  {{hub- if $subnets hub}}{{hub- $_ := set $local "subnets" $subnets hub}}{{hub- else hub}}{{hub- $_ := set $local "ipam" (dict "mode" "Disabled") hub}}{{hub- end hub}}
+  {{hub- $_ := set $specs $name (dict "namespaceSelector" $sel "network" (dict "topology" "Localnet" "localnet" $local)) hub}}
+  {{hub- end hub}}
+  {{- $crd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "clusteruserdefinednetworks.k8s.ovn.org" }}
+  {{- if $crd }}
+  {{hub- range $name, $spec := $specs hub}}
+  {{- $live := lookup "k8s.ovn.org/v1" "ClusterUserDefinedNetwork" "" ({{hub $name | base64enc | quote hub}} | base64dec) }}
+  {{- $owned := eq (printf "%v" (get (dig "metadata" "labels" dict $live) "autoshift.io/managed-by")) "project-networks" }}
+  {{- $same := eq (dig "spec" "network" dict $live | toJson) ({{hub $spec.network | toJson | base64enc | quote hub}} | base64dec | fromJson | toJson) }}
+  {{- if eq (or (not $live) (and $owned $same)) {{hub eq $want "enforce" hub}} }}
+  - complianceType: mustonlyhave
+    metadataComplianceType: musthave
+    objectDefinition:
+      apiVersion: k8s.ovn.org/v1
+      kind: ClusterUserDefinedNetwork
+      metadata:
+        name: {{hub $name | toJson hub}}
+        labels:
+          autoshift.io/managed-by: project-networks
+      spec: {{ {{hub $spec | toJson | base64enc | quote hub}} | base64dec | fromJson | toJson }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- if eq $want "inform" hub}}
+  {{- $declared := {{hub keys $specs | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- range $obj := (lookup "k8s.ovn.org/v1" "ClusterUserDefinedNetwork" "" "" "autoshift.io/managed-by=project-networks").items | default list }}
+  {{- if not (has (printf "%v" (dig "metadata" "name" "" $obj)) $declared) }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: k8s.ovn.org/v1
+      kind: ClusterUserDefinedNetwork
+      metadata:
+        name: {{ dig "metadata" "name" "" $obj | printf "%v" | toJson }}
+  {{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{- else }}
+  {{hub- if and (eq $want "inform") $specs hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata:
+        name: clusteruserdefinednetworks.k8s.ovn.org
+  {{hub- end hub}}
+  {{- end }}
