@@ -1,0 +1,42 @@
+# Stubs for project-onboarding: the EgressFirewall CRD (k8s.ovn.org/v1), which gates the policy's
+# EgressFirewall lookups, and owned EgressFirewalls from an earlier run. payments-api's default is
+# declared, so it is corrected in place and never pruned; the removed project's is pruned. Tests drop
+# this file to model a cluster without the CRD.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: egressfirewalls.k8s.ovn.org
+spec:
+  group: k8s.ovn.org
+  names:
+    kind: EgressFirewall
+    plural: egressfirewalls
+  scope: Namespaced
+---
+apiVersion: k8s.ovn.org/v1
+kind: EgressFirewall
+metadata:
+  name: default
+  namespace: payments-api
+  labels:
+    autoshift.io/project: payments-api
+    autoshift.io/managed-by: project-onboarding
+spec:
+  egress:
+    - type: Deny
+      to:
+        cidrSelector: 0.0.0.0/0
+---
+apiVersion: k8s.ovn.org/v1
+kind: EgressFirewall
+metadata:
+  name: default
+  namespace: removed-project
+  labels:
+    autoshift.io/project: removed-project
+    autoshift.io/managed-by: project-onboarding
+spec:
+  egress:
+    - type: Deny
+      to:
+        cidrSelector: 0.0.0.0/0

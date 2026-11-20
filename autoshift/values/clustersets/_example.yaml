@@ -1953,6 +1953,177 @@ hubClusterSets:
       # to set this key if you are not using a local or disconnected service.
       openshift-upgrade:
         upgradeGraphUrl: 'https://api.openshift.com/api/upgrades_info/v1/graph'
+      # =======================================================================
+      # Project onboarding (project-onboarding label). Each entry in projects becomes a Namespace
+      # (an OpenShift Project) with templated labels and annotations. A template is a string with
+      # {field} placeholders filled from the project's fields; {name} is the project name. An entry
+      # whose placeholder is missing or empty is skipped. Collections are maps so a lower level can
+      # override one entry; defaults can sit in global.yaml or a clusterset.
+      # =======================================================================
+      projectDefaults:
+        # Group-name templates per access level. A level whose placeholders cannot be filled gets no
+        # RoleBinding unless the project overrides the name; a project with no admin group is skipped.
+        groups:
+          admin: 'K8S_{team}_ADMINS_{environment}'
+          write: 'K8S_{team}_DEVELOPERS_{environment}'
+          read: 'K8S_{team}_VIEWERS_{environment}'
+        # ClusterRole bound at each level; optional, these are the defaults.
+        roles:
+          admin: admin
+          write: edit
+          read: view
+        labels:
+          team:
+            enabled: true
+            key: 'example.com/team'
+            value: '{team}'
+          environment:
+            enabled: true
+            key: 'example.com/environment'
+            value: '{environment}'
+          cost-center:
+            enabled: true
+            key: 'example.com/cost-center'
+            value: 'cc-{costCenter}'
+          vlan:
+            enabled: true
+            key: 'network.example.com/vlan-{vlan}'
+            value: 'true'
+        # Platform label and annotation keys (network.openshift.io/policy-group,
+        # pod-security.kubernetes.io/*, openshift.io/run-level, openshift.io/sa.scc.*,
+        # openshift.io/node-selector, scheduler.alpha.kubernetes.io/*, kubernetes.io/metadata.name,
+        # security.openshift.io/*) are refused in labels and annotations unless the exact key is
+        # listed here with true. Never a prefix: allowing warn leaves enforce refused.
+        allowedPlatformKeys:
+          pod-security.kubernetes.io/warn: true
+        # Circuit breaker for namespace deletion (project-onboarding-delete-namespaces). Unset: no
+        # limit. 0: never delete, report only. N: when more than N namespaces whose grace period is
+        # over would be deleted in one evaluation, counted across all shards, delete none and report
+        # them. Recommended wherever namespace deletion is on.
+        # maxNamespaceDeletes: 2
+        # Namespace deletion is two-phase: a removed project's namespace is first marked
+        # (autoshift.io/onboarding-pending-deletion-since), and deleted only once the project has
+        # been undeclared this long. Declaring the project again cancels it. Hours, minutes and
+        # seconds only (24h, 90m, 1h30m), at least 1h. Default 24h.
+        # namespaceDeleteGracePeriod: 24h
+        # Named quota bundles. A project's size selects one; the policy renders the ResourceQuota
+        # autoshift-quota from quota and the LimitRange autoshift-limits (type Container) from
+        # limitRange, after applying the project's own quota and limitRange keys on top.
+        sizes:
+          small:
+            quota:
+              requests.cpu: '4'
+              requests.memory: 8Gi
+              limits.memory: 16Gi
+              pods: '50'
+            limitRange:
+              default:
+                cpu: 500m
+                memory: 512Mi
+              defaultRequest:
+                cpu: 100m
+                memory: 128Mi
+        # Named network rule bundles. A project's networkProfile selects one; its own network.rules
+        # override the profile's rules by name, and enabled: false removes an inherited rule.
+        # defaultDeny renders autoshift-default-deny-ingress and autoshift-default-deny-egress; in a
+        # direction with defaultDeny, each in-cluster allow rule renders the NetworkPolicy
+        # autoshift-rule-<name> (without one, a NetworkPolicy would isolate the pods). Peer shortcuts:
+        # sameNamespace, router, monitoring, dns (openshift-dns, port 5353 TCP and UDP).
+        networkProfiles:
+          strict:
+            defaultDeny:
+              ingress: true
+              egress: true
+            rules:
+              dns:
+                direction: egress
+                action: allow
+                to:
+                  dns: true
+          permissive:
+            defaultDeny:
+              ingress: true
+              egress: false
+            rules:
+              same-namespace:
+                direction: ingress
+                action: allow
+                from:
+                  sameNamespace: true
+              router:
+                direction: ingress
+                action: allow
+                from:
+                  router: true
+              monitoring:
+                direction: ingress
+                action: allow
+                from:
+                  monitoring: true
+        # Admin network policies: rules no project can override, empty unless defined. Each enabled
+        # entry renders the AdminNetworkPolicy autoshift-admin-<name>, priority 10 upward in name
+        # order (at most 40 entries), ahead of the project AdminNetworkPolicies at 50. appliesTo is
+        # one of allProjects: true (every onboarded project), labels (onboarded projects with these
+        # namespace labels) or namespaceSelector (any namespaces, passed through). Peers: namespaces,
+        # router, monitoring, dns and, for egress, cidrs.
+        adminNetworkPolicies:
+          deny-metadata:
+            appliesTo:
+              allProjects: true
+            direction: egress
+            action: deny
+            to:
+              cidrs: ['169.254.169.254/32']
+      projects:
+        payments-api:
+          displayName: Payments API
+          team: payments
+          environment: NONPROD
+          costCenter: '4711'
+          vlan: '70'
+          groups:
+            read: K8S_SHARED_AUDITORS
+          size: small
+          # Per-key overrides of the size; the other keys come from projectDefaults.sizes.small.
+          quota:
+            pods: '80'
+          networkProfile: strict
+          network:
+            rules:
+              from-frontend:
+                direction: ingress
+                action: allow
+                from:
+                  namespaces:
+                    labels:
+                      example.com/team: web
+                ports: [8443]                   # no protocol: TCP
+              # Egress to cidrs is an EgressFirewall rule, so it renders no NetworkPolicy.
+              to-database:
+                direction: egress
+                action: allow
+                to:
+                  cidrs: ['10.20.30.0/24']
+                ports: [5432]
+              dns:
+                enabled: false                  # removes the strict profile's dns rule
+          # Optional EgressIP autoshift-payments-api: egress from the project leaves through these
+          # addresses. Needs nodes labeled k8s.ovn.org/egress-assignable and an address in a node subnet.
+          egressIP: ['198.51.100.50']
+        reporting:
+          team: reporting
+          environment: PROD
+          # deleteOnRemoval: true lets onboarding delete this namespace, which it creates, once the
+          # project is removed from config.projects. Off by default; it also needs the cluster labels
+          # project-onboarding-delete-namespaces and project-onboarding-prune set to 'true', and a
+          # namespace that holds storage, such as PersistentVolumeClaims, is kept. Irreversible.
+          # deleteOnRemoval: true
+        # An existing namespace that was not created by project onboarding. adopt: true lets onboarding
+        # take it over; with no mode set it defaults to inform (report drift only) until mode is enforce.
+        legacy-app:
+          team: legacy
+          environment: PROD
+          adopt: true
     labels:
       # =======================================================================
       # Core Configuration
@@ -2831,3 +3002,22 @@ hubClusterSets:
       # Red Hat's 'hosted' mode is refused by the chart: it disables the policy add-on for that hub,
       # so the hub of hubs could no longer configure it.
       global-hub-deploy-mode: ''
+
+      # =======================================================================
+      # Namespaces (OpenShift Projects) with templated labels and annotations (settings in
+      # config.projects and config.projectDefaults)
+      # =======================================================================
+      project-onboarding: 'false'
+      # Deletion opt-in for project-onboarding. 'true' deletes owned objects that are no longer declared
+      # (for example a RoleBinding whose group was removed) and strips catalog labels that were
+      # removed from the namespace. Any other value, the default, only reports them through the -test
+      # Policies and leaves them in place. Namespaces are deleted only with the next label as well.
+      project-onboarding-prune: 'false'
+      # Namespace deletion opt-in for project-onboarding. 'true', together with
+      # project-onboarding-prune: 'true', deletes the namespace of a removed project, but only one that
+      # project onboarding created itself, whose project set deleteOnRemoval: true, and that holds no
+      # storage (PersistentVolumeClaims, VolumeSnapshots, ObjectBucketClaims, DataVolumes or
+      # VirtualMachines). Irreversible: every workload and secret in the namespace goes with it.
+      # Adopted namespaces are never deleted. Any other value, the default, keeps the namespace and
+      # reports it in the status ConfigMap.
+      project-onboarding-delete-namespaces: 'false'

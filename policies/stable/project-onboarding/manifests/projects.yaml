@@ -1,0 +1,2363 @@
+# Project onboarding, from config.projects (per project) and config.projectDefaults (shared).
+# Rendered twice, identically except for $want on the next line: manifests/projects.yaml is the
+# enforce ConfigurationPolicy, test/projects.yaml the inform one. Each renders only the projects
+# whose effective mode equals $want. Keep the two files in sync (a test enforces it).
+#
+# Shards: eight enforcing Policies, policy-project-onboarding-0 to -7, render manifests/, and their
+# eight inform-only Policies, policy-project-onboarding-0-test to -7-test, render test/. Each reads
+# its $shard from its own name (.PolicyMetadata.name; any other name, or a -test name for the
+# enforce template or a plain name for the inform one, fails the hub template). A project
+# belongs to shard adler32sum(name) mod $shards. Every shard parses the whole config, so the checks
+# across projects ($eipOwners, $nsClaims, $nsDeclarer) see every project, but a shard renders,
+# reports, sizes and prunes only its own projects ($projShard). The sweep routes each live object to
+# the shard of the project declaring its namespace ($nsOwners for this shard, $otherNs for the
+# others), else of the project it belongs to (hashed on the managed cluster the same way): for the
+# cluster-scoped EgressIP autoshift-<project> and AdminNetworkPolicy autoshift-project-<project> the
+# project in the name, which is what declares them, otherwise the project its autoshift.io/project
+# label names; else to shard 0, which also owns the admin tier. Each shard writes its own status
+# ConfigMap project-onboarding-status-<shard>; shard 0 deletes the single policy's
+# project-onboarding-status.
+#
+# A template is a string with {field} placeholders filled from the merged project fields; {name} is
+# always the project name. A placeholder is any {...} without nested braces. Filling is one pass
+# over the template's own placeholders, so a value is inserted as written and never expanded again.
+# A placeholder is unresolved when no field of that name holds a scalar with a non-space character.
+# A label or annotation whose key or value has an unresolved placeholder is skipped. A group level
+# with one, or whose name is blank, gets no RoleBinding; for a project override of write or read
+# that is reported in the status as a note, which does not count as an error (pruning stays on).
+#
+# Injection: the hub output is parsed again as the managed-cluster template, so a user string never
+# reaches it as template text. Free-form strings (group and role names, labels, annotations, errors)
+# go through the hub as toJson | base64enc | quote and are read back with base64dec | fromJson inside
+# a managed-cluster action. Base64, not quoted JSON: config-policy-controller rewrites the template
+# text with regexes before parsing it (toInt, toBool, toLiteral, autoindent), and those match inside
+# a quoted string; base64 has no character they need. Only constants, numbers, booleans and values
+# the hub validated against a strict pattern are emitted directly;
+# TestProjectOnboarding_NoUserStringAsSpokeTemplateText lists them.
+#
+# Effective mode: the project's mode when it sets one (any non-null value); inform when it sets
+# adopt: true and no mode; otherwise enforce. A mode other than enforce or inform (false and 0
+# included) is an error and falls back to inform, so a typo never skips the adoption preview. adopt
+# takes true or false (bool or string); any other value is an error and counts as false. Ownership:
+# the managed cluster looks the namespace up. If it carries an autoshift.io/project label naming
+# another project, nothing is rendered for this project, adopt or not. If it exists with no such
+# label, it is rendered only when the project sets adopt: true.
+#
+# Deletion is opt-in: only the cluster label autoshift.io/project-onboarding-prune: 'true' turns it
+# on. Off (the default), nothing owned is deleted and no label is stripped; both are reported by the
+# inform ConfigurationPolicy instead. A Namespace is deleted only under Namespace deletion below.
+#
+# Namespace deletion: a Namespace this policy created (it did not exist, the project is not adopt)
+# gets the label autoshift.io/onboarding-created: 'true' and the annotations
+# autoshift.io/onboarding-created-by (the project), autoshift.io/delete-on-removal (the project's
+# deleteOnRemoval, true or false) and autoshift.io/onboarding-mode, in $applied. These keys and the
+# pending mark below ($recordKeys) are reserved: no catalog entry sets them. They are kept on an
+# existing Namespace only while it carries the marker and created-by names this project and the
+# project is not adopt ($own); otherwise they are removed (an adopted or pre-existing Namespace
+# never gets them, so it can never be deleted). The record is bound to the Namespace instance: a new
+# Namespace records autoshift.io/onboarding-created-at ($nowTs), and the first evaluation that finds
+# it labeled with the marker, without a stamp, and with a creationTimestamp from 30 s before to
+# 600 s after that time stamps autoshift.io/onboarding-created-uid with its metadata.uid ($nsAdd,
+# applied in the project's own Namespace object). A stamp is never replaced, and a Namespace is
+# deleted only while the stamp equals its live uid, so a restored or migrated copy (new uid, new
+# creationTimestamp) never is. Residual race: a Namespace someone else creates between the $existing
+# lookup (cached) and the apply gets the record merged in by the musthave and is then stamped; the
+# 30 s lower bound only excludes one the cache had not shown for longer (see Creation race in the
+# README). After the project is removed, the shard of its name
+# (the project label) handles the Namespace when: the marker, managed-by, created-by equal to the
+# label, delete-on-removal 'true', no current project of that name ($projOwners), no current project
+# declaring the Namespace in any shard ($nsOwners, $otherNs), not a platform namespace, not this
+# Policy's namespace ($policyNs), and not named after a ManagedCluster (looked up by name on the
+# managed cluster when its CRD exists, so on a hub; a hub template cannot list cluster-scoped kinds
+# outside the policy namespace). It is then
+# kept, with the reason in the status, unless the cluster label
+# autoshift.io/project-onboarding-delete-namespaces is 'true' ($nsDelOn), prune is on, config.projects
+# has a project ($projEmpty: an empty or missing map never marks or deletes),
+# projectDefaults.namespaceDeleteGracePeriod is valid, and it holds no storage ($storeKinds): no
+# PersistentVolumeClaim in any phase, and no VolumeSnapshot, ObjectBucketClaim, DataVolume or
+# VirtualMachine, each listed only when its CRD exists. A CRD that exists without serving the
+# version listed blocks the deletion, and a lookup that fails (Forbidden) fails the template, so
+# nothing is applied.
+# Deletion is two-phase. The first evaluation that finds it so marks it: the annotation
+# autoshift.io/onboarding-pending-deletion-since ($pendingKey) set to the managed cluster's now, UTC.
+# A later evaluation deletes it with mustnothave once now is at least the grace period ($graceSec,
+# default 24h) past the mark. A mark that is not a timestamp of that exact form, a date that does
+# not exist (toDate gives the zero time, so the parsed value must be positive), or one in the future
+# counts as no mark and is set again, so it can only restart the grace period. Outside dry run, a
+# cluster-level guard that blocks the deletion (delete-namespaces label or prune off, empty
+# projects, invalid grace period: $clusterWhy) removes the mark, so resolving it always starts a
+# fresh grace period. A grace period below 1h is reported ($graceLow) and 24h is used. Declaring the project
+# again removes the mark: from its own Namespace object when it renders in the enforce
+# ConfigurationPolicy, otherwise from a record write of the enforce ConfigurationPolicy in the sweep.
+# Only the enforce ConfigurationPolicy marks or deletes, only for the recorded mode enforce, and
+# only when the Policy annotation autoshift.io/remediation (the deployment REMEDIATION, read on the
+# hub) is exactly enforce ($dryRun otherwise). The inform ConfigurationPolicy never carries a
+# Namespace mustnothave or mark, so an enforce set on the root of a -test Policy by hand cannot make
+# it delete;
+# a recorded mode inform or a dry run is only reported in the status. Each such Namespace is listed
+# in the status under the project's name: marked or pending with the time it becomes deletable,
+# deleted, reported, or kept with the guard that blocked it. A Namespace whose delete-on-removal is
+# not 'true' is kept and not reported.
+#
+# Record write: in the enforce ConfigurationPolicy, a labeled Namespace that this shard is involved
+# with (its project is declared here, or a project here declares it) and that no other object of
+# this ConfigurationPolicy writes (its project's own Namespace object in mode enforce, a release) is
+# written from its live labels and annotations (metadataComplianceType mustonlyhave) when they need
+# a change: the pending mark removed; on the project's own namespace, a record that is not $own
+# removed, onboarding-mode enforce lowered to inform for a project in mode inform, and
+# delete-on-removal 'true' lowered to 'false' for a project without deleteOnRemoval. It runs whether
+# or not the project renders (invalid, blocked by a missing CRD, no admin group, size-skipped), so
+# the last declared intent is recorded before a later removal. It only lowers, never raises: a
+# project must render cleanly in mode enforce to record deleteOnRemoval true or mode enforce. It
+# never adds anything, so writes from two shards converge. Under dry run the enforce
+# ConfigurationPolicy is inform, so nothing is recorded (see Dry run in the README).
+#
+# Circuit breaker: projectDefaults.maxNamespaceDeletes, validated on the hub against ^[0-9]{1,9}$
+# (not a string), or a float64 holding such an integer (the rendered config passes through YAML,
+# which writes 1000000 as 1e+06). Unset or null: no limit. 0: nothing is deleted, only reported. Any
+# other value is reported under the status key projectDefaults.maxNamespaceDeletes (shard 0) and
+# counts as 0. A positive N, with both cluster labels on, passes every shard the declared project
+# names ($allNames, label-value names only), so each shard counts the same global set of Namespaces
+# that pass every guard with recorded mode enforce and whose grace period is over ($nsDelCount);
+# above N, none is deleted, in any shard. Marking is not counted.
+#
+# Labels: an existing Namespace is rendered with metadataComplianceType mustonlyhave, so its labels
+# and annotations are exact. The managed cluster therefore renders the full live set (labels and
+# annotations other tools own are kept) and overlays this run's metadata. With prune on and no
+# errors, the catalog label keys the autoshift.io/project-labels annotation lists from an earlier
+# run and this run no longer applies are dropped. Otherwise they are kept, autoshift.io/project-labels
+# becomes the union of the earlier and this run's keys, and (prune off, no errors) the inform
+# ConfigurationPolicy carries a second Namespace check with the drop applied, which reports
+# NonCompliant without changing anything. Annotations are only merged. A new Namespace is created
+# with this run's metadata alone.
+#
+# Quotas: a project's size selects projectDefaults.sizes.<size>; its quota and limitRange maps are
+# merged over the size (mergeOverwrite, so an empty override never blanks a key) into the ResourceQuota
+# autoshift-quota (spec.hard) and the LimitRange autoshift-limits (one Container item). Both are
+# mustonlyhave, so a removed key goes away; the LimitRange is rendered with the API server's defaulting
+# applied (max to default, then default and min to defaultRequest), so the exact match cannot drift.
+# No size renders neither; quota or limitRange set without size is reported (nothing is pruned). An
+# undefined, non-string or non-map size skips the project; a bad quota or limitRange value skips only
+# that object, which stays declared so the live one is kept rather than pruned. Project overrides
+# that are '' or null are dropped before the merge; an unprefixed key must be a standard quota or
+# container resource. A quantity not in canonical form ($canon) is rendered as written and listed
+# as a note.
+#
+# Network: a project's networkProfile selects projectDefaults.networkProfiles.<profile>. Its rules and
+# the project's network.rules are merged by rule name (mergeOverwrite of each rule, project last);
+# enabled: false drops a rule, and network.defaultDeny overrides the profile's per direction. Each rule
+# is validated into the rule model ($ruleModel: direction, action, origin profile or project, in-cluster
+# NetworkPolicy peers, dns, cidrs, dnsNames, ports; a port without protocol is TCP). Any network error
+# skips the project whole, since rendering the rest could leave it more open than declared. Rendered:
+# autoshift-default-deny-ingress, autoshift-default-deny-egress (egress only to 0.0.0.0/0 and, on dual
+# stack, ::/0, except the cluster and service networks read from the Network config cluster, else from
+# config.networking; with neither it is a full egress deny, reported but not an error, so pruning stays
+# on), and autoshift-rule-<name> per allow rule with an in-cluster or ingress cidrs peer, only in a
+# direction with defaultDeny: any NetworkPolicy isolates the pods it selects in its direction, so an
+# allow without a default deny would silently deny everything else (the ANP override and the
+# EgressFirewall still carry such a rule). An ingress cidrs peer is an ipBlock whose except lists every cluster and service network inside it, since
+# OVN-Kubernetes matches pod IPs with ipBlock; one inside such a network, or any while the networks
+# are unknown, is a managed-cluster error. An IPv4-mapped IPv6 CIDR is a hub error. Egress cidrs
+# and dnsNames (allow or deny) render the EgressFirewall default, one entry per CIDR or name with the
+# rule's ports: project rules first, then profile rules, each in rule-name order, then with
+# defaultDeny.egress a final Deny 0.0.0.0/0 (and ::/0 on dual stack or when the stack is unknown).
+# Node IPs are external to it, so that final deny closes them. A deny with in-cluster peers renders the
+# cluster-scoped AdminNetworkPolicy autoshift-project-<name> (priority 50, subject the namespaces
+# labeled autoshift.io/project=<name>; disjoint subjects make the shared priority safe, and as
+# verified against the OVN-Kubernetes release-4.22 source, not on a live cluster, all of them are
+# programmed with only a warning event), per direction: project denies, then every project in-cluster
+# allow as Allow when the profile has a deny in that direction (selector overlap cannot be computed
+# here, so all are repeated), then profile denies; dns is its own rule to openshift-dns on 5353,
+# ingress ipBlocks are not carried over. Project errors: an egress allow CIDR inside a cluster or
+# service network, or an egress deny CIDR overlapping one
+# (checked on the managed cluster against the parsed CIDRs; with them unknown only an egress deny is
+# an error, since an allow never opens what a deny closes; a wider allow renders, as OVN-Kubernetes
+# skips the in-cluster part), more than 8000 EgressFirewall rules (counted on the managed cluster,
+# final denies included), a named port on such a rule or on an AdminNetworkPolicy rule, more than 100
+# AdminNetworkPolicy rules per direction or ports per rule, a deny of the router peer (host-network
+# router pods are not matched), a missing EgressFirewall or AdminNetworkPolicy CRD, and an ingress
+# deny from cidrs. The managed-cluster ones block the project like an ownership block.
+#
+# Admin network policies: each enabled projectDefaults.adminNetworkPolicies entry renders the
+# AdminNetworkPolicy autoshift-admin-<entry>, once and in the enforce ConfigurationPolicy only (drift
+# is corrected there; under dry-run that one is inform and reports it), independent of projects.
+# Priority 10 upward in entry-name order, so at most 40 entries (10 to 49) and all ahead of the
+# project AdminNetworkPolicies at 50. Subject: allProjects is namespaces with autoshift.io/project
+# (Exists); labels adds those matchLabels to it; namespaceSelector is passed through after validation.
+# Peers: namespaces, router (allow only), monitoring, dns (openshift-dns on 5353, its own rule) and,
+# egress only, cidrs as networks peers of up to 25. Any invalid entry, or more than 40, fails the tier
+# closed: no admin AdminNetworkPolicy renders and none is pruned, so live ones stay as they were.
+# Errors and a missing CRD are reported under the status key projectDefaults.adminNetworkPolicies.
+#
+# EgressIP: a project's egressIP list (IPv4 dotted decimal or IPv6 hex groups, no prefix length)
+# renders the cluster-scoped EgressIP autoshift-<name>, selecting the namespaces labeled
+# autoshift.io/project=<name>. It is mustonlyhave, so a changed address replaces the earlier one, and
+# follows the project mode. A hub pass over every project, before the main loop, validates the lists
+# and keys each address by value (IPv6 parsed into groups), so a repeat within one list is rendered
+# once. Not a list, an invalid entry (the unspecified 0.0.0.0 and :: and IPv4-mapped ::ffff:0:0/96
+# included, since OVN-Kubernetes treats a mapped address as its IPv4 form), or an address that two or
+# more projects declare (reported on each of them) skips the project whole. A missing EgressIP CRD
+# blocks a project that declares one, like an ownership block. Node labels
+# (k8s.ovn.org/egress-assignable) are a prerequisite, not set here.
+#
+# Pruning: owned objects (label autoshift.io/managed-by=project-onboarding) of the kinds in the sweep
+# list that this run does not declare get mustnothave. An object belongs to the project declaring
+# its namespace, else to the project its autoshift.io/project label names, else to no project. It is
+# never a candidate when that project has errors or did not render its currently declared namespace
+# this run (so a project moved to a namespace it cannot take keeps its old objects), and an object
+# outside that namespace (a project moved) is a candidate only once the new namespace is live, that
+# is it existed at this run's lookup ($live). An object of no declared project is never a candidate
+# while a namespace labeled with its project is declared by a current project ($heldBy: a renamed
+# project, or a takeover blocked by that label; an empty label value holds nothing), since its
+# AdminNetworkPolicy and EgressIP still select that namespace. A labeled namespace no project
+# declares (never a platform namespace), whose project moved to a live namespace and has no errors,
+# is released: its ownership labels are removed (prune on, in the ConfigurationPolicy of the
+# project's mode) or the removal is reported (prune off, inform). With prune on, a candidate goes
+# to the ConfigurationPolicy of its project's mode (an inform project is only reported), and an
+# object of no project to the enforce one. With prune off, every candidate goes to the inform one.
+# No sweep runs when the rendered config cannot be read or has no projects map (a missing key prunes
+# nothing; an explicit empty map makes everything a candidate). Namespaces are never pruned. An admin
+# AdminNetworkPolicy (autoshift-admin-*) belongs to no project, and while the admin tier is in error
+# it is never a candidate.
+#
+# Status: a project that is invalid or blocked is reported in its shard's ConfigMap
+# project-onboarding-status-<shard> (open-cluster-management-agent-addon), one data key per project, its
+# errors joined by "; ". The hub finds config errors. These skip the project: an entry that is not a
+# map, a project name or namespace that is not a DNS-1123 label, a platform namespace ($platformNs:
+# kube-*, openshift-*, openshift, default, open-cluster-management* including this policy's add-on
+# namespace, multicluster-engine, hive; no override), no resolvable admin group, and a namespace
+# another project declares ($nsDeclarer: the project named after the namespace keeps it, else the
+# first by name). These skip only their item: an invalid or reserved label, a catalog entry, labels,
+# annotations or groups value that is not a map, a group that is not a string, and a label or
+# annotation with a platform key ($platformKey: the keys that make a namespace a router or
+# monitoring peer, or lift Pod Security, SCC, run-level or scheduling guards) that
+# projectDefaults.allowedPlatformKeys does not map to true. An unknown mode is reported and the
+# project renders in inform. The managed cluster adds ownership blocks, which render nothing for the
+# project: a namespace another project owns, or an existing unowned one without adopt: true. A
+# rendered config that cannot be read, or whose projects key is not a map, is reported under the key
+# rendered-config and nothing renders; a readable config with no projects key has no projects, so
+# nothing is reported. Malformed projectDefaults fails the hub template for every project. A project
+# name that is not a ConfigMap key is reported under the name with each invalid character replaced
+# by "_". The enforce ConfigurationPolicy writes the ConfigMap while there are errors and deletes it
+# when there are none; the inform one asserts it is absent, so it is NonCompliant while the
+# ConfigMap exists. Under dry-run the write is only reported, which is NonCompliant too. Errors of
+# projects whose names map to one status key are concatenated.
+#
+# Size, per shard Policy: a base for the static template text ($sizeBase, measured on an empty shard:
+# 36887 bytes at most with namespace deletion off, 40453 with it and the breaker on, plus shard 0's
+# status lines for an invalid maxNamespaceDeletes or grace period; TestProjectOnboarding_SizeEstimateCovers
+# includes those modes), then the hub estimates each project's share of the resolved Policy ($est; invalid projects pay
+# their status $overhead; TestProjectOnboarding_SizeEstimateCovers holds it at or above the measured
+# size for every feature) and keeps the total below $sizeLimit (1 MiB, well under the 1.5 MiB etcd
+# request limit). Status messages are cut to 400 characters. The total is published as a comment.
+# Backstops that fail the hub template, so nothing is applied: more than $maxProjects (3200) projects in total,
+# or a total with the bookkeeping of skipped projects (charged per JSON-encoded name length) over
+# $sizeHard, checked once for the admin-tier errors alone and after each skipped project. The project that would cross it and every later one in name order are not
+# rendered, count as errored (nothing of them is pruned or declared), and are listed under the
+# status key project-onboarding.size. Stale objects and dropped labels reported with prune off are
+# not errors and are not listed, but they also keep the inform ConfigurationPolicy NonCompliant:
+# with prune off, the -test Policy is NonCompliant while there are errors or anything would be deleted or
+# stripped.
+object-templates-raw: |
+  {{hub- $want := "enforce" hub}}
+  {{hub- $shards := 8 hub}}
+  {{hub- $policyName := printf "%v" .PolicyMetadata.name hub}}
+  {{hub- $nameSuffix := ternary "" "-test" (eq $want "enforce") hub}}
+  {{hub- if not (regexMatch (printf "^policy-project-onboarding-[0-7]%s$" $nameSuffix) $policyName) hub}}{{hub- fail (printf "project-onboarding: the Policy must be named policy-project-onboarding-<shard>%s, shard 0 to 7 (see Shards in the project-onboarding README)" $nameSuffix) hub}}{{hub- end hub}}
+  {{hub- $shard := atoi (index (splitList "-" $policyName) 3) hub}}
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfgRaw := index ($rcm.data | default dict) "config" | default "" | fromYaml hub}}
+  {{hub- $cfg := dict hub}}
+  {{hub- if kindIs "map" $cfgRaw hub}}{{hub- $cfg = $cfgRaw hub}}{{hub- end hub}}
+  {{hub- $cfgErr := "" hub}}
+  {{hub- if not (and $rcm $cfg) hub}}
+  {{hub- $cfgErr = printf "cannot read %s.rendered-config" .ManagedClusterName hub}}
+  {{hub- else if and (index $cfg "projects") (not (kindIs "map" (index $cfg "projects"))) hub}}
+  {{hub- $cfgErr = printf "config.projects in %s.rendered-config is not a map" .ManagedClusterName hub}}
+  {{hub- end hub}}
+  {{hub- $projects := dict hub}}
+  {{hub- if kindIs "map" (index $cfg "projects") hub}}{{hub- $projects = index $cfg "projects" hub}}{{hub- end hub}}
+  {{hub- $defaultsRaw := index $cfg "projectDefaults" | default dict hub}}
+  {{hub- if not (kindIs "map" $defaultsRaw) hub}}{{hub- fail "config.projectDefaults is not a map" hub}}{{hub- end hub}}
+  {{hub- $defaults := dict hub}}
+  {{hub- range $section := list "labels" "annotations" "groups" "roles" "sizes" "networkProfiles" "allowedPlatformKeys" hub}}
+  {{hub- $sectionCfg := index $defaultsRaw $section | default dict hub}}
+  {{hub- if not (kindIs "map" $sectionCfg) hub}}{{hub- fail (printf "config.projectDefaults.%s is not a map" $section) hub}}{{hub- end hub}}
+  {{hub- $_ := set $defaults $section $sectionCfg hub}}
+  {{hub- end hub}}
+  {{hub- $dns1123 := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" hub}}
+  {{hub- $placeholder := "\\{[^{}]*\\}" hub}}
+  {{hub- $platformNs := "^(kube-.*|openshift-.*|openshift|default|open-cluster-management.*|multicluster-engine|hive)$" hub}}
+  {{hub- $platformKey := "^(network\\.openshift\\.io/policy-group|openshift\\.io/run-level|openshift\\.io/node-selector|kubernetes\\.io/metadata\\.name|pod-security\\.kubernetes\\.io/.*|openshift\\.io/sa\\.scc\\..*|scheduler\\.alpha\\.kubernetes\\.io/.*|security\\.openshift\\.io/.*)$" hub}}
+  {{hub- $quantity := "^[+]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+|[KMGTPE]i|[numkMGTPE])?$" hub}}
+  {{hub- $quotaResource := "^(pods|services|replicationcontrollers|resourcequotas|secrets|configmaps|persistentvolumeclaims|services\\.nodeports|services\\.loadbalancers|cpu|memory|ephemeral-storage|(requests|limits)\\.(cpu|memory|ephemeral-storage)|requests\\.storage|(requests\\.)?hugepages-.+)$" hub}}
+  {{hub- $resourceName := "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$" hub}}
+  {{hub- $cidr := "^(((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])|[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}/(12[0-8]|1[01][0-9]|[1-9]?[0-9]))$" hub}}
+  {{hub- $ipv4 := "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$" hub}}
+  {{hub- $pow2 := list 1 2 4 8 16 32 64 128 256 512 1024 2048 4096 8192 16384 32768 65536 hub}}
+  {{hub- $hexVal := dict "0" 0 "1" 1 "2" 2 "3" 3 "4" 4 "5" 5 "6" 6 "7" 7 "8" 8 "9" 9 "a" 10 "b" 11 "c" 12 "d" 13 "e" 14 "f" 15 hub}}
+  {{hub- $cfgNetwork := index $cfg "networking" hub}}
+  {{hub- $cfgPodCidrs := list hub}}
+  {{hub- $cfgSvcCidrs := list hub}}
+  {{hub- $cfgCidrsOk := true hub}}
+  {{hub- if kindIs "map" $cfgNetwork hub}}
+  {{hub- $cn := index $cfgNetwork "clusterNetwork" hub}}
+  {{hub- if kindIs "map" $cn hub}}{{hub- $cn = list $cn hub}}{{hub- end hub}}
+  {{hub- if kindIs "slice" $cn hub}}
+  {{hub- range $e := $cn hub}}
+  {{hub- if kindIs "map" $e hub}}{{hub- $cfgPodCidrs = append $cfgPodCidrs (printf "%v" (dig "cidr" "" $e)) hub}}{{hub- else hub}}{{hub- $cfgCidrsOk = false hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $sn := index $cfgNetwork "serviceNetwork" hub}}
+  {{hub- if kindIs "slice" $sn hub}}{{hub- range $c := $sn hub}}{{hub- $cfgSvcCidrs = append $cfgSvcCidrs (printf "%v" $c) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $c := concat $cfgPodCidrs $cfgSvcCidrs hub}}{{hub- if not (regexMatch $cidr $c) hub}}{{hub- $cfgCidrsOk = false hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $cfgCidrs := list hub}}
+  {{hub- if and $cfgCidrsOk $cfgPodCidrs $cfgSvcCidrs hub}}{{hub- $cfgCidrs = concat $cfgPodCidrs $cfgSvcCidrs hub}}{{hub- end hub}}
+  {{hub- $declared := dict hub}}
+  {{hub- $nsOwners := dict hub}}
+  {{hub- $projOwners := dict hub}}
+  {{hub- $nsDeclarer := dict hub}}
+  {{hub- $eipSpecs := dict hub}}
+  {{hub- $eipOwners := dict hub}}
+  {{hub- $nsClaims := dict hub}}
+  {{hub- $projShard := dict hub}}
+  {{hub- range $name, $p := $projects hub}}
+  {{hub- $_ := set $projShard $name (mod (atoi (adler32sum $name)) $shards) hub}}
+  {{hub- $eipList := list hub}}
+  {{hub- $eipBad := list hub}}
+  {{hub- $claimNs := $name hub}}
+  {{hub- if kindIs "map" $p hub}}{{hub- $nsRaw := index $p "namespace" hub}}{{hub- if and (kindIs "string" $nsRaw) (ne $nsRaw "") hub}}{{hub- $claimNs = $nsRaw hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $_ := set $nsClaims $claimNs (append (index $nsClaims $claimNs | default list) $name) hub}}
+  {{hub- if kindIs "map" $p hub}}
+  {{hub- $raw := index $p "egressIP" hub}}
+  {{hub- if kindIs "slice" $raw hub}}
+  {{hub- $seen := dict hub}}
+  {{hub- range $ip := $raw hub}}
+  {{hub- $s := printf "%v" $ip hub}}
+  {{hub- $key := "" hub}}
+  {{hub- $nums := list hub}}
+  {{hub- if or (kindIs "map" $ip) (kindIs "slice" $ip) hub}}
+  {{hub- else if regexMatch $ipv4 $s hub}}
+  {{hub- $key = $s hub}}
+  {{hub- $o := splitList "." $s hub}}
+  {{hub- $nums = list (add (mul (atoi (index $o 0)) 256) (atoi (index $o 1))) (add (mul (atoi (index $o 2)) 256) (atoi (index $o 3))) hub}}
+  {{hub- else if regexMatch "^[0-9a-fA-F:]+$" $s hub}}
+  {{hub- $halves := splitList "::" (lower $s) hub}}
+  {{hub- $left := list hub}}
+  {{hub- $right := list hub}}
+  {{hub- if index $halves 0 hub}}{{hub- $left = splitList ":" (index $halves 0) hub}}{{hub- end hub}}
+  {{hub- if eq (len $halves) 2 hub}}{{hub- if index $halves 1 hub}}{{hub- $right = splitList ":" (index $halves 1) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $fill := sub 8 (add (len $left) (len $right)) hub}}
+  {{hub- if or (and (eq (len $halves) 1) (eq $fill 0)) (and (eq (len $halves) 2) (gt $fill 0)) hub}}
+  {{hub- $zeros := list hub}}
+  {{hub- range until (int $fill) hub}}{{hub- $zeros = append $zeros "0" hub}}{{hub- end hub}}
+  {{hub- $groups := list hub}}
+  {{hub- range $h := concat $left $zeros $right hub}}
+  {{hub- if regexMatch "^[0-9a-f]{1,4}$" $h hub}}
+  {{hub- $v := 0 hub}}
+  {{hub- range $ch := splitList "" $h hub}}{{hub- $v = add (mul $v 16) (index $hexVal $ch) hub}}{{hub- end hub}}
+  {{hub- $groups = append $groups (printf "%x" $v) hub}}
+  {{hub- $nums = append $nums $v hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if eq (len $groups) 8 hub}}{{hub- $key = join ":" $groups hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if not $key hub}}
+  {{hub- $eipBad = append $eipBad (printf "egressIP entry %s is not an IPv4 or IPv6 address (write it without a prefix length)" $s) hub}}
+  {{hub- else if or (eq $key "0.0.0.0") (eq $key "0:0:0:0:0:0:0:0") hub}}
+  {{hub- $eipBad = append $eipBad (printf "egressIP entry %s is the unspecified address" $s) hub}}
+  {{hub- else if hasPrefix "0:0:0:0:0:ffff:" $key hub}}
+  {{hub- $eipBad = append $eipBad (printf "egressIP entry %s is an IPv4-mapped IPv6 address (write the IPv4 address instead)" $s) hub}}
+  {{hub- else hub}}
+  {{hub- $g0 := index $nums 0 hub}}
+  {{hub- $special := "" hub}}
+  {{hub- if eq (len $nums) 2 hub}}
+  {{hub- $o0 := div $g0 256 hub}}
+  {{hub- if eq $key "255.255.255.255" hub}}{{hub- $special = "broadcast" hub}}
+  {{hub- else if eq $o0 127 hub}}{{hub- $special = "loopback" hub}}
+  {{hub- else if eq $o0 0 hub}}{{hub- $special = "this-network (0.0.0.0/8)" hub}}
+  {{hub- else if and (ge $o0 224) (lt $o0 240) hub}}{{hub- $special = "multicast" hub}}
+  {{hub- else if ge $o0 240 hub}}{{hub- $special = "reserved (240.0.0.0/4)" hub}}
+  {{hub- else if eq $g0 43518 hub}}{{hub- $special = "link-local" hub}}
+  {{hub- end hub}}
+  {{hub- else if eq $key "0:0:0:0:0:0:0:1" hub}}{{hub- $special = "loopback" hub}}
+  {{hub- else if ge $g0 65280 hub}}{{hub- $special = "multicast" hub}}
+  {{hub- else if and (ge $g0 65152) (le $g0 65215) hub}}{{hub- $special = "link-local" hub}}
+  {{hub- end hub}}
+  {{hub- if $special hub}}
+  {{hub- $eipBad = append $eipBad (printf "egressIP entry %s is a %s address, which OVN-Kubernetes never assigns as an egress IP" $s $special) hub}}
+  {{hub- else if not (hasKey $seen $key) hub}}
+  {{hub- $_ := set $seen $key true hub}}
+  {{hub- $eipList = append $eipList (dict "ip" $s "key" $key "g" $nums "p" (ternary 32 128 (eq (len $nums) 2))) hub}}
+  {{hub- $_ := set $eipOwners $key (append (index $eipOwners $key | default list) $name) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else if not (kindIs "invalid" $raw) hub}}
+  {{hub- $eipBad = append $eipBad "egressIP is not a list" hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $eipSpecs $name (dict "ips" $eipList "errs" $eipBad) hub}}
+  {{hub- end hub}}
+  {{hub- $otherNs := list hub}}
+  {{hub- range $ns, $claimants := $nsClaims hub}}
+  {{hub- $_ := set $nsDeclarer $ns (ternary $ns (first $claimants) (has $ns $claimants)) hub}}
+  {{hub- if and (le (len $ns) 63) (regexMatch $dns1123 $ns) hub}}
+  {{hub- range $c := $claimants hub}}{{hub- if ne (index $projShard $c) $shard hub}}{{hub- $otherNs = append $otherNs $ns hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $otherNs = $otherNs | uniq hub}}
+  {{hub- $pruneOn := eq (index .ManagedClusterLabels "autoshift.io/project-onboarding-prune" | default "false") "true" hub}}
+  {{hub- $nsDelOn := eq (index .ManagedClusterLabels "autoshift.io/project-onboarding-delete-namespaces" | default "false") "true" hub}}
+  {{hub- $dryRun := ne (printf "%v" (index (.PolicyMetadata.annotations | default dict) "autoshift.io/remediation")) "enforce" hub}}
+  {{hub- $reservedKey := "^autoshift\\.io/(project|managed-by|onboarding-created|onboarding-created-by|onboarding-created-at|onboarding-created-uid|delete-on-removal|onboarding-mode|onboarding-pending-deletion-since)$" hub}}
+  {{hub- $labelValue := "^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$" hub}}
+  {{hub- $maxDelRaw := index $defaultsRaw "maxNamespaceDeletes" hub}}
+  {{hub- $maxDel := -1 hub}}
+  {{hub- $maxDelBad := false hub}}
+  {{hub- if not (kindIs "invalid" $maxDelRaw) hub}}
+  {{hub- if and (not (kindIs "string" $maxDelRaw)) (regexMatch "^[0-9]{1,9}$" (printf "%v" $maxDelRaw)) hub}}{{hub- $maxDel = atoi (printf "%v" $maxDelRaw) hub}}
+  {{hub- else if and (kindIs "float64" $maxDelRaw) (ge $maxDelRaw 0.0) (le $maxDelRaw 999999999.0) (eq (float64 (int64 $maxDelRaw)) $maxDelRaw) hub}}{{hub- $maxDel = int64 $maxDelRaw hub}}
+  {{hub- else hub}}{{hub- $maxDel = 0 hub}}{{hub- $maxDelBad = true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $graceRaw := index $defaultsRaw "namespaceDeleteGracePeriod" hub}}
+  {{hub- $graceSec := 86400 hub}}
+  {{hub- $graceBad := false hub}}
+  {{hub- $graceLow := false hub}}
+  {{hub- if kindIs "invalid" $graceRaw hub}}
+  {{hub- else if and (kindIs "string" $graceRaw) (ne $graceRaw "") (regexMatch "^([0-9]{1,5}h)?([0-9]{1,7}m)?([0-9]{1,9}s)?$" (printf "%v" $graceRaw)) hub}}
+  {{hub- $graceSec = add (mul 3600 (atoi (regexReplaceAll "^(?:([0-9]+)h)?.*$" $graceRaw "${1}"))) (mul 60 (atoi (regexReplaceAll "^(?:[0-9]+h)?(?:([0-9]+)m)?.*$" $graceRaw "${1}"))) (atoi (regexReplaceAll "^(?:[0-9]+h)?(?:[0-9]+m)?(?:([0-9]+)s)?$" $graceRaw "${1}")) hub}}
+  {{hub- if lt $graceSec 3600 hub}}{{hub- $graceLow = true hub}}{{hub- $graceSec = 86400 hub}}{{hub- end hub}}
+  {{hub- else hub}}{{hub- $graceBad = true hub}}
+  {{hub- end hub}}
+  {{hub- $projEmpty := eq (len $projects) 0 hub}}
+  {{hub- $projVal := index $cfg "projects" hub}}
+  {{hub- $breaker := and $nsDelOn $pruneOn (gt $maxDel 0) hub}}
+  {{hub- $allNames := list hub}}
+  {{hub- if $breaker hub}}{{hub- range $n, $pv := $projects hub}}{{hub- if and (le (len $n) 63) (regexMatch $labelValue $n) hub}}{{hub- $allNames = append $allNames $n hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $adminErrs := list hub}}
+  {{hub- $adminANPs := list hub}}
+  {{hub- $adminRaw := index $defaultsRaw "adminNetworkPolicies" hub}}
+  {{hub- $adminCfg := dict hub}}
+  {{hub- if ne $shard 0 hub}}
+  {{hub- else if kindIs "map" $adminRaw hub}}{{hub- $adminCfg = $adminRaw hub}}{{hub- else if not (kindIs "invalid" $adminRaw) hub}}{{hub- $adminErrs = append $adminErrs "projectDefaults.adminNetworkPolicies is not a map" hub}}{{hub- end hub}}
+  {{hub- range $entryName := keys $adminCfg | sortAlpha hub}}
+  {{hub- $entry := index $adminCfg $entryName hub}}
+  {{hub- $bad := list hub}}
+  {{hub- if not (kindIs "map" $entry) hub}}
+  {{hub- $adminErrs = append $adminErrs (printf "entry %s is not a map" $entryName) hub}}
+  {{hub- else if not (has (printf "%v" (dig "enabled" true $entry)) (list "true" "false")) hub}}
+  {{hub- $adminErrs = append $adminErrs (printf "entry %s: enabled is not true or false" $entryName) hub}}
+  {{hub- else if eq (printf "%v" (dig "enabled" true $entry)) "true" hub}}
+  {{hub- if or (gt (len $entryName) 63) (not (regexMatch $dns1123 $entryName)) hub}}{{hub- $bad = append $bad "name is not a valid DNS-1123 label" hub}}{{hub- end hub}}
+  {{hub- range $ek := keys $entry | sortAlpha hub}}{{hub- if not (has $ek (list "appliesTo" "direction" "action" "from" "to" "ports" "enabled" "description")) hub}}{{hub- $bad = append $bad (printf "key %s is not one of appliesTo, direction, action, from, to, ports, enabled, description" $ek) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $subject := dict hub}}
+  {{hub- $projectsOnly := dict "key" "autoshift.io/project" "operator" "Exists" hub}}
+  {{hub- $at := index $entry "appliesTo" hub}}
+  {{hub- if kindIs "invalid" $at hub}}
+  {{hub- $bad = append $bad "appliesTo is not set" hub}}
+  {{hub- else if not (kindIs "map" $at) hub}}
+  {{hub- $bad = append $bad "appliesTo is not a map" hub}}
+  {{hub- else if ne (len $at) 1 hub}}
+  {{hub- $bad = append $bad "appliesTo needs exactly one of allProjects, labels, namespaceSelector" hub}}
+  {{hub- else hub}}
+  {{hub- range $ak, $av := $at hub}}
+  {{hub- $selLabels := dict hub}}
+  {{hub- $selExprs := list hub}}
+  {{hub- if eq $ak "allProjects" hub}}
+  {{hub- if and (kindIs "bool" $av) $av hub}}{{hub- $subject = dict "matchExpressions" (list $projectsOnly) hub}}{{hub- else hub}}{{hub- $bad = append $bad "appliesTo.allProjects is not true" hub}}{{hub- end hub}}
+  {{hub- else if has $ak (list "labels" "namespaceSelector") hub}}
+  {{hub- $labelsIn := dict hub}}
+  {{hub- $exprsIn := list hub}}
+  {{hub- if eq $ak "labels" hub}}
+  {{hub- if or (not (kindIs "map" $av)) (not $av) hub}}{{hub- $bad = append $bad "appliesTo.labels is not a non-empty map" hub}}{{hub- else hub}}{{hub- $labelsIn = $av hub}}{{hub- end hub}}
+  {{hub- else if not (kindIs "map" $av) hub}}
+  {{hub- $bad = append $bad "appliesTo.namespaceSelector is not a map" hub}}
+  {{hub- else hub}}
+  {{hub- range $sk, $sv := $av hub}}
+  {{hub- if eq $sk "matchLabels" hub}}
+  {{hub- if kindIs "map" $sv hub}}{{hub- $labelsIn = $sv hub}}{{hub- else if not (kindIs "invalid" $sv) hub}}{{hub- $bad = append $bad "appliesTo.namespaceSelector.matchLabels is not a map" hub}}{{hub- end hub}}
+  {{hub- else if eq $sk "matchExpressions" hub}}
+  {{hub- if kindIs "slice" $sv hub}}{{hub- $exprsIn = $sv hub}}{{hub- else if not (kindIs "invalid" $sv) hub}}{{hub- $bad = append $bad "appliesTo.namespaceSelector.matchExpressions is not a list" hub}}{{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- $bad = append $bad (printf "appliesTo.namespaceSelector key %s is not matchLabels or matchExpressions" $sk) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $lk, $lv := $labelsIn hub}}
+  {{hub- $ls := printf "%v" $lv hub}}
+  {{hub- if or (kindIs "map" $lv) (kindIs "slice" $lv) (gt (len $lk) 317) (gt (len (last (splitList "/" $lk))) 63) (not (regexMatch $resourceName $lk)) (gt (len $ls) 63) (not (regexMatch $labelValue $ls)) hub}}
+  {{hub- $bad = append $bad (printf "label %s=%s is not a valid Kubernetes label" $lk $ls) hub}}
+  {{hub- else hub}}
+  {{hub- $_ := set $selLabels $lk $ls hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $ex := $exprsIn hub}}
+  {{hub- if not (kindIs "map" $ex) hub}}
+  {{hub- $bad = append $bad "appliesTo.namespaceSelector: a matchExpressions entry is not a map" hub}}
+  {{hub- else hub}}
+  {{hub- $exKey := printf "%v" (dig "key" "" $ex) hub}}
+  {{hub- $exOp := printf "%v" (dig "operator" "" $ex) hub}}
+  {{hub- $exVals := dig "values" list $ex hub}}
+  {{hub- if kindIs "invalid" $exVals hub}}{{hub- $exVals = list hub}}{{hub- end hub}}
+  {{hub- $exOut := dict "key" $exKey "operator" $exOp hub}}
+  {{hub- range $xk := keys $ex | sortAlpha hub}}{{hub- if not (has $xk (list "key" "operator" "values")) hub}}{{hub- $bad = append $bad (printf "appliesTo.namespaceSelector: matchExpressions key %s is not key, operator or values" $xk) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if or (gt (len $exKey) 317) (gt (len (last (splitList "/" $exKey))) 63) (not (regexMatch $resourceName $exKey)) hub}}
+  {{hub- $bad = append $bad (printf "appliesTo.namespaceSelector: key %s is not a valid label key" $exKey) hub}}
+  {{hub- else if not (has $exOp (list "In" "NotIn" "Exists" "DoesNotExist")) hub}}
+  {{hub- $bad = append $bad (printf "appliesTo.namespaceSelector: operator %s is not In, NotIn, Exists or DoesNotExist" $exOp) hub}}
+  {{hub- else if not (kindIs "slice" $exVals) hub}}
+  {{hub- $bad = append $bad (printf "appliesTo.namespaceSelector: values of %s is not a list" $exKey) hub}}
+  {{hub- else if and (has $exOp (list "In" "NotIn")) (not $exVals) hub}}
+  {{hub- $bad = append $bad (printf "appliesTo.namespaceSelector: operator %s needs a non-empty values list" $exOp) hub}}
+  {{hub- else if and (has $exOp (list "Exists" "DoesNotExist")) $exVals hub}}
+  {{hub- $bad = append $bad (printf "appliesTo.namespaceSelector: operator %s takes no values" $exOp) hub}}
+  {{hub- else hub}}
+  {{hub- $vals := list hub}}
+  {{hub- range $xv := $exVals hub}}
+  {{hub- $xs := printf "%v" $xv hub}}
+  {{hub- if or (kindIs "map" $xv) (kindIs "slice" $xv) (gt (len $xs) 63) (not (regexMatch $labelValue $xs)) hub}}{{hub- $bad = append $bad (printf "appliesTo.namespaceSelector: value %s is not a valid label value" $xs) hub}}{{hub- else hub}}{{hub- $vals = append $vals $xs hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $vals hub}}{{hub- $_ := set $exOut "values" $vals hub}}{{hub- end hub}}
+  {{hub- $selExprs = append $selExprs $exOut hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if eq $ak "labels" hub}}{{hub- $selExprs = list $projectsOnly hub}}{{hub- end hub}}
+  {{hub- if $selLabels hub}}{{hub- $_ := set $subject "matchLabels" $selLabels hub}}{{hub- end hub}}
+  {{hub- if $selExprs hub}}{{hub- $_ := set $subject "matchExpressions" $selExprs hub}}{{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- $bad = append $bad (printf "appliesTo key %s is not one of allProjects, labels, namespaceSelector" $ak) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $dir := printf "%v" (dig "direction" "" $entry) hub}}
+  {{hub- $action := printf "%v" (dig "action" "" $entry) hub}}
+  {{hub- if not (hasKey $entry "direction") hub}}{{hub- $bad = append $bad "direction is not set" hub}}{{hub- else if not (has $dir (list "ingress" "egress")) hub}}{{hub- $bad = append $bad (printf "direction %s is not ingress or egress" $dir) hub}}{{hub- end hub}}
+  {{hub- if not (hasKey $entry "action") hub}}{{hub- $bad = append $bad "action is not set" hub}}{{hub- else if not (has $action (list "allow" "deny")) hub}}{{hub- $bad = append $bad (printf "action %s is not allow or deny" $action) hub}}{{hub- end hub}}
+  {{hub- $side := ternary "from" "to" (eq $dir "ingress") hub}}
+  {{hub- $otherSide := ternary "to" "from" (eq $dir "ingress") hub}}
+  {{hub- $peers := dict hub}}
+  {{hub- if has $dir (list "ingress" "egress") hub}}
+  {{hub- if hasKey $entry $otherSide hub}}{{hub- $bad = append $bad (printf "an %s rule takes %s, not %s" $dir $side $otherSide) hub}}{{hub- end hub}}
+  {{hub- if not (hasKey $entry $side) hub}}
+  {{hub- $bad = append $bad (printf "an %s rule needs %s" $dir $side) hub}}
+  {{hub- else if not (kindIs "map" (index $entry $side)) hub}}
+  {{hub- $bad = append $bad (printf "%s is not a map" $side) hub}}
+  {{hub- else hub}}
+  {{hub- $peers = index $entry $side hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $anpPeers := list hub}}
+  {{hub- $dnsPeer := false hub}}
+  {{hub- $nets := list hub}}
+  {{hub- range $kind, $v := $peers hub}}
+  {{hub- if has $kind (list "router" "monitoring" "dns") hub}}
+  {{hub- if not (kindIs "bool" $v) hub}}
+  {{hub- $bad = append $bad (printf "peer %s is not true or false" $kind) hub}}
+  {{hub- else if $v hub}}
+  {{hub- if eq $kind "router" hub}}
+  {{hub- if eq $action "deny" hub}}{{hub- $bad = append $bad "cannot deny the router peer: router pods can use the host network, which an AdminNetworkPolicy does not match" hub}}{{hub- else hub}}{{hub- $anpPeers = append $anpPeers (dict "namespaces" (dict "matchLabels" (dict "network.openshift.io/policy-group" "ingress"))) hub}}{{hub- end hub}}
+  {{hub- else if eq $kind "monitoring" hub}}
+  {{hub- $anpPeers = append $anpPeers (dict "namespaces" (dict "matchLabels" (dict "network.openshift.io/policy-group" "monitoring"))) hub}}
+  {{hub- else if eq $dir "ingress" hub}}
+  {{hub- $bad = append $bad "dns is an egress-only peer" hub}}
+  {{hub- else hub}}
+  {{hub- $dnsPeer = true hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else if eq $kind "namespaces" hub}}
+  {{hub- if not (kindIs "map" $v) hub}}
+  {{hub- $bad = append $bad "namespaces is not a map" hub}}
+  {{hub- else hub}}
+  {{hub- $sel := dict hub}}
+  {{hub- range $sk, $sv := $v hub}}
+  {{hub- if eq $sk "labels" hub}}
+  {{hub- if or (not (kindIs "map" $sv)) (not $sv) hub}}
+  {{hub- $bad = append $bad "namespaces.labels is not a non-empty map" hub}}
+  {{hub- else hub}}
+  {{hub- $match := dict hub}}
+  {{hub- range $lk, $lv := $sv hub}}
+  {{hub- $ls := printf "%v" $lv hub}}
+  {{hub- if or (kindIs "map" $lv) (kindIs "slice" $lv) (gt (len $lk) 317) (gt (len (last (splitList "/" $lk))) 63) (not (regexMatch $resourceName $lk)) (gt (len $ls) 63) (not (regexMatch $labelValue $ls)) hub}}
+  {{hub- $bad = append $bad (printf "label %s=%s is not a valid Kubernetes label" $lk $ls) hub}}
+  {{hub- else hub}}
+  {{hub- $_ := set $match $lk $ls hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $sel "matchLabels" $match hub}}
+  {{hub- end hub}}
+  {{hub- else if eq $sk "names" hub}}
+  {{hub- if or (not (kindIs "slice" $sv)) (not $sv) hub}}
+  {{hub- $bad = append $bad "namespaces.names is not a non-empty list" hub}}
+  {{hub- else hub}}
+  {{hub- $nsNames := list hub}}
+  {{hub- range $n := $sv hub}}
+  {{hub- $ns := printf "%v" $n hub}}
+  {{hub- if or (kindIs "map" $n) (kindIs "slice" $n) (gt (len $ns) 63) (not (regexMatch $dns1123 $ns)) hub}}{{hub- $bad = append $bad (printf "namespace %s is not a valid DNS-1123 label" $ns) hub}}{{hub- else hub}}{{hub- $nsNames = append $nsNames $ns hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $sel "matchExpressions" (list (dict "key" "kubernetes.io/metadata.name" "operator" "In" "values" $nsNames)) hub}}
+  {{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- $bad = append $bad (printf "namespaces key %s is not one of labels, names" $sk) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $sel hub}}{{hub- $anpPeers = append $anpPeers (dict "namespaces" $sel) hub}}{{hub- else hub}}{{hub- $bad = append $bad "namespaces needs labels or names" hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else if eq $kind "cidrs" hub}}
+  {{hub- if eq $dir "ingress" hub}}
+  {{hub- $bad = append $bad "an AdminNetworkPolicy has no ingress CIDR peer; use namespaces, or a Route allowlist for external clients" hub}}
+  {{hub- else if or (not (kindIs "slice" $v)) (not $v) hub}}
+  {{hub- $bad = append $bad "cidrs is not a non-empty list" hub}}
+  {{hub- else hub}}
+  {{hub- range $c := $v hub}}
+  {{hub- $cs := printf "%v" $c hub}}
+  {{hub- $groups := list hub}}
+  {{hub- if not (or (kindIs "map" $c) (kindIs "slice" $c) (not (regexMatch $cidr $cs))) hub}}
+  {{hub- $addr := first (splitList "/" $cs) hub}}
+  {{hub- if contains "." $addr hub}}
+  {{hub- $o := splitList "." $addr hub}}
+  {{hub- $groups = list (add (mul (atoi (index $o 0)) 256) (atoi (index $o 1))) (add (mul (atoi (index $o 2)) 256) (atoi (index $o 3))) hub}}
+  {{hub- else hub}}
+  {{hub- $halves := splitList "::" (lower $addr) hub}}
+  {{hub- $left := list hub}}
+  {{hub- $right := list hub}}
+  {{hub- if index $halves 0 hub}}{{hub- $left = splitList ":" (index $halves 0) hub}}{{hub- end hub}}
+  {{hub- if eq (len $halves) 2 hub}}{{hub- if index $halves 1 hub}}{{hub- $right = splitList ":" (index $halves 1) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $fill := sub 8 (add (len $left) (len $right)) hub}}
+  {{hub- if or (and (eq (len $halves) 1) (eq $fill 0)) (and (eq (len $halves) 2) (gt $fill 0)) hub}}
+  {{hub- $zeros := list hub}}
+  {{hub- range until (int $fill) hub}}{{hub- $zeros = append $zeros "0" hub}}{{hub- end hub}}
+  {{hub- range $h := concat $left $zeros $right hub}}
+  {{hub- if regexMatch "^[0-9a-f]{1,4}$" $h hub}}
+  {{hub- $hv := 0 hub}}
+  {{hub- range $ch := splitList "" $h hub}}{{hub- $hv = add (mul $hv 16) (index $hexVal $ch) hub}}{{hub- end hub}}
+  {{hub- $groups = append $groups $hv hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if ne (len $groups) 8 hub}}{{hub- $groups = list hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $hostBits := false hub}}
+  {{hub- $prefix := atoi (last (splitList "/" $cs)) hub}}
+  {{hub- range $i, $g := $groups hub}}
+  {{hub- $b := max 0 (min 16 (sub $prefix (mul 16 $i))) hub}}
+  {{hub- if ne (mod $g (index $pow2 (sub 16 $b))) 0 hub}}{{hub- $hostBits = true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if not $groups hub}}
+  {{hub- $bad = append $bad (printf "cidr %s is not a valid CIDR" $cs) hub}}
+  {{hub- else if and (eq (len $groups) 8) (eq (join "," (slice $groups 0 6)) "0,0,0,0,0,65535") hub}}
+  {{hub- $bad = append $bad (printf "cidr %s is an IPv4-mapped IPv6 range, which OVN-Kubernetes treats as IPv4 (write the IPv4 CIDR instead)" $cs) hub}}
+  {{hub- else if $hostBits hub}}
+  {{hub- $bad = append $bad (printf "cidr %s has host bits set, which an AdminNetworkPolicy rejects; write the network address" $cs) hub}}
+  {{hub- else hub}}
+  {{hub- $nets = append $nets $cs hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else if eq $kind "dnsNames" hub}}
+  {{hub- $bad = append $bad "peer dnsNames is not supported here: an AdminNetworkPolicy has no DNS name peer; use cidrs" hub}}
+  {{hub- else if eq $kind "sameNamespace" hub}}
+  {{hub- $bad = append $bad "peer sameNamespace is not supported here: an AdminNetworkPolicy peer cannot name the subject's own namespace; use namespaces" hub}}
+  {{hub- else if eq $kind "pods" hub}}
+  {{hub- $bad = append $bad "peer pods is not supported here: an admin entry has no namespace to scope pod labels to; use namespaces" hub}}
+  {{hub- else hub}}
+  {{hub- $bad = append $bad (printf "unknown peer %s" $kind) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $chunk := list hub}}
+  {{hub- range $c := $nets | uniq hub}}
+  {{hub- $chunk = append $chunk $c hub}}
+  {{hub- if eq (len $chunk) 25 hub}}{{hub- $anpPeers = append $anpPeers (dict "networks" $chunk) hub}}{{hub- $chunk = list hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $chunk hub}}{{hub- $anpPeers = append $anpPeers (dict "networks" $chunk) hub}}{{hub- end hub}}
+  {{hub- if gt (len $anpPeers) 100 hub}}{{hub- $bad = append $bad (printf "%d peers, more than the 100 an AdminNetworkPolicy rule allows (each 25 cidrs are one peer)" (len $anpPeers)) hub}}{{hub- end hub}}
+  {{hub- $anpPorts := list hub}}
+  {{hub- if hasKey $entry "ports" hub}}
+  {{hub- if and (kindIs "slice" $entry.ports) (not $entry.ports) hub}}
+  {{hub- $bad = append $bad "ports is an empty list; leave ports out to allow every port" hub}}
+  {{hub- else if kindIs "slice" $entry.ports hub}}
+  {{hub- range $pr := $entry.ports hub}}
+  {{hub- $port := printf "%v" $pr hub}}
+  {{hub- $proto := "TCP" hub}}
+  {{hub- if kindIs "slice" $pr hub}}
+  {{hub- $port = "" hub}}
+  {{hub- else if kindIs "map" $pr hub}}
+  {{hub- range $pk := keys $pr | sortAlpha hub}}{{hub- if not (has $pk (list "port" "protocol")) hub}}{{hub- $bad = append $bad (printf "port entry key %s is not port or protocol" $pk) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $port = printf "%v" (dig "port" "" $pr) hub}}
+  {{hub- if hasKey $pr "protocol" hub}}{{hub- $proto = printf "%v" $pr.protocol hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if not (has $proto (list "TCP" "UDP" "SCTP")) hub}}
+  {{hub- $bad = append $bad (printf "protocol %s is not TCP, UDP or SCTP" $proto) hub}}
+  {{hub- else if and (regexMatch "^[0-9]{1,5}$" $port) (ge (atoi $port) 1) (le (atoi $port) 65535) hub}}
+  {{hub- $anpPorts = append $anpPorts (dict "portNumber" (dict "port" (atoi $port) "protocol" $proto)) hub}}
+  {{hub- else if and (le (len $port) 15) (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $port) (regexMatch "[a-z]" $port) hub}}
+  {{hub- $bad = append $bad (printf "named port %s cannot be used in an AdminNetworkPolicy rule; use a port number" $port) hub}}
+  {{hub- else hub}}
+  {{hub- $bad = append $bad (printf "port %s is not a port number" $port) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else if not (kindIs "invalid" $entry.ports) hub}}
+  {{hub- $bad = append $bad "ports is not a list" hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if gt (len $anpPorts) 100 hub}}{{hub- $bad = append $bad (printf "%d ports, more than the 100 an AdminNetworkPolicy rule allows" (len $anpPorts)) hub}}{{hub- end hub}}
+  {{hub- if and $dnsPeer (not $anpPeers) $anpPorts hub}}{{hub- $bad = append $bad "ports cannot be set when dns is the only peer: the dns rule always uses port 5353, TCP and UDP" hub}}{{hub- end hub}}
+  {{hub- if and (not $bad) (not $anpPeers) (not $dnsPeer) hub}}{{hub- $bad = append $bad "has no peers" hub}}{{hub- end hub}}
+  {{hub- range $msg := $bad hub}}{{hub- $adminErrs = append $adminErrs (printf "entry %s: %s" $entryName $msg) hub}}{{hub- end hub}}
+  {{hub- if not $bad hub}}
+  {{hub- $type := ternary "Deny" "Allow" (eq $action "deny") hub}}
+  {{hub- $adminRules := list hub}}
+  {{hub- if $anpPeers hub}}
+  {{hub- $e := dict "name" $entryName "action" $type $side $anpPeers hub}}
+  {{hub- if $anpPorts hub}}{{hub- $_ := set $e "ports" $anpPorts hub}}{{hub- end hub}}
+  {{hub- $adminRules = append $adminRules $e hub}}
+  {{hub- end hub}}
+  {{hub- if $dnsPeer hub}}
+  {{hub- $adminRules = append $adminRules (dict "name" $entryName "action" $type "to" (list (dict "namespaces" (dict "matchLabels" (dict "kubernetes.io/metadata.name" "openshift-dns")))) "ports" (list (dict "portNumber" (dict "port" 5353 "protocol" "UDP")) (dict "portNumber" (dict "port" 5353 "protocol" "TCP")))) hub}}
+  {{hub- end hub}}
+  {{hub- $adminANPs = append $adminANPs (dict "name" $entryName "subject" (dict "namespaces" $subject) "direction" $dir "rules" $adminRules) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if gt (len $adminANPs) 40 hub}}
+  {{hub- $adminErrs = append $adminErrs (printf "%d enabled entries, more than the 40 that fit at priorities 10 to 49 (below the project AdminNetworkPolicies at 50)" (len $adminANPs)) hub}}
+  {{hub- end hub}}
+  {{hub- if $adminErrs hub}}{{hub- $adminANPs = list hub}}{{hub- end hub}}
+  {{hub- $adminMsgs := list hub}}
+  {{hub- range $m := $adminErrs hub}}{{hub- $adminMsgs = append $adminMsgs (ternary (printf "%s..." (trunc 400 $m)) $m (gt (len $m) 400)) hub}}{{hub- end hub}}
+  {{hub- $sizeLimit := 1048576 hub}}
+  {{hub- $sizeBase := 37150 hub}}
+  {{hub- if and $nsDelOn $pruneOn hub}}{{hub- $sizeBase = add $sizeBase 3700 hub}}{{hub- end hub}}
+  {{hub- if eq $shard 0 hub}}{{hub- $sizeBase = add $sizeBase (ternary 600 0 $maxDelBad) (ternary 600 0 (or $graceBad $graceLow)) hub}}{{hub- end hub}}
+  {{hub- $sizeTotal := add $sizeBase (mul 2 (len (toJson $adminANPs))) (mul 4 (len (toJson $adminMsgs))) (mul 2 (len (join "," $otherNs))) (mul 2 (len (join "," $allNames))) hub}}
+  {{hub- $sizeAll := $sizeTotal hub}}
+  {{hub- $sizeSkipped := list hub}}
+  {{hub- $sizeHard := 1415577 hub}}
+  {{hub- $maxProjects := 3200 hub}}
+  {{hub- if gt $sizeTotal $sizeHard hub}}{{hub- fail (printf "project-onboarding: the policy would be about %d bytes from the projectDefaults.adminNetworkPolicies errors alone, over the %d bytes that keep it below the etcd request limit; fix projectDefaults.adminNetworkPolicies (see Size limit in the project-onboarding README)" $sizeTotal $sizeHard) hub}}{{hub- end hub}}
+  {{hub- if gt (len $projects) $maxProjects hub}}{{hub- fail (printf "project-onboarding: %d projects declared, maximum %d per cluster; split the projects across clusters (see Size limit in the project-onboarding README)" (len $projects) $maxProjects) hub}}{{hub- end hub}}
+  {{- $rendered := dict }}
+  {{- $live := dict }}
+  {{- $status := dict }}
+  {{- $pendingKey := "autoshift.io/onboarding-pending-deletion-since" }}
+  {{- $recordKeys := list "autoshift.io/onboarding-created" "autoshift.io/onboarding-created-by" "autoshift.io/onboarding-created-at" "autoshift.io/onboarding-created-uid" "autoshift.io/delete-on-removal" "autoshift.io/onboarding-mode" $pendingKey }}
+  {{- $tsRe := "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" }}
+  {{- $now := now | unixEpoch | atoi }}
+  {{- $nowTs := dateInZone "2006-01-02T15:04:05Z" $now "UTC" }}
+  {{- $nsWritten := dict }}
+  {{- $labeledNs := (lookup "v1" "Namespace" "" "" "autoshift.io/project").items | default list }}
+  {{- $nsAdd := dict }}
+  {{- range $ns := $labeledNs }}
+  {{- $a := dig "metadata" "annotations" dict $ns }}
+  {{- $ca := printf "%v" (index $a "autoshift.io/onboarding-created-at" | default "") }}
+  {{- $ct := printf "%v" (dig "metadata" "creationTimestamp" "" $ns) }}
+  {{- $uid := printf "%v" (dig "metadata" "uid" "" $ns) }}
+  {{- if and $uid (not (index $a "autoshift.io/onboarding-created-uid")) (eq (printf "%v" (index (dig "metadata" "labels" dict $ns) "autoshift.io/onboarding-created")) "true") (regexMatch $tsRe $ca) (regexMatch $tsRe $ct) }}
+  {{- $caS := toDate "2006-01-02T15:04:05Z07:00" $ca | unixEpoch | atoi }}
+  {{- $ctS := toDate "2006-01-02T15:04:05Z07:00" $ct | unixEpoch | atoi }}
+  {{- if and (gt $caS 0) (gt $ctS 0) (ge (sub $ctS $caS) -30) (le (sub $ctS $caS) 600) }}
+  {{- $_ := set $nsAdd (printf "%v" (dig "metadata" "name" "" $ns)) (dict "autoshift.io/onboarding-created-uid" $uid) }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- $podCidrs := list }}
+  {{- $svcCidrs := list }}
+  {{- if lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "networks.config.openshift.io" }}
+  {{- $netConfig := lookup "config.openshift.io/v1" "Network" "" "cluster" }}
+  {{- range $e := dig "spec" "clusterNetwork" list $netConfig }}
+  {{- if kindIs "map" $e }}{{- if $e.cidr }}{{- $podCidrs = append $podCidrs (printf "%v" $e.cidr) }}{{- end }}{{- end }}
+  {{- end }}
+  {{- range $c := dig "spec" "serviceNetwork" list $netConfig }}{{- $svcCidrs = append $svcCidrs (printf "%v" $c) }}{{- end }}
+  {{- end }}
+  {{- $clusterCidrs := concat $podCidrs $svcCidrs }}
+  {{- if not (and $podCidrs $svcCidrs) }}{{- $clusterCidrs = {{hub $cfgCidrs | toJson | base64enc | quote hub}} | base64dec | fromJson }}{{- end }}
+  {{- $v4Cidrs := list }}
+  {{- $v6Cidrs := list }}
+  {{- range $c := $clusterCidrs }}{{- if contains ":" $c }}{{- $v6Cidrs = append $v6Cidrs $c }}{{- else }}{{- $v4Cidrs = append $v4Cidrs $c }}{{- end }}{{- end }}
+  {{- $efCrd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "egressfirewalls.k8s.ovn.org" }}
+  {{- $anpCrd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "adminnetworkpolicies.policy.networking.k8s.io" }}
+  {{- $eipCrd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "egressips.k8s.ovn.org" }}
+  {{- $pow2 := list 1 2 4 8 16 32 64 128 256 512 1024 2048 4096 8192 16384 32768 65536 }}
+  {{- $hexVal := {{hub $hexVal | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $clusterNets := list }}
+  {{- $clusterNetsOk := gt (len $clusterCidrs) 0 }}
+  {{- /* Keep this CIDR parser in sync with the hub copy that parses rule cidrs into $nets. */}}
+  {{- range $c := $clusterCidrs }}
+  {{- $groups := list }}
+  {{- if regexMatch {{hub $cidr | toJson hub}} $c }}
+  {{- $addr := first (splitList "/" $c) }}
+  {{- if contains "." $addr }}
+  {{- $o := splitList "." $addr }}
+  {{- $groups = list (add (mul (atoi (index $o 0)) 256) (atoi (index $o 1))) (add (mul (atoi (index $o 2)) 256) (atoi (index $o 3))) }}
+  {{- else }}
+  {{- $halves := splitList "::" (lower $addr) }}
+  {{- $left := list }}
+  {{- $right := list }}
+  {{- if index $halves 0 }}{{- $left = splitList ":" (index $halves 0) }}{{- end }}
+  {{- if eq (len $halves) 2 }}{{- if index $halves 1 }}{{- $right = splitList ":" (index $halves 1) }}{{- end }}{{- end }}
+  {{- $fill := sub 8 (add (len $left) (len $right)) }}
+  {{- if or (and (eq (len $halves) 1) (eq $fill 0)) (and (eq (len $halves) 2) (gt $fill 0)) }}
+  {{- $zeros := list }}
+  {{- range until (int $fill) }}{{- $zeros = append $zeros "0" }}{{- end }}
+  {{- range $h := concat $left $zeros $right }}
+  {{- if regexMatch "^[0-9a-f]{1,4}$" $h }}
+  {{- $v := 0 }}
+  {{- range $ch := splitList "" $h }}{{- $v = add (mul $v 16) (index $hexVal $ch) }}{{- end }}
+  {{- $groups = append $groups $v }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if ne (len $groups) 8 }}{{- $groups = list }}{{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if $groups }}{{- $clusterNets = append $clusterNets (dict "cidr" $c "p" (atoi (last (splitList "/" $c))) "g" $groups) }}{{- else }}{{- $clusterNetsOk = false }}{{- end }}
+  {{- end }}
+  {{hub- if $cfgErr hub}}
+  {{- $_ := set $status "rendered-config" (list ({{hub $cfgErr | toJson | base64enc | quote hub}} | base64dec | fromJson)) }}
+  {{hub- end hub}}
+  {{hub- if and $maxDelBad (eq $shard 0) hub}}
+  {{- $_ := set $status "projectDefaults.maxNamespaceDeletes" (list "maxNamespaceDeletes is not a non-negative integer, so it counts as 0 and no namespace is deleted") }}
+  {{hub- end hub}}
+  {{hub- if and $graceLow (eq $shard 0) hub}}
+  {{- $_ := set $status "projectDefaults.namespaceDeleteGracePeriod" (list "namespaceDeleteGracePeriod is shorter than the minimum of 1h, so the default 24h is used") }}
+  {{hub- end hub}}
+  {{hub- if and $graceBad (eq $shard 0) hub}}
+  {{- $_ := set $status "projectDefaults.namespaceDeleteGracePeriod" (list "namespaceDeleteGracePeriod is not a positive duration in hours, minutes and seconds, such as 24h or 1h30m, so no namespace is marked for deletion or deleted") }}
+  {{hub- end hub}}
+  {{hub- if $adminErrs hub}}
+  {{- $_ := set $status "projectDefaults.adminNetworkPolicies" ({{hub $adminMsgs | toJson | base64enc | quote hub}} | base64dec | fromJson) }}
+  {{hub- else if $adminANPs hub}}
+  {{- if not $anpCrd }}
+  {{- $_ := set $status "projectDefaults.adminNetworkPolicies" (list "the AdminNetworkPolicy CRD (adminnetworkpolicies.policy.networking.k8s.io) is not installed, so the admin network policies cannot be enforced") }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- range $name, $p := $projects hub}}
+  {{hub- if ne (index $projShard $name) $shard hub}}{{hub- continue hub}}{{hub- end hub}}
+  {{hub- $errs := list hub}}
+  {{hub- $notes := list hub}}
+  {{hub- $statusKey := regexReplaceAll "[^-._a-zA-Z0-9]" $name "_" | trunc 253 | default "_" hub}}
+  {{hub- $valid := true hub}}
+  {{hub- $project := dict hub}}
+  {{hub- if kindIs "map" $p hub}}{{hub- $project = $p hub}}{{hub- else hub}}{{hub- $errs = append $errs "project entry is not a map" hub}}{{hub- $valid = false hub}}{{hub- end hub}}
+  {{hub- if or (gt (len $name) 63) (not (regexMatch $dns1123 $name)) hub}}
+  {{hub- $errs = append $errs (printf "project name %s is not a valid DNS-1123 label" $name) hub}}
+  {{hub- $valid = false hub}}
+  {{hub- end hub}}
+  {{hub- $fields := mergeOverwrite (dict) (deepCopy $project) (dict "name" $name) hub}}
+  {{hub- $adoptRaw := index $fields "adopt" hub}}
+  {{hub- $adopt := false hub}}
+  {{hub- $adoptBad := false hub}}
+  {{hub- if has (printf "%v" $adoptRaw) (list "true" "false") hub}}
+  {{hub- $adopt = eq (printf "%v" $adoptRaw) "true" hub}}
+  {{hub- else if not (kindIs "invalid" $adoptRaw) hub}}
+  {{hub- $errs = append $errs (printf "adopt %v is not true or false, so it counts as false" $adoptRaw) hub}}
+  {{hub- $adoptBad = true hub}}
+  {{hub- end hub}}
+  {{hub- $mode := ternary "inform" "enforce" $adopt hub}}
+  {{hub- $modeRaw := index $fields "mode" hub}}
+  {{hub- if not (kindIs "invalid" $modeRaw) hub}}{{hub- $mode = printf "%v" $modeRaw hub}}{{hub- end hub}}
+  {{hub- if not (has $mode (list "enforce" "inform")) hub}}
+  {{hub- $errs = append $errs (printf "mode %s is not enforce or inform" $mode) hub}}
+  {{hub- $mode = "inform" hub}}
+  {{hub- end hub}}
+  {{hub- $dorRaw := index $fields "deleteOnRemoval" hub}}
+  {{hub- $dor := false hub}}
+  {{hub- if has (printf "%v" $dorRaw) (list "true" "false") hub}}
+  {{hub- $dor = eq (printf "%v" $dorRaw) "true" hub}}
+  {{hub- else if not (kindIs "invalid" $dorRaw) hub}}
+  {{hub- $errs = append $errs (printf "deleteOnRemoval %v is not true or false, so it counts as false" $dorRaw) hub}}
+  {{hub- end hub}}
+  {{hub- if and $dor $adopt hub}}{{hub- $notes = append $notes "deleteOnRemoval is ignored with adopt: true: an adopted namespace is never deleted" hub}}{{hub- end hub}}
+  {{hub- $nsRaw := index $fields "namespace" hub}}
+  {{hub- $namespace := $name hub}}
+  {{hub- if and (kindIs "string" $nsRaw) (ne $nsRaw "") hub}}{{hub- $namespace = $nsRaw hub}}{{hub- end hub}}
+  {{hub- if not (or (kindIs "invalid" $nsRaw) (kindIs "string" $nsRaw)) hub}}
+  {{hub- $errs = append $errs (printf "namespace %v is not a string" $nsRaw) hub}}
+  {{hub- $valid = false hub}}
+  {{hub- end hub}}
+  {{hub- if and (kindIs "string" $nsRaw) (eq $nsRaw "") hub}}{{hub- $notes = append $notes (printf "namespace \"\" is not a valid DNS-1123 label, so the project key %s is used" $name) hub}}{{hub- end hub}}
+  {{hub- if and $valid (or (gt (len $namespace) 63) (not (regexMatch $dns1123 $namespace))) hub}}
+  {{hub- $errs = append $errs (printf "namespace %s is not a valid DNS-1123 label" $namespace) hub}}
+  {{hub- $valid = false hub}}
+  {{hub- else if and $valid (regexMatch $platformNs $namespace) hub}}
+  {{hub- $errs = append $errs (printf "namespace %s is a platform namespace, which project onboarding never manages" $namespace) hub}}
+  {{hub- $valid = false hub}}
+  {{hub- end hub}}
+  {{hub- $applied := dict "labels" (dict "autoshift.io/project" $name "autoshift.io/managed-by" "project-onboarding") "annotations" (dict) hub}}
+  {{hub- $appliedKeys := list hub}}
+  {{hub- $keyFrom := dict "labels" (dict) "annotations" (dict) hub}}
+  {{hub- range $kind := list "labels" "annotations" hub}}
+  {{hub- $own := dig $kind dict $fields | default dict hub}}
+  {{hub- if not (kindIs "map" $own) hub}}{{hub- $errs = append $errs (printf "%s is not a map" $kind) hub}}{{hub- $own = dict hub}}{{hub- end hub}}
+  {{hub- $base := index $defaults $kind hub}}
+  {{hub- range $entryName := keys $base $own | uniq | sortAlpha hub}}
+  {{hub- $entry := dict hub}}
+  {{hub- $entryOk := true hub}}
+  {{hub- $enabled := "unset" hub}}
+  {{hub- range $src := list $base $own hub}}
+  {{hub- if hasKey $src $entryName hub}}
+  {{hub- if kindIs "map" (index $src $entryName) hub}}
+  {{hub- $entry = mergeOverwrite $entry (deepCopy (index $src $entryName)) hub}}
+  {{hub- if hasKey (index $src $entryName) "enabled" hub}}{{hub- $enabled = index (index $src $entryName) "enabled" hub}}{{hub- end hub}}
+  {{hub- else hub}}{{hub- $entryOk = false hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if eq (printf "%v" $enabled) "unset" hub}}{{hub- $enabled = index $entry "enabled" hub}}{{hub- end hub}}
+  {{hub- if not $entryOk hub}}
+  {{hub- $errs = append $errs (printf "%s entry %s is not a map" $kind $entryName) hub}}
+  {{hub- else if not (or (kindIs "invalid" $enabled) (kindIs "bool" $enabled)) hub}}
+  {{hub- $errs = append $errs (printf "%s entry %s: enabled is not true or false" $kind $entryName) hub}}
+  {{hub- else if or (kindIs "invalid" $enabled) $enabled hub}}
+  {{hub- $filled := list hub}}
+  {{hub- $unresolved := false hub}}
+  {{hub- range $tpl := list (printf "%v" (dig "key" "" $entry)) (printf "%v" (dig "value" "" $entry)) hub}}
+  {{hub- $parts := regexSplit $placeholder $tpl -1 hub}}
+  {{hub- $out := index $parts 0 hub}}
+  {{hub- range $i, $tok := regexFindAll $placeholder $tpl -1 hub}}
+  {{hub- $f := regexReplaceAll "^\\{|\\}$" $tok "" hub}}
+  {{hub- $fv := index $fields $f hub}}
+  {{hub- $s := printf "%v" $fv hub}}
+  {{hub- if and (hasKey $fields $f) (not (kindIs "map" $fv)) (not (kindIs "slice" $fv)) (ne $s "<nil>") (regexMatch "\\S" $s) hub}}
+  {{hub- $out = printf "%s%s" $out $s hub}}
+  {{hub- else hub}}
+  {{hub- $unresolved = true hub}}
+  {{hub- end hub}}
+  {{hub- $out = printf "%s%s" $out (index $parts (add $i 1)) hub}}
+  {{hub- end hub}}
+  {{hub- $filled = append $filled $out hub}}
+  {{hub- end hub}}
+  {{hub- $k := index $filled 0 hub}}
+  {{hub- $v := index $filled 1 hub}}
+  {{hub- if and $k $v (not $unresolved) hub}}
+  {{hub- $ok := true hub}}
+  {{hub- $kparts := splitList "/" $k hub}}
+  {{hub- $kname := last $kparts hub}}
+  {{hub- $kbad := or (gt (len $kparts) 2) (gt (len $kname) 63) (not (regexMatch "^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$" $kname)) hub}}
+  {{hub- if eq (len $kparts) 2 hub}}
+  {{hub- $kprefix := index $kparts 0 hub}}
+  {{hub- if or (eq $kprefix "") (gt (len $kprefix) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $kprefix)) hub}}{{hub- $kbad = true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if eq $kind "labels" hub}}
+  {{hub- if or $kbad (gt (len $v) 63) (not (regexMatch "^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$" $v)) hub}}
+  {{hub- $ok = false hub}}
+  {{hub- $errs = append $errs (printf "label %s=%s is not a valid Kubernetes label" $k $v) hub}}
+  {{hub- else if regexMatch $reservedKey $k hub}}
+  {{hub- $ok = false hub}}
+  {{hub- $errs = append $errs (printf "label %s is reserved for project ownership" $k) hub}}
+  {{hub- end hub}}
+  {{hub- else if $kbad hub}}
+  {{hub- $ok = false hub}}
+  {{hub- $errs = append $errs (printf "annotation key %s is not a valid qualified name" $k) hub}}
+  {{hub- else if regexMatch $reservedKey $k hub}}
+  {{hub- $ok = false hub}}
+  {{hub- $errs = append $errs (printf "annotation %s is reserved for project ownership" $k) hub}}
+  {{hub- end hub}}
+  {{hub- if and $ok (regexMatch $platformKey $k) (ne (printf "%v" (index $defaults.allowedPlatformKeys $k)) "true") hub}}
+  {{hub- $ok = false hub}}
+  {{hub- $errs = append $errs (printf "%s %s is reserved for the platform; list it in projectDefaults.allowedPlatformKeys to set it" (ternary "label" "annotation" (eq $kind "labels")) $k) hub}}
+  {{hub- end hub}}
+  {{hub- $from := index $keyFrom $kind hub}}
+  {{hub- if and $ok (hasKey $from $k) hub}}
+  {{hub- $ok = false hub}}
+  {{hub- if ne (index (index $applied $kind) $k) $v hub}}{{hub- $errs = append $errs (printf "%s %s is set by entries %s and %s with different values; %s is applied" (ternary "label" "annotation" (eq $kind "labels")) $k (index $from $k) $entryName (index $from $k)) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $ok hub}}
+  {{hub- $_ := set (index $applied $kind) $k $v hub}}
+  {{hub- $_ := set $from $k $entryName hub}}
+  {{hub- if eq $kind "labels" hub}}{{hub- $appliedKeys = append $appliedKeys $k hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $field := list "displayName" "description" "requester" hub}}
+  {{hub- $fv := index $fields $field hub}}
+  {{hub- $ak := printf "openshift.io/%s" (ternary "display-name" $field (eq $field "displayName")) hub}}
+  {{hub- if or (kindIs "map" $fv) (kindIs "slice" $fv) hub}}
+  {{hub- $errs = append $errs (printf "%s is not a string" $field) hub}}
+  {{hub- else if $fv hub}}
+  {{hub- if hasKey $keyFrom.annotations $ak hub}}{{hub- $errs = append $errs (printf "annotation %s is set by both %s and annotations entry %s; %s is applied" $ak $field (index $keyFrom.annotations $ak) $field) hub}}{{hub- end hub}}
+  {{hub- $_ := set $applied.annotations $ak (printf "%v" $fv) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $applied.annotations "autoshift.io/project-labels" (join "," (sortAlpha $appliedKeys)) hub}}
+  {{hub- if not $adopt hub}}
+  {{hub- $_ := set $applied.labels "autoshift.io/onboarding-created" "true" hub}}
+  {{hub- $_ := set $applied.annotations "autoshift.io/onboarding-created-by" $name hub}}
+  {{hub- $_ := set $applied.annotations "autoshift.io/delete-on-removal" (printf "%v" $dor) hub}}
+  {{hub- $_ := set $applied.annotations "autoshift.io/onboarding-mode" $mode hub}}
+  {{hub- end hub}}
+  {{hub- $ownGroups := dig "groups" dict $fields | default dict hub}}
+  {{hub- if not (kindIs "map" $ownGroups) hub}}{{hub- $errs = append $errs "groups is not a map" hub}}{{hub- $ownGroups = dict hub}}{{hub- end hub}}
+  {{hub- $roles := mergeOverwrite (dict "admin" "admin" "write" "edit" "read" "view") (deepCopy $defaults.roles) hub}}
+  {{hub- $groups := dict hub}}
+  {{hub- range $lv := keys $ownGroups | sortAlpha hub}}{{hub- if not (has $lv (list "admin" "write" "read")) hub}}{{hub- $errs = append $errs (printf "group %s is not admin, write or read" $lv) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $level := list "admin" "write" "read" hub}}
+  {{hub- $overridden := hasKey $ownGroups $level hub}}
+  {{hub- $override := index $ownGroups $level hub}}
+  {{hub- $raw := index $defaults.groups $level hub}}
+  {{hub- if $overridden hub}}{{hub- $raw = $override hub}}{{hub- end hub}}
+  {{hub- $optOut := and $overridden (or (kindIs "invalid" $override) (eq (printf "%v" $override) "") (and (kindIs "bool" $override) (not $override))) hub}}
+  {{hub- $tpl := "" hub}}
+  {{hub- if or (kindIs "map" $raw) (kindIs "slice" $raw) hub}}
+  {{hub- $errs = append $errs (printf "group %s is not a string" $level) hub}}
+  {{hub- else if not (or $optOut (kindIs "invalid" $raw)) hub}}
+  {{hub- $tpl = printf "%v" $raw hub}}
+  {{hub- end hub}}
+  {{hub- $parts := regexSplit $placeholder $tpl -1 hub}}
+  {{hub- $g := index $parts 0 hub}}
+  {{hub- $unresolved := false hub}}
+  {{hub- range $i, $tok := regexFindAll $placeholder $tpl -1 hub}}
+  {{hub- $f := regexReplaceAll "^\\{|\\}$" $tok "" hub}}
+  {{hub- $fv := index $fields $f hub}}
+  {{hub- $s := printf "%v" $fv hub}}
+  {{hub- if and (hasKey $fields $f) (not (kindIs "map" $fv)) (not (kindIs "slice" $fv)) (ne $s "<nil>") (regexMatch "\\S" $s) hub}}
+  {{hub- $g = printf "%s%s" $g $s hub}}
+  {{hub- else hub}}
+  {{hub- $unresolved = true hub}}
+  {{hub- end hub}}
+  {{hub- $g = printf "%s%s" $g (index $parts (add $i 1)) hub}}
+  {{hub- end hub}}
+  {{hub- if and (regexMatch "\\S" $g) (not $unresolved) hub}}
+  {{hub- $_ := set $groups $level $g hub}}
+  {{hub- else if and $overridden (not $optOut) (ne $level "admin") (not (kindIs "map" $override)) (not (kindIs "slice" $override)) hub}}
+  {{hub- if $unresolved hub}}
+  {{hub- $notes = append $notes (printf "group %s name %q has an unresolved placeholder, so the level gets no RoleBinding" $level $tpl) hub}}
+  {{hub- else hub}}
+  {{hub- $notes = append $notes (printf "group %s name is blank, so the level gets no RoleBinding" $level) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if and $valid (not (hasKey $groups "admin")) hub}}{{hub- $errs = append $errs "no resolvable admin group" hub}}{{hub- end hub}}
+  {{hub- $sized := dict "quota" (dict) "limitRange" (dict) hub}}
+  {{hub- $sizedOk := dict "quota" true "limitRange" true hub}}
+  {{hub- $sizeRaw := index $fields "size" hub}}
+  {{hub- if not (or (kindIs "invalid" $sizeRaw) (kindIs "string" $sizeRaw)) hub}}
+  {{hub- $errs = append $errs "size is not a string" hub}}
+  {{hub- $valid = false hub}}
+  {{hub- else if $sizeRaw hub}}
+  {{hub- $size := printf "%v" $sizeRaw hub}}
+  {{hub- if not (hasKey $defaults.sizes $size) hub}}
+  {{hub- $errs = append $errs (printf "size %s is not defined in projectDefaults.sizes" $size) hub}}
+  {{hub- $valid = false hub}}
+  {{hub- else if not (kindIs "map" (index $defaults.sizes $size)) hub}}
+  {{hub- $errs = append $errs (printf "projectDefaults.sizes.%s is not a map" $size) hub}}
+  {{hub- $valid = false hub}}
+  {{hub- else hub}}
+  {{hub- range $section := list "quota" "limitRange" hub}}
+  {{hub- $base := index (index $defaults.sizes $size) $section | default dict hub}}
+  {{hub- $own := dig $section dict $fields | default dict hub}}
+  {{hub- if not (kindIs "map" $base) hub}}{{hub- $errs = append $errs (printf "projectDefaults.sizes.%s.%s is not a map" $size $section) hub}}{{hub- $_ := set $sizedOk $section false hub}}{{hub- end hub}}
+  {{hub- if not (kindIs "map" $own) hub}}{{hub- $errs = append $errs (printf "%s is not a map" $section) hub}}{{hub- $_ := set $sizedOk $section false hub}}{{hub- $own = dict hub}}{{hub- end hub}}
+  {{hub- $ownSet := dict hub}}
+  {{hub- range $k, $v := $own hub}}
+  {{hub- if and (eq $section "limitRange") (kindIs "map" $v) hub}}
+  {{hub- $res := dict hub}}
+  {{hub- range $rk, $rv := $v hub}}{{hub- if not (or (kindIs "invalid" $rv) (eq (printf "%v" $rv) "")) hub}}{{hub- $_ := set $res $rk $rv hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $_ := set $ownSet $k $res hub}}
+  {{hub- else if and (eq $section "limitRange") (has $k (list "default" "defaultRequest" "max" "min" "maxLimitRequestRatio")) (not (kindIs "invalid" $v)) hub}}
+  {{hub- $errs = append $errs (printf "limitRange.%s is not a map" $k) hub}}
+  {{hub- $_ := set $sizedOk $section false hub}}
+  {{hub- else if not (or (kindIs "invalid" $v) (eq (printf "%v" $v) "")) hub}}
+  {{hub- $_ := set $ownSet $k $v hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $own = $ownSet hub}}
+  {{hub- if index $sizedOk $section hub}}{{hub- $_ := set $sized $section (mergeOverwrite (deepCopy $base) (deepCopy $own)) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $k, $v := $sized.quota hub}}
+  {{hub- if not (regexMatch $resourceName $k) hub}}
+  {{hub- $errs = append $errs (printf "quota key %s is not a valid resource name" $k) hub}}
+  {{hub- $_ := set $sizedOk "quota" false hub}}
+  {{hub- else if not (or (contains "/" $k) (regexMatch $quotaResource $k)) hub}}
+  {{hub- $errs = append $errs (printf "quota key %s is not a standard ResourceQuota resource name, such as pods or requests.cpu" $k) hub}}
+  {{hub- $_ := set $sizedOk "quota" false hub}}
+  {{hub- else if or (kindIs "map" $v) (kindIs "slice" $v) (not (regexMatch $quantity (printf "%v" $v))) hub}}
+  {{hub- $errs = append $errs (printf "quota %s=%v is not a valid quantity" $k $v) hub}}
+  {{hub- $_ := set $sizedOk "quota" false hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $field, $res := $sized.limitRange hub}}
+  {{hub- if not (has $field (list "default" "defaultRequest" "max" "min" "maxLimitRequestRatio")) hub}}
+  {{hub- $errs = append $errs (printf "limitRange field %s is not one of default, defaultRequest, max, min, maxLimitRequestRatio" $field) hub}}
+  {{hub- $_ := set $sizedOk "limitRange" false hub}}
+  {{hub- else if or (kindIs "invalid" $res) (and (kindIs "map" $res) (not $res)) hub}}
+  {{hub- $_ := unset $sized.limitRange $field hub}}
+  {{hub- else if not (kindIs "map" $res) hub}}
+  {{hub- $errs = append $errs (printf "limitRange.%s is not a map" $field) hub}}
+  {{hub- $_ := set $sizedOk "limitRange" false hub}}
+  {{hub- else hub}}
+  {{hub- range $k, $v := $res hub}}
+  {{hub- if not (regexMatch $resourceName $k) hub}}
+  {{hub- $errs = append $errs (printf "limitRange.%s key %s is not a valid resource name" $field $k) hub}}
+  {{hub- $_ := set $sizedOk "limitRange" false hub}}
+  {{hub- else if not (or (contains "/" $k) (regexMatch "^(cpu|memory|ephemeral-storage|hugepages-.+)$" $k)) hub}}
+  {{hub- $errs = append $errs (printf "limitRange.%s key %s is not a container resource name, such as cpu or memory" $field $k) hub}}
+  {{hub- $_ := set $sizedOk "limitRange" false hub}}
+  {{hub- else if or (kindIs "map" $v) (kindIs "slice" $v) (not (regexMatch $quantity (printf "%v" $v))) hub}}
+  {{hub- $errs = append $errs (printf "limitRange.%s %s=%v is not a valid quantity" $field $k $v) hub}}
+  {{hub- $_ := set $sizedOk "limitRange" false hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $sizedOk.limitRange hub}}
+  {{hub- range $pair := list (list "max" "default") (list "default" "defaultRequest") (list "min" "defaultRequest") hub}}
+  {{hub- $from := index $sized.limitRange (index $pair 0) | default dict hub}}
+  {{hub- $to := index $pair 1 hub}}
+  {{hub- range $k, $v := $from hub}}
+  {{hub- if not (hasKey $sized.limitRange $to) hub}}{{hub- $_ := set $sized.limitRange $to (dict) hub}}{{hub- end hub}}
+  {{hub- if not (hasKey (index $sized.limitRange $to) $k) hub}}{{hub- $_ := set (index $sized.limitRange $to) $k $v hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $quantities := list hub}}
+  {{hub- if $sizedOk.quota hub}}{{hub- range $k, $v := $sized.quota hub}}{{hub- $quantities = append $quantities (list (printf "quota %s" $k) (printf "%v" $v)) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if $sizedOk.limitRange hub}}{{hub- range $field, $res := $sized.limitRange hub}}{{hub- range $k, $v := $res hub}}{{hub- $quantities = append $quantities (list (printf "limitRange.%s %s" $field $k) (printf "%v" $v)) hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $q := $quantities hub}}
+  {{hub- $qv := index $q 1 hub}}
+  {{hub- $canon := eq $qv "0" hub}}
+  {{hub- if regexMatch "^[1-9][0-9]*[numkMGTPE]?$" $qv hub}}{{hub- $canon = not (regexMatch "000[numkMGTPE]?$" $qv) hub}}{{hub- end hub}}
+  {{hub- if regexMatch "^[1-9][0-9]{0,14}[KMGTPE]i$" $qv hub}}{{hub- $canon = ne (mod (atoi (regexReplaceAll "[KMGTPE]i$" $qv "")) 1024) 0 hub}}{{hub- end hub}}
+  {{hub- if not $canon hub}}{{hub- $notes = append $notes (printf "%s=%s is not in the canonical form the API server stores, such as 500m for 0.5, 1 for 1000m, 1k for 1000 or 1Gi for 1024Mi, so the object may never match; write it canonically" (index $q 0) $qv) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- range $section := list "quota" "limitRange" hub}}
+  {{hub- if dig $section "" $fields hub}}{{hub- $errs = append $errs (printf "%s is set without size" $section) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $netErrs := list hub}}
+  {{hub- $profile := dict hub}}
+  {{hub- $profileRaw := index $fields "networkProfile" hub}}
+  {{hub- if not (or (kindIs "invalid" $profileRaw) (kindIs "string" $profileRaw)) hub}}
+  {{hub- $netErrs = append $netErrs "networkProfile is not a string" hub}}
+  {{hub- else if $profileRaw hub}}
+  {{hub- $profileName := printf "%v" $profileRaw hub}}
+  {{hub- if not (hasKey $defaults.networkProfiles $profileName) hub}}
+  {{hub- $netErrs = append $netErrs (printf "networkProfile %s is not defined in projectDefaults.networkProfiles" $profileName) hub}}
+  {{hub- else if not (kindIs "map" (index $defaults.networkProfiles $profileName)) hub}}
+  {{hub- $netErrs = append $netErrs (printf "projectDefaults.networkProfiles.%s is not a map" $profileName) hub}}
+  {{hub- else hub}}
+  {{hub- $profile = index $defaults.networkProfiles $profileName hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $network := dict hub}}
+  {{hub- if hasKey $fields "network" hub}}
+  {{hub- if kindIs "map" $fields.network hub}}{{hub- $network = $fields.network hub}}{{hub- else if not (kindIs "invalid" $fields.network) hub}}{{hub- $netErrs = append $netErrs "network is not a map" hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $netDeny := dict "ingress" false "egress" false hub}}
+  {{hub- $ruleLayers := list hub}}
+  {{hub- range $layer := list (list (printf "projectDefaults.networkProfiles.%v" $profileRaw) $profile) (list "network" $network) hub}}
+  {{hub- $where := index $layer 0 hub}}
+  {{hub- $src := index $layer 1 hub}}
+  {{hub- range $nk := keys $src | sortAlpha hub}}{{hub- if not (has $nk (list "defaultDeny" "rules")) hub}}{{hub- $netErrs = append $netErrs (printf "%s key %s is not defaultDeny or rules" $where $nk) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $dd := dict hub}}
+  {{hub- if hasKey $src "defaultDeny" hub}}
+  {{hub- if kindIs "map" $src.defaultDeny hub}}{{hub- $dd = $src.defaultDeny hub}}{{hub- else if not (kindIs "invalid" $src.defaultDeny) hub}}{{hub- $netErrs = append $netErrs (printf "%s.defaultDeny is not a map" $where) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $dir, $v := $dd hub}}
+  {{hub- if not (has $dir (list "ingress" "egress")) hub}}
+  {{hub- $netErrs = append $netErrs (printf "%s.defaultDeny key %s is not ingress or egress" $where $dir) hub}}
+  {{hub- else if not (kindIs "bool" $v) hub}}
+  {{hub- $netErrs = append $netErrs (printf "%s.defaultDeny.%s is not true or false" $where $dir) hub}}
+  {{hub- else hub}}
+  {{hub- $_ := set $netDeny $dir $v hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $layerRules := dict hub}}
+  {{hub- if hasKey $src "rules" hub}}
+  {{hub- if kindIs "map" $src.rules hub}}{{hub- $layerRules = $src.rules hub}}{{hub- else if not (kindIs "invalid" $src.rules) hub}}{{hub- $netErrs = append $netErrs (printf "%s.rules is not a map" $where) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $ruleLayers = append $ruleLayers $layerRules hub}}
+  {{hub- end hub}}
+  {{hub- $projectRuleNames := keys (index $ruleLayers 1) | sortAlpha hub}}
+  {{hub- $rules := dict hub}}
+  {{hub- range $ruleName := keys (index $ruleLayers 0) (index $ruleLayers 1) | uniq | sortAlpha hub}}
+  {{hub- $rule := dict hub}}
+  {{hub- $ruleOk := true hub}}
+  {{hub- range $src := $ruleLayers hub}}
+  {{hub- if hasKey $src $ruleName hub}}
+  {{hub- if kindIs "map" (index $src $ruleName) hub}}{{hub- $rule = mergeOverwrite $rule (deepCopy (index $src $ruleName)) hub}}{{hub- else hub}}{{hub- $ruleOk = false hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $enabled := printf "%v" (dig "enabled" true $rule) hub}}
+  {{hub- if not $ruleOk hub}}
+  {{hub- $netErrs = append $netErrs (printf "rule %s is not a map" $ruleName) hub}}
+  {{hub- else if not (has $enabled (list "true" "false")) hub}}
+  {{hub- $netErrs = append $netErrs (printf "rule %s: enabled is not true or false" $ruleName) hub}}
+  {{hub- else if eq $enabled "true" hub}}
+  {{hub- $_ := set $rules $ruleName $rule hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $ruleModel := list hub}}
+  {{hub- range $ruleName, $rule := $rules hub}}
+  {{hub- $bad := list hub}}
+  {{hub- if or (gt (len $ruleName) 63) (not (regexMatch $dns1123 $ruleName)) hub}}{{hub- $bad = append $bad "name is not a valid DNS-1123 label" hub}}{{hub- end hub}}
+  {{hub- range $rk := keys $rule | sortAlpha hub}}{{hub- if not (has $rk (list "direction" "action" "from" "to" "ports" "enabled" "description")) hub}}{{hub- $bad = append $bad (printf "key %s is not one of direction, action, from, to, ports, enabled, description" $rk) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $dir := printf "%v" (dig "direction" "" $rule) hub}}
+  {{hub- $action := printf "%v" (dig "action" "" $rule) hub}}
+  {{hub- if not (hasKey $rule "direction") hub}}{{hub- $bad = append $bad "direction is not set" hub}}{{hub- else if not (has $dir (list "ingress" "egress")) hub}}{{hub- $bad = append $bad (printf "direction %s is not ingress or egress" $dir) hub}}{{hub- end hub}}
+  {{hub- if not (hasKey $rule "action") hub}}{{hub- $bad = append $bad "action is not set" hub}}{{hub- else if not (has $action (list "allow" "deny")) hub}}{{hub- $bad = append $bad (printf "action %s is not allow or deny" $action) hub}}{{hub- end hub}}
+  {{hub- $side := ternary "from" "to" (eq $dir "ingress") hub}}
+  {{hub- $otherSide := ternary "to" "from" (eq $dir "ingress") hub}}
+  {{hub- $peers := dict hub}}
+  {{hub- if has $dir (list "ingress" "egress") hub}}
+  {{hub- if hasKey $rule $otherSide hub}}{{hub- $bad = append $bad (printf "an %s rule takes %s, not %s" $dir $side $otherSide) hub}}{{hub- end hub}}
+  {{hub- if not (hasKey $rule $side) hub}}
+  {{hub- $bad = append $bad (printf "an %s rule needs %s" $dir $side) hub}}
+  {{hub- else if not (kindIs "map" (index $rule $side)) hub}}
+  {{hub- $bad = append $bad (printf "%s is not a map" $side) hub}}
+  {{hub- else hub}}
+  {{hub- $peers = index $rule $side hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $npPeers := list hub}}
+  {{hub- $dnsPeer := false hub}}
+  {{hub- $cidrs := list hub}}
+  {{hub- $nets := list hub}}
+  {{hub- $dnsNames := list hub}}
+  {{hub- range $kind, $v := $peers hub}}
+  {{hub- if has $kind (list "sameNamespace" "router" "monitoring" "dns") hub}}
+  {{hub- if not (kindIs "bool" $v) hub}}
+  {{hub- $bad = append $bad (printf "peer %s is not true or false" $kind) hub}}
+  {{hub- else if $v hub}}
+  {{hub- if eq $kind "sameNamespace" hub}}{{hub- $npPeers = append $npPeers (dict "podSelector" (dict)) hub}}{{hub- end hub}}
+  {{hub- if eq $kind "router" hub}}{{hub- $npPeers = append $npPeers (dict "namespaceSelector" (dict "matchLabels" (dict "network.openshift.io/policy-group" "ingress"))) hub}}{{hub- end hub}}
+  {{hub- if eq $kind "monitoring" hub}}{{hub- $npPeers = append $npPeers (dict "namespaceSelector" (dict "matchLabels" (dict "network.openshift.io/policy-group" "monitoring"))) hub}}{{hub- end hub}}
+  {{hub- if eq $kind "dns" hub}}{{hub- if eq $dir "ingress" hub}}{{hub- $bad = append $bad "dns is an egress-only peer" hub}}{{hub- else hub}}{{hub- $dnsPeer = true hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else if has $kind (list "namespaces" "pods") hub}}
+  {{hub- $allowed := ternary (list "labels" "names") (list "labels") (eq $kind "namespaces") hub}}
+  {{hub- if not (kindIs "map" $v) hub}}
+  {{hub- $bad = append $bad (printf "%s is not a map" $kind) hub}}
+  {{hub- else hub}}
+  {{hub- $sel := dict hub}}
+  {{hub- range $sk, $sv := $v hub}}
+  {{hub- if not (has $sk $allowed) hub}}
+  {{hub- $bad = append $bad (printf "%s key %s is not one of %s" $kind $sk (join ", " $allowed)) hub}}
+  {{hub- else if eq $sk "labels" hub}}
+  {{hub- if or (not (kindIs "map" $sv)) (not $sv) hub}}
+  {{hub- $bad = append $bad (printf "%s.labels is not a non-empty map" $kind) hub}}
+  {{hub- else hub}}
+  {{hub- $match := dict hub}}
+  {{hub- range $lk, $lv := $sv hub}}
+  {{hub- $ls := printf "%v" $lv hub}}
+  {{hub- if or (kindIs "map" $lv) (kindIs "slice" $lv) (gt (len $lk) 317) (gt (len (last (splitList "/" $lk))) 63) (not (regexMatch $resourceName $lk)) (gt (len $ls) 63) (not (regexMatch "^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$" $ls)) hub}}
+  {{hub- $bad = append $bad (printf "label %s=%s is not a valid Kubernetes label" $lk $ls) hub}}
+  {{hub- else hub}}
+  {{hub- $_ := set $match $lk $ls hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $sel "matchLabels" $match hub}}
+  {{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- if or (not (kindIs "slice" $sv)) (not $sv) hub}}
+  {{hub- $bad = append $bad (printf "%s.names is not a non-empty list" $kind) hub}}
+  {{hub- else hub}}
+  {{hub- $nsNames := list hub}}
+  {{hub- range $n := $sv hub}}
+  {{hub- $ns := printf "%v" $n hub}}
+  {{hub- if or (kindIs "map" $n) (kindIs "slice" $n) (gt (len $ns) 63) (not (regexMatch $dns1123 $ns)) hub}}{{hub- $bad = append $bad (printf "namespace %s is not a valid DNS-1123 label" $ns) hub}}{{hub- else hub}}{{hub- $nsNames = append $nsNames $ns hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $sel "matchExpressions" (list (dict "key" "kubernetes.io/metadata.name" "operator" "In" "values" $nsNames)) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if not $sel hub}}
+  {{hub- $bad = append $bad (printf "%s needs %s" $kind (join " or " $allowed)) hub}}
+  {{hub- else hub}}
+  {{hub- $npPeers = append $npPeers (dict (ternary "namespaceSelector" "podSelector" (eq $kind "namespaces")) $sel) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else if has $kind (list "cidrs" "dnsNames") hub}}
+  {{hub- if and (eq $kind "dnsNames") (eq $dir "ingress") hub}}
+  {{hub- $bad = append $bad "dnsNames is an egress-only peer" hub}}
+  {{hub- else if or (not (kindIs "slice" $v)) (not $v) hub}}
+  {{hub- $bad = append $bad (printf "%s is not a non-empty list" $kind) hub}}
+  {{hub- else hub}}
+  {{hub- range $c := $v hub}}
+  {{hub- $cs := printf "%v" $c hub}}
+  {{hub- if eq $kind "cidrs" hub}}
+  {{hub- $groups := list hub}}
+  {{hub- if not (or (kindIs "map" $c) (kindIs "slice" $c) (not (regexMatch $cidr $cs))) hub}}
+  {{hub- $addr := first (splitList "/" $cs) hub}}
+  {{hub- if contains "." $addr hub}}
+  {{hub- $o := splitList "." $addr hub}}
+  {{hub- $groups = list (add (mul (atoi (index $o 0)) 256) (atoi (index $o 1))) (add (mul (atoi (index $o 2)) 256) (atoi (index $o 3))) hub}}
+  {{hub- else hub}}
+  {{hub- $halves := splitList "::" (lower $addr) hub}}
+  {{hub- $left := list hub}}
+  {{hub- $right := list hub}}
+  {{hub- if index $halves 0 hub}}{{hub- $left = splitList ":" (index $halves 0) hub}}{{hub- end hub}}
+  {{hub- if eq (len $halves) 2 hub}}{{hub- if index $halves 1 hub}}{{hub- $right = splitList ":" (index $halves 1) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $fill := sub 8 (add (len $left) (len $right)) hub}}
+  {{hub- if or (and (eq (len $halves) 1) (eq $fill 0)) (and (eq (len $halves) 2) (gt $fill 0)) hub}}
+  {{hub- $zeros := list hub}}
+  {{hub- range until (int $fill) hub}}{{hub- $zeros = append $zeros "0" hub}}{{hub- end hub}}
+  {{hub- range $h := concat $left $zeros $right hub}}
+  {{hub- if regexMatch "^[0-9a-f]{1,4}$" $h hub}}
+  {{hub- $v := 0 hub}}
+  {{hub- range $ch := splitList "" $h hub}}{{hub- $v = add (mul $v 16) (index $hexVal $ch) hub}}{{hub- end hub}}
+  {{hub- $groups = append $groups $v hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if ne (len $groups) 8 hub}}{{hub- $groups = list hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if not $groups hub}}
+  {{hub- $bad = append $bad (printf "cidr %s is not a valid CIDR" $cs) hub}}
+  {{hub- else if and (eq (len $groups) 8) (eq (join "," (slice $groups 0 6)) "0,0,0,0,0,65535") hub}}
+  {{hub- $bad = append $bad (printf "cidr %s is an IPv4-mapped IPv6 range, which OVN-Kubernetes treats as IPv4 (write the IPv4 CIDR instead)" $cs) hub}}
+  {{hub- else hub}}
+  {{hub- $cidrs = append $cidrs $cs hub}}
+  {{hub- $nets = append $nets (dict "cidr" $cs "p" (atoi (last (splitList "/" $cs))) "g" $groups) hub}}
+  {{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- if or (kindIs "map" $c) (kindIs "slice" $c) (gt (len $cs) 253) (regexMatch "[^.]{64}" $cs) (not (regexMatch "^(\\*\\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*\\.?$" $cs)) hub}}
+  {{hub- $bad = append $bad (printf "dnsName %s is not a valid DNS name" $cs) hub}}
+  {{hub- else if regexMatch "^[0-9]+(\\.[0-9]+){3}\\.?$" $cs hub}}
+  {{hub- $bad = append $bad (printf "dnsName %s is an IP address; use cidrs" $cs) hub}}
+  {{hub- else if regexMatch "(^|\\.)(svc|svc\\.cluster\\.local|cluster\\.local)\\.?$" $cs hub}}
+  {{hub- $bad = append $bad (printf "dnsName %s is a cluster-internal name, which an EgressFirewall does not match; use namespaces or pods peers" $cs) hub}}
+  {{hub- else hub}}
+  {{hub- $dnsNames = append $dnsNames $cs hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- $bad = append $bad (printf "unknown peer %s" $kind) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $ports := list hub}}
+  {{hub- if hasKey $rule "ports" hub}}
+  {{hub- if and (kindIs "slice" $rule.ports) (not $rule.ports) hub}}
+  {{hub- $bad = append $bad "ports is an empty list; leave ports out to allow every port" hub}}
+  {{hub- else if kindIs "slice" $rule.ports hub}}
+  {{hub- range $pr := $rule.ports hub}}
+  {{hub- $port := printf "%v" $pr hub}}
+  {{hub- $proto := "TCP" hub}}
+  {{hub- if kindIs "slice" $pr hub}}
+  {{hub- $port = "" hub}}
+  {{hub- else if kindIs "map" $pr hub}}
+  {{hub- range $pk := keys $pr | sortAlpha hub}}{{hub- if not (has $pk (list "port" "protocol")) hub}}{{hub- $bad = append $bad (printf "port entry key %s is not port or protocol" $pk) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $port = printf "%v" (dig "port" "" $pr) hub}}
+  {{hub- if hasKey $pr "protocol" hub}}{{hub- $proto = printf "%v" $pr.protocol hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if not (has $proto (list "TCP" "UDP" "SCTP")) hub}}
+  {{hub- $bad = append $bad (printf "protocol %s is not TCP, UDP or SCTP" $proto) hub}}
+  {{hub- else if and (regexMatch "^[0-9]{1,5}$" $port) (ge (atoi $port) 1) (le (atoi $port) 65535) hub}}
+  {{hub- $ports = append $ports (dict "port" (atoi $port) "protocol" $proto) hub}}
+  {{hub- else if and (le (len $port) 15) (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $port) (regexMatch "[a-z]" $port) (not (contains "--" $port)) hub}}
+  {{hub- $ports = append $ports (dict "port" $port "protocol" $proto) hub}}
+  {{hub- else hub}}
+  {{hub- $bad = append $bad (printf "port %s is not a port number or name" $port) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else if not (kindIs "invalid" $rule.ports) hub}}
+  {{hub- $bad = append $bad "ports is not a list" hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if and (not $bad) (not $npPeers) (not $dnsPeer) (not $cidrs) (not $dnsNames) hub}}
+  {{hub- $netErrs = append $netErrs (printf "rule %s has no peers" $ruleName) hub}}
+  {{hub- end hub}}
+  {{hub- if and (eq $dir "egress") (or $cidrs $dnsNames) hub}}
+  {{hub- range $port := $ports hub}}{{hub- if kindIs "string" $port.port hub}}{{hub- $bad = append $bad (printf "named port %s cannot be used with cidrs or dnsNames; an EgressFirewall takes port numbers" $port.port) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if and (eq $action "deny") (eq $dir "ingress") $cidrs hub}}
+  {{hub- $bad = append $bad "cannot deny inbound from external CIDRs; use Route allowlists (the haproxy.router.openshift.io/ip_whitelist annotation on the Route)" hub}}
+  {{hub- else if and (eq $action "deny") (eq (printf "%v" (index $peers "router")) "true") hub}}
+  {{hub- $bad = append $bad "cannot deny the router peer: router pods can use the host network, which an AdminNetworkPolicy does not match" hub}}
+  {{hub- end hub}}
+  {{hub- range $msg := $bad hub}}{{hub- $netErrs = append $netErrs (printf "rule %s: %s" $ruleName $msg) hub}}{{hub- end hub}}
+  {{hub- $ruleModel = append $ruleModel (dict "name" $ruleName "direction" $dir "action" $action "origin" (ternary "project" "profile" (has $ruleName $projectRuleNames)) "npPeers" $npPeers "dns" $dnsPeer "cidrs" $cidrs "nets" $nets "dnsNames" $dnsNames "ports" $ports) hub}}
+  {{hub- end hub}}
+  {{hub- $efEntries := list hub}}
+  {{hub- $efNets := list hub}}
+  {{hub- range $origin := list "project" "profile" hub}}
+  {{hub- range $r := $ruleModel hub}}
+  {{hub- if and (eq $r.origin $origin) (eq $r.direction "egress") hub}}
+  {{hub- $type := ternary "Deny" "Allow" (eq $r.action "deny") hub}}
+  {{hub- range $c := $r.cidrs hub}}
+  {{hub- $e := dict "type" $type "to" (dict "cidrSelector" $c) hub}}
+  {{hub- if $r.ports hub}}{{hub- $_ := set $e "ports" $r.ports hub}}{{hub- end hub}}
+  {{hub- $efEntries = append $efEntries $e hub}}
+  {{hub- end hub}}
+  {{hub- range $n := $r.dnsNames hub}}
+  {{hub- $e := dict "type" $type "to" (dict "dnsName" $n) hub}}
+  {{hub- if $r.ports hub}}{{hub- $_ := set $e "ports" $r.ports hub}}{{hub- end hub}}
+  {{hub- $efEntries = append $efEntries $e hub}}
+  {{hub- end hub}}
+  {{hub- range $n := $r.nets hub}}{{hub- $efNets = append $efNets (dict "rule" $r.name "action" $r.action "cidr" $n.cidr "p" $n.p "g" $n.g) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $efNeeded := or (gt (len $efEntries) 0) $netDeny.egress hub}}
+  {{hub- $anp := dict "ingress" (list) "egress" (list) hub}}
+  {{hub- $profileDeny := dict "ingress" false "egress" false hub}}
+  {{hub- $anpNeeded := false hub}}
+  {{hub- range $r := $ruleModel hub}}
+  {{hub- if and (eq $r.action "deny") (or $r.npPeers $r.dns) hub}}
+  {{hub- $anpNeeded = true hub}}
+  {{hub- if eq $r.origin "profile" hub}}{{hub- $_ := set $profileDeny $r.direction true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $anpNeeded hub}}
+  {{hub- range $stage := list "project-deny" "override" "profile-deny" hub}}
+  {{hub- range $r := $ruleModel hub}}
+  {{hub- $take := and (eq $r.origin "profile") (eq $r.action "deny") hub}}
+  {{hub- if eq $stage "project-deny" hub}}{{hub- $take = and (eq $r.origin "project") (eq $r.action "deny") hub}}{{hub- end hub}}
+  {{hub- if eq $stage "override" hub}}{{hub- $take = and (eq $r.origin "project") (eq $r.action "allow") (index $profileDeny $r.direction) hub}}{{hub- end hub}}
+  {{hub- if and $take (or $r.npPeers $r.dns) hub}}
+  {{hub- $side := ternary "from" "to" (eq $r.direction "ingress") hub}}
+  {{hub- $type := ternary "Deny" "Allow" (eq $r.action "deny") hub}}
+  {{hub- $anpPeers := list hub}}
+  {{hub- range $np := $r.npPeers hub}}
+  {{hub- if hasKey $np "namespaceSelector" hub}}
+  {{hub- $anpPeers = append $anpPeers (dict "namespaces" $np.namespaceSelector) hub}}
+  {{hub- else if and (hasKey $np "podSelector") $np.podSelector hub}}
+  {{hub- $anpPeers = append $anpPeers (dict "pods" (dict "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" $namespace)) "podSelector" $np.podSelector)) hub}}
+  {{hub- else if hasKey $np "podSelector" hub}}
+  {{hub- $anpPeers = append $anpPeers (dict "namespaces" (dict "matchLabels" (dict "kubernetes.io/metadata.name" $namespace))) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $anpPeers hub}}
+  {{hub- $anpPorts := list hub}}
+  {{hub- range $port := $r.ports hub}}
+  {{hub- if kindIs "string" $port.port hub}}
+  {{hub- $netErrs = append $netErrs (printf "rule %s: named port %s cannot be used in an AdminNetworkPolicy rule; use a port number" $r.name $port.port) hub}}
+  {{hub- else hub}}
+  {{hub- $anpPorts = append $anpPorts (dict "portNumber" $port) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if gt (len $anpPorts) 100 hub}}
+  {{hub- $netErrs = append $netErrs (printf "rule %s: %d ports, more than the 100 an AdminNetworkPolicy rule allows" $r.name (len $anpPorts)) hub}}
+  {{hub- end hub}}
+  {{hub- $e := dict "name" $r.name "action" $type $side $anpPeers hub}}
+  {{hub- if $anpPorts hub}}{{hub- $_ := set $e "ports" $anpPorts hub}}{{hub- end hub}}
+  {{hub- $_ := set $anp $r.direction (append (index $anp $r.direction) $e) hub}}
+  {{hub- end hub}}
+  {{hub- if $r.dns hub}}
+  {{hub- $dnsPorts := list (dict "portNumber" (dict "port" 5353 "protocol" "UDP")) (dict "portNumber" (dict "port" 5353 "protocol" "TCP")) hub}}
+  {{hub- $_ := set $anp "egress" (append $anp.egress (dict "name" $r.name "action" $type "to" (list (dict "namespaces" (dict "matchLabels" (dict "kubernetes.io/metadata.name" "openshift-dns")))) "ports" $dnsPorts)) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $dir := list "ingress" "egress" hub}}
+  {{hub- if gt (len (index $anp $dir)) 100 hub}}
+  {{hub- $netErrs = append $netErrs (printf "the AdminNetworkPolicy would need %d %s rules, more than the 100 an AdminNetworkPolicy allows" (len (index $anp $dir)) $dir) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $inNets := list hub}}
+  {{hub- range $r := $ruleModel hub}}
+  {{hub- if and (eq $r.direction "ingress") (eq $r.action "allow") $netDeny.ingress hub}}
+  {{hub- range $n := $r.nets hub}}{{hub- $inNets = append $inNets (dict "rule" $r.name "cidr" $n.cidr "p" $n.p "g" $n.g) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $netPolicies := list hub}}
+  {{hub- if not $netErrs hub}}
+  {{hub- range $r := $ruleModel hub}}
+  {{hub- if and (eq $r.action "allow") (index $netDeny $r.direction) (or $r.npPeers $r.dns (and (eq $r.direction "ingress") $r.nets)) hub}}{{hub- $netPolicies = append $netPolicies $r hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- $errs = concat $errs $netErrs hub}}
+  {{hub- $valid = false hub}}
+  {{hub- end hub}}
+  {{hub- $eip := index $eipSpecs $name hub}}
+  {{hub- $eipErrs := $eip.errs hub}}
+  {{hub- $eipIPs := list hub}}
+  {{hub- $eipNets := list hub}}
+  {{hub- range $e := $eip.ips hub}}
+  {{hub- $eipIPs = append $eipIPs $e.ip hub}}
+  {{hub- $eipNets = append $eipNets (dict "ip" $e.ip "p" $e.p "g" $e.g) hub}}
+  {{hub- $others := list hub}}
+  {{hub- range $o := index $eipOwners $e.key hub}}{{hub- if ne $o $name hub}}{{hub- $others = append $others $o hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if $others hub}}{{hub- $eipErrs = append $eipErrs (printf "egressIP %s is also declared by project %s" $e.ip (join ", " $others)) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $eipErrs hub}}{{hub- $errs = concat $errs $eipErrs hub}}{{hub- $valid = false hub}}{{hub- end hub}}
+  {{hub- $dup := ne (index $nsDeclarer $namespace) $name hub}}
+  {{hub- if $dup hub}}{{hub- $errs = append $errs (printf "namespace %s already declared by %s" $namespace (index $nsDeclarer $namespace)) hub}}{{hub- end hub}}
+  {{hub- $msgs := list hub}}
+  {{hub- range $m := concat $errs $notes hub}}{{hub- $msgs = append $msgs (ternary (printf "%s..." (trunc 400 $m)) $m (gt (len $m) 400)) hub}}{{hub- end hub}}
+  {{hub- $sizeSkip := false hub}}
+  {{hub- $nameLen := add (len (toJson $name)) (len (toJson $namespace)) hub}}
+  {{hub- $overhead := add 800 (mul 8 $nameLen) (mul 4 (len (toJson $msgs))) hub}}
+  {{hub- $est := add $overhead (mul 12 $nameLen) hub}}
+  {{hub- if and $valid (hasKey $groups "admin") (not $dup) hub}}
+  {{hub- $objCount := add (len $groups) (len $netPolicies) hub}}
+  {{hub- $portCount := 0 hub}}
+  {{hub- $peerBytes := 0 hub}}
+  {{hub- $ingressNetRules := 0 hub}}
+  {{hub- range $r := $netPolicies hub}}
+  {{hub- $portCount = add $portCount (len $r.ports) hub}}
+  {{hub- $peerBytes = add $peerBytes 40 (len (toJson $r.npPeers)) hub}}
+  {{hub- if and (eq $r.direction "ingress") $r.nets hub}}{{hub- $ingressNetRules = add $ingressNetRules 1 hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $on := list (and $sizedOk.quota $sized.quota) (and $sizedOk.limitRange $sized.limitRange) $netDeny.ingress $netDeny.egress $efNeeded $anpNeeded $eipIPs hub}}{{hub- if $on hub}}{{hub- $objCount = add $objCount 1 hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $checkBytes := 0 hub}}
+  {{hub- if $efNeeded hub}}{{hub- $checkBytes = add $checkBytes 3000 hub}}{{hub- end hub}}
+  {{hub- if $anpNeeded hub}}{{hub- $checkBytes = add $checkBytes 600 hub}}{{hub- end hub}}
+  {{hub- if $eipIPs hub}}{{hub- $checkBytes = add $checkBytes 1000 hub}}{{hub- end hub}}
+  {{hub- if $inNets hub}}{{hub- $checkBytes = add $checkBytes 1500 hub}}{{hub- end hub}}
+  {{hub- $small := dict "a" $applied "g" $groups "q" $sized "anp" $anp "e" $eipNets hub}}
+  {{hub- $est = add $overhead (ternary 6000 9200 $pruneOn) (mul 800 $objCount) $checkBytes (mul 1200 $ingressNetRules) (mul 80 $portCount) (mul 2 $peerBytes) (mul (add 20 (mul 4 $objCount)) $nameLen) (div (mul 8 (len (toJson $efEntries))) 5) (mul 4 (len (toJson (concat $efNets $inNets)))) (mul 3 (len (toJson $small))) (div (len (toJson $netPolicies)) 2) hub}}
+  {{hub- end hub}}
+  {{hub- $sizeAll = add $sizeAll $est hub}}
+  {{hub- if or $sizeSkipped (gt (add $sizeTotal $est) $sizeLimit) hub}}
+  {{hub- $sizeSkip = true hub}}
+  {{hub- $valid = false hub}}
+  {{hub- $sizeTotal = add $sizeTotal 300 (mul 7 $nameLen) hub}}
+  {{hub- $sizeSkipped = append $sizeSkipped $statusKey hub}}
+  {{hub- if gt $sizeTotal $sizeHard hub}}{{hub- fail (printf "project-onboarding: the policy would be about %d bytes even with %d projects not rendered, over the %d bytes that keep it below the etcd request limit; split the projects across clusters or shorten project names (see Size limit in the project-onboarding README)" $sizeTotal (len $sizeSkipped) $sizeHard) hub}}{{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- $sizeTotal = add $sizeTotal $est hub}}
+  {{hub- end hub}}
+  {{hub- if and (or $errs $notes) (not $sizeSkip) hub}}
+  {{- $_ := set $status {{hub $statusKey | toJson hub}} (concat (index $status {{hub $statusKey | toJson hub}} | default list) ({{hub $msgs | toJson | base64enc | quote hub}} | base64dec | fromJson)) }}
+  {{hub- end hub}}
+  {{hub- $owner := dict "mode" $mode "ok" (and (eq (len $errs) 0) (not $sizeSkip)) "namespace" $namespace hub}}
+  {{hub- $_ := set $projOwners $name (merge (dict "a" $adopt "d" $dor) $owner) hub}}
+  {{hub- if gt (len (index $nsClaims $namespace | default list)) 1 hub}}{{hub- $owner = dict "mode" $mode "ok" false "namespace" $namespace hub}}{{hub- end hub}}
+  {{hub- $_ := set $nsOwners $namespace $owner hub}}
+  {{hub- if not $sizeSkip hub}}
+  {{hub- range $level := keys $groups hub}}{{hub- $_ := set $declared (printf "RoleBinding|%s|autoshift-%s" $namespace $level) true hub}}{{hub- end hub}}
+  {{hub- if or (not $sizedOk.quota) $sized.quota hub}}{{hub- $_ := set $declared (printf "ResourceQuota|%s|autoshift-quota" $namespace) true hub}}{{hub- end hub}}
+  {{hub- if or (not $sizedOk.limitRange) $sized.limitRange hub}}{{hub- $_ := set $declared (printf "LimitRange|%s|autoshift-limits" $namespace) true hub}}{{hub- end hub}}
+  {{hub- if not $netErrs hub}}
+  {{hub- range $dir := list "ingress" "egress" hub}}{{hub- if index $netDeny $dir hub}}{{hub- $_ := set $declared (printf "NetworkPolicy|%s|autoshift-default-deny-%s" $namespace $dir) true hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $r := $netPolicies hub}}{{hub- $_ := set $declared (printf "NetworkPolicy|%s|autoshift-rule-%s" $namespace $r.name) true hub}}{{hub- end hub}}
+  {{hub- if $efNeeded hub}}{{hub- $_ := set $declared (printf "EgressFirewall|%s|default" $namespace) true hub}}{{hub- end hub}}
+  {{hub- if $anpNeeded hub}}{{hub- $_ := set $declared (printf "AdminNetworkPolicy||autoshift-project-%s" $name) true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $eipIPs hub}}{{hub- $_ := set $declared (printf "EgressIP||autoshift-%s" $name) true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $strip := and $pruneOn (eq (len $errs) 0) hub}}
+  {{hub- $report := and (eq $want "inform") (not $pruneOn) (eq (len $errs) 0) hub}}
+  {{hub- if and $valid (hasKey $groups "admin") (not $dup) hub}}
+  {{- $existing := lookup "v1" "Namespace" "" {{hub $namespace | toJson hub}} }}
+  {{- $render := true }}
+  {{- $blocked := "" }}
+  {{- if $existing }}
+  {{- if hasKey (default dict $existing.metadata.labels) "autoshift.io/project" }}
+  {{- $liveOwner := printf "%v" (index $existing.metadata.labels "autoshift.io/project") }}
+  {{- if ne $liveOwner {{hub $name | toJson hub}} }}
+  {{- $render = false }}
+  {{- $blocked = printf "namespace %s is owned by project %s" {{hub $namespace | toJson hub}} $liveOwner }}
+  {{- end }}
+  {{- else if not {{hub $adopt hub}} }}
+  {{- $render = false }}
+  {{hub- if $adoptBad hub}}
+  {{- $blocked = printf "namespace %s exists and is not owned by AutoShift; adopt is not true or false, so it is not taken over" {{hub $namespace | toJson hub}} }}
+  {{hub- else hub}}
+  {{- $blocked = printf "namespace %s exists and is not owned by AutoShift; set adopt: true to take it over" {{hub $namespace | toJson hub}} }}
+  {{hub- end hub}}
+  {{- end }}
+  {{- end }}
+  {{hub- if and $efNeeded (not $netErrs) hub}}
+  {{- $efErrs := list }}
+  {{- if not $efCrd }}
+  {{- $efErrs = append $efErrs "the EgressFirewall CRD (egressfirewalls.k8s.ovn.org) is not installed, so the external egress rules and default deny cannot be enforced" }}
+  {{- end }}
+  {{- $efCount := {{hub len $efEntries hub}} }}
+  {{hub- if $netDeny.egress hub}}
+  {{- $efCount = add $efCount (ternary 2 1 (or (gt (len $v6Cidrs) 0) (not $clusterCidrs))) }}
+  {{hub- end hub}}
+  {{- if gt $efCount 8000 }}
+  {{- $efErrs = append $efErrs (printf "the EgressFirewall would need %d rules, more than the 8000 that OVN-Kubernetes allows" $efCount) }}
+  {{- end }}
+  {{hub- if $efNets hub}}
+  {{- range $u := {{hub $efNets | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- if not $clusterNetsOk }}
+  {{- if eq $u.action "deny" }}
+  {{- $efErrs = append $efErrs (printf "rule %s: cannot check cidr %s against the cluster and service networks, whose CIDRs cannot be read, so the deny may not apply" $u.rule $u.cidr) }}
+  {{- end }}
+  {{- else }}
+  {{- range $n := $clusterNets }}
+  {{- if eq (len $n.g) (len $u.g) }}
+  {{- $m := min $n.p $u.p }}
+  {{- $same := true }}
+  {{- range $i, $g := $u.g }}
+  {{- $b := min 16 (sub $m (mul 16 $i)) }}
+  {{- if gt $b 0 }}{{- $d := index $pow2 (sub 16 $b) }}{{- if ne (div $g $d) (div (index $n.g $i) $d) }}{{- $same = false }}{{- end }}{{- end }}
+  {{- end }}
+  {{- if and $same (eq $u.action "deny") }}
+  {{- $efErrs = append $efErrs (printf "rule %s: cidr %s overlaps the cluster or service network %s, which an EgressFirewall does not match, so the deny may not apply; use namespaces or pods peers for in-cluster destinations" $u.rule $u.cidr $n.cidr) }}
+  {{- else if and $same (ge (int $u.p) (int $n.p)) }}
+  {{- $efErrs = append $efErrs (printf "rule %s: cidr %s lies inside the cluster or service network %s; use namespaces or pods peers for in-cluster destinations" $u.rule $u.cidr $n.cidr) }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{- if $efErrs }}
+  {{- $render = false }}
+  {{- $_ := set $status {{hub $statusKey | toJson hub}} (concat (index $status {{hub $statusKey | toJson hub}} | default list) $efErrs) }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- if and $anpNeeded (not $netErrs) hub}}
+  {{- if not $anpCrd }}
+  {{- $render = false }}
+  {{- $_ := set $status {{hub $statusKey | toJson hub}} (append (index $status {{hub $statusKey | toJson hub}} | default list) "the AdminNetworkPolicy CRD (adminnetworkpolicies.policy.networking.k8s.io) is not installed, so the in-cluster deny rules cannot be enforced") }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- if $eipIPs hub}}
+  {{- if not $eipCrd }}
+  {{- $render = false }}
+  {{- $_ := set $status {{hub $statusKey | toJson hub}} (append (index $status {{hub $statusKey | toJson hub}} | default list) "the EgressIP CRD (egressips.k8s.ovn.org) is not installed, so the egress IP addresses cannot be assigned") }}
+  {{- end }}
+  {{- if $clusterNetsOk }}
+  {{- range $u := {{hub $eipNets | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- range $n := $clusterNets }}
+  {{- if eq (len $n.g) (len $u.g) }}
+  {{- $same := true }}
+  {{- range $i, $g := $u.g }}
+  {{- $b := min 16 (sub $n.p (mul 16 $i)) }}
+  {{- if gt $b 0 }}{{- $d := index $pow2 (sub 16 $b) }}{{- if ne (div $g $d) (div (index $n.g $i) $d) }}{{- $same = false }}{{- end }}{{- end }}
+  {{- end }}
+  {{- if $same }}
+  {{- $render = false }}
+  {{- $_ := set $status {{hub $statusKey | toJson hub}} (append (index $status {{hub $statusKey | toJson hub}} | default list) (printf "egressIP %s lies inside the cluster or service network %s, which OVN-Kubernetes never assigns as an egress IP" $u.ip $n.cidr)) }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- if and $inNets (not $netErrs) hub}}
+  {{- $inErrs := list }}
+  {{- range $u := {{hub $inNets | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- if not $clusterNetsOk }}
+  {{- $inErrs = append $inErrs (printf "rule %s: cannot check ingress cidr %s against the cluster and service networks, whose CIDRs cannot be read, so the allow could admit every pod in the cluster" $u.rule $u.cidr) }}
+  {{- else }}
+  {{- range $n := $clusterNets }}
+  {{- if and (eq (len $n.g) (len $u.g)) (ge (int $u.p) (int $n.p)) }}
+  {{- $same := true }}
+  {{- range $i, $g := $u.g }}
+  {{- $b := min 16 (sub $n.p (mul 16 $i)) }}
+  {{- if gt $b 0 }}{{- $d := index $pow2 (sub 16 $b) }}{{- if ne (div $g $d) (div (index $n.g $i) $d) }}{{- $same = false }}{{- end }}{{- end }}
+  {{- end }}
+  {{- if $same }}
+  {{- $inErrs = append $inErrs (printf "rule %s: ingress cidr %s lies inside the cluster or service network %s; use namespaces or pods peers for in-cluster sources" $u.rule $u.cidr $n.cidr) }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if $inErrs }}
+  {{- $render = false }}
+  {{- $_ := set $status {{hub $statusKey | toJson hub}} (concat (index $status {{hub $statusKey | toJson hub}} | default list) $inErrs) }}
+  {{- end }}
+  {{hub- end hub}}
+  {{- if $blocked }}
+  {{- $_ := set $status {{hub $statusKey | toJson hub}} (append (index $status {{hub $statusKey | toJson hub}} | default list) $blocked) }}
+  {{- end }}
+  {{- if $render }}
+  {{- $_ := set $rendered {{hub $namespace | toJson hub}} true }}
+  {{- if $existing }}{{- $_ := set $live {{hub $namespace | toJson hub}} true }}{{- end }}
+  {{hub- if and $netDeny.egress (not $netErrs) hub}}
+  {{- if not $clusterCidrs }}
+  {{- $_ := set $status {{hub $statusKey | toJson hub}} (append (index $status {{hub $statusKey | toJson hub}} | default list) "cannot read the cluster and service network CIDRs, so autoshift-default-deny-egress denies all egress") }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- if or (eq $mode $want) $report hub}}
+  {{- $appliedLabels := {{hub $applied.labels | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $appliedAnnotations := {{hub $applied.annotations | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{hub- if not $adopt hub}}
+  {{- if not $existing }}{{- $_ := set $appliedAnnotations "autoshift.io/onboarding-created-at" $nowTs }}{{- end }}
+  {{hub- end hub}}
+  {{- $kept := dict "labels" $appliedLabels "annotations" $appliedAnnotations }}
+  {{- $stripped := dict }}
+  {{- $dropped := false }}
+  {{- if $existing }}
+  {{- $liveLabels := default dict $existing.metadata.labels }}
+  {{- $liveAnnotations := default dict $existing.metadata.annotations }}
+  {{- $previous := dict }}
+  {{- range $k := splitList "," (printf "%v" (index $liveAnnotations "autoshift.io/project-labels" | default "")) }}{{- $_ := set $previous $k true }}{{- end }}
+  {{- $_ := unset $previous "" }}
+  {{- $keptLabels := dict }}
+  {{- $strippedLabels := dict }}
+  {{- range $k, $v := $liveLabels }}
+  {{- $_ := set $keptLabels $k $v }}
+  {{- if hasKey $previous $k }}{{- if not (hasKey $appliedLabels $k) }}{{- $dropped = true }}{{- end }}{{- else }}{{- $_ := set $strippedLabels $k $v }}{{- end }}
+  {{- end }}
+  {{- range $k, $v := $appliedLabels }}{{- $_ := set $keptLabels $k $v }}{{- $_ := set $strippedLabels $k $v }}{{- end }}
+  {{- $strippedAnnotations := dict }}
+  {{- range $k, $v := $liveAnnotations }}{{- $_ := set $strippedAnnotations $k $v }}{{- end }}
+  {{- range $k, $v := $appliedAnnotations }}{{- $_ := set $strippedAnnotations $k $v }}{{- end }}
+  {{- $_ := unset $strippedAnnotations $pendingKey }}
+  {{- range $k, $v := index $nsAdd {{hub $namespace | toJson hub}} | default dict }}{{- $_ := set $strippedAnnotations $k $v }}{{- end }}
+  {{- if not (and (not {{hub $adopt hub}}) (eq (printf "%v" (index $liveLabels "autoshift.io/onboarding-created")) "true") (eq (printf "%v" (index $liveAnnotations "autoshift.io/onboarding-created-by")) {{hub $name | toJson hub}})) }}
+  {{- range $k := $recordKeys }}{{- $_ := unset $keptLabels $k }}{{- $_ := unset $strippedLabels $k }}{{- $_ := unset $strippedAnnotations $k }}{{- end }}
+  {{- end }}
+  {{- $keptAnnotations := dict }}
+  {{- range $k, $v := $strippedAnnotations }}{{- $_ := set $keptAnnotations $k $v }}{{- end }}
+  {{- $union := dict }}
+  {{- range $k, $v := $previous }}{{- $_ := set $union $k true }}{{- end }}
+  {{- range $k := splitList "," (printf "%v" (index $appliedAnnotations "autoshift.io/project-labels" | default "")) }}{{- $_ := set $union $k true }}{{- end }}
+  {{- $_ := unset $union "" }}
+  {{- $_ := set $keptAnnotations "autoshift.io/project-labels" (join "," (sortAlpha (keys $union))) }}
+  {{- $kept = dict "labels" $keptLabels "annotations" $keptAnnotations "exact" true }}
+  {{- $stripped = dict "labels" $strippedLabels "annotations" $strippedAnnotations "exact" true }}
+  {{- end }}
+  {{- $variants := list }}
+  {{hub- if eq $mode $want hub}}
+  {{- $variants = append $variants (ternary (default $kept $stripped) $kept {{hub $strip hub}}) }}
+  {{hub- end hub}}
+  {{hub- if $report hub}}
+  {{- if $dropped }}{{- $variants = append $variants $stripped }}{{- end }}
+  {{hub- end hub}}
+  {{- range $variant := $variants }}
+  - complianceType: musthave
+    {{- if $variant.exact }}
+    metadataComplianceType: mustonlyhave
+    {{- end }}
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $namespace | toJson hub}}
+        labels:
+          {{- range $k, $v := $variant.labels }}
+          {{ $k | toJson }}: {{ $v | toJson }}
+          {{- end }}
+        annotations:
+          {{- range $k, $v := $variant.annotations }}
+          {{ $k | toJson }}: {{ $v | toJson }}
+          {{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- if eq $mode $want hub}}
+  {{hub- range $level := list "admin" "write" "read" hub}}
+  {{hub- if hasKey $groups $level hub}}
+  {{- $binding := {{hub dict "role" (index $roles $level | printf "%v") "group" (index $groups $level) | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  - complianceType: mustonlyhave
+    recreateOption: IfRequired
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: 'autoshift-{{hub $level hub}}'
+        namespace: {{hub $namespace | toJson hub}}
+        labels:
+          autoshift.io/project: {{hub $name | toJson hub}}
+          autoshift.io/managed-by: project-onboarding
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: {{ $binding.role | toJson }}
+      subjects:
+        - apiGroup: rbac.authorization.k8s.io
+          kind: Group
+          name: {{ $binding.group | toJson }}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if and $sizedOk.quota $sized.quota hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: ResourceQuota
+      metadata:
+        name: autoshift-quota
+        namespace: {{hub $namespace | toJson hub}}
+        labels:
+          autoshift.io/project: {{hub $name | toJson hub}}
+          autoshift.io/managed-by: project-onboarding
+      spec:
+        hard:
+          {{hub- range $k, $v := $sized.quota hub}}
+          {{hub $k | toJson hub}}: {{hub printf "%v" $v | toJson hub}}
+          {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if and $sizedOk.limitRange $sized.limitRange hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: LimitRange
+      metadata:
+        name: autoshift-limits
+        namespace: {{hub $namespace | toJson hub}}
+        labels:
+          autoshift.io/project: {{hub $name | toJson hub}}
+          autoshift.io/managed-by: project-onboarding
+      spec:
+        limits:
+          - type: Container
+            {{hub- range $field, $res := $sized.limitRange hub}}
+            {{hub $field | toJson hub}}:
+              {{hub- range $k, $v := $res hub}}
+              {{hub $k | toJson hub}}: {{hub printf "%v" $v | toJson hub}}
+              {{hub- end hub}}
+            {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if and $netDeny.ingress (not $netErrs) hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: autoshift-default-deny-ingress
+        namespace: {{hub $namespace | toJson hub}}
+        labels:
+          autoshift.io/project: {{hub $name | toJson hub}}
+          autoshift.io/managed-by: project-onboarding
+      spec:
+        podSelector: {}
+        policyTypes:
+          - Ingress
+  {{hub- end hub}}
+  {{hub- if and $netDeny.egress (not $netErrs) hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: autoshift-default-deny-egress
+        namespace: {{hub $namespace | toJson hub}}
+        labels:
+          autoshift.io/project: {{hub $name | toJson hub}}
+          autoshift.io/managed-by: project-onboarding
+      spec:
+        podSelector: {}
+        policyTypes:
+          - Egress
+        {{- if $clusterCidrs }}
+        egress:
+          - to:
+              - ipBlock:
+                  cidr: 0.0.0.0/0
+                  {{- if $v4Cidrs }}
+                  except:
+                    {{- range $c := $v4Cidrs }}
+                    - {{ $c | toJson }}
+                    {{- end }}
+                  {{- end }}
+              {{- if $v6Cidrs }}
+              - ipBlock:
+                  cidr: '::/0'
+                  except:
+                    {{- range $c := $v6Cidrs }}
+                    - {{ $c | toJson }}
+                    {{- end }}
+              {{- end }}
+        {{- end }}
+  {{hub- end hub}}
+  {{hub- range $r := $netPolicies hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: {{hub printf "autoshift-rule-%s" $r.name | toJson hub}}
+        namespace: {{hub $namespace | toJson hub}}
+        labels:
+          autoshift.io/project: {{hub $name | toJson hub}}
+          autoshift.io/managed-by: project-onboarding
+      spec:
+        podSelector: {}
+        policyTypes:
+          - {{hub ternary "Ingress" "Egress" (eq $r.direction "ingress") hub}}
+        {{hub $r.direction hub}}:
+          {{hub- if or $r.npPeers (and (eq $r.direction "ingress") $r.nets) hub}}
+          - {{hub ternary "from" "to" (eq $r.direction "ingress") hub}}:
+              {{hub- range $peer := $r.npPeers hub}}
+              - {{hub $peer | toJson hub}}
+              {{hub- end hub}}
+              {{hub- if eq $r.direction "ingress" hub}}
+              {{hub- if $r.nets hub}}
+              {{- range $u := {{hub $r.nets | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+              {{- $except := list }}
+              {{- range $c := $clusterNets }}
+              {{- if and (eq (len $c.g) (len $u.g)) (gt (int $c.p) (int $u.p)) }}
+              {{- $same := true }}
+              {{- range $i, $g := $u.g }}
+              {{- $b := min 16 (sub $u.p (mul 16 $i)) }}
+              {{- if gt $b 0 }}{{- $d := index $pow2 (sub 16 $b) }}{{- if ne (div $g $d) (div (index $c.g $i) $d) }}{{- $same = false }}{{- end }}{{- end }}
+              {{- end }}
+              {{- if $same }}{{- $except = append $except $c.cidr }}{{- end }}
+              {{- end }}
+              {{- end }}
+              - ipBlock:
+                  cidr: {{ $u.cidr | toJson }}
+                  {{- if $except }}
+                  except: {{ $except | toJson }}
+                  {{- end }}
+              {{- end }}
+              {{hub- end hub}}
+              {{hub- end hub}}
+            {{hub- if $r.ports hub}}
+            ports:
+              {{hub- range $port := $r.ports hub}}
+              - {{hub $port | toJson hub}}
+              {{hub- end hub}}
+            {{hub- end hub}}
+          {{hub- end hub}}
+          {{hub- if $r.dns hub}}
+          - to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: openshift-dns
+            ports:
+              - port: 5353
+                protocol: UDP
+              - port: 5353
+                protocol: TCP
+          {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if and $efNeeded (not $netErrs) hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: k8s.ovn.org/v1
+      kind: EgressFirewall
+      metadata:
+        name: default
+        namespace: {{hub $namespace | toJson hub}}
+        labels:
+          autoshift.io/project: {{hub $name | toJson hub}}
+          autoshift.io/managed-by: project-onboarding
+      spec:
+        egress:
+          {{hub- range $e := $efEntries hub}}
+          - {{hub $e | toJson hub}}
+          {{hub- end hub}}
+          {{hub- if $netDeny.egress hub}}
+          - type: Deny
+            to:
+              cidrSelector: 0.0.0.0/0
+          {{- if or $v6Cidrs (not $clusterCidrs) }}
+          - type: Deny
+            to:
+              cidrSelector: '::/0'
+          {{- end }}
+          {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if and $anpNeeded (not $netErrs) hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: policy.networking.k8s.io/v1alpha1
+      kind: AdminNetworkPolicy
+      metadata:
+        name: {{hub printf "autoshift-project-%s" $name | toJson hub}}
+        labels:
+          autoshift.io/project: {{hub $name | toJson hub}}
+          autoshift.io/managed-by: project-onboarding
+      spec:
+        priority: 50
+        subject:
+          namespaces:
+            matchLabels:
+              autoshift.io/project: {{hub $name | toJson hub}}
+        {{hub- range $dir := list "ingress" "egress" hub}}
+        {{hub- if index $anp $dir hub}}
+        {{hub $dir hub}}:
+          {{hub- range $e := index $anp $dir hub}}
+          - {{hub $e | toJson hub}}
+          {{hub- end hub}}
+        {{hub- end hub}}
+        {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $eipIPs hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: k8s.ovn.org/v1
+      kind: EgressIP
+      metadata:
+        name: {{hub printf "autoshift-%s" $name | toJson hub}}
+        labels:
+          autoshift.io/project: {{hub $name | toJson hub}}
+          autoshift.io/managed-by: project-onboarding
+      spec:
+        egressIPs: {{hub $eipIPs | toJson hub}}
+        namespaceSelector:
+          matchLabels:
+            autoshift.io/project: {{hub $name | toJson hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $sizeSkipped hub}}
+  {{- range $k := {{hub $sizeSkipped | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $_ := set $status $k (append (index $status $k | default list) "not rendered: the policy reached its size limit, see the status key project-onboarding.size") }}
+  {{- end }}
+  {{- $_ := set $status "project-onboarding.size" (list ({{hub printf "the policy would be about %d bytes with every project, over the %d bytes it is kept below to stay well under the 1.5 MiB etcd request limit; %d projects, from %s on in name order, are not rendered, and their live objects are kept as they are; see Size limit in the project-onboarding README" $sizeAll $sizeLimit (len $sizeSkipped) (first $sizeSkipped) | toJson | base64enc | quote hub}} | base64dec | fromJson)) }}
+  {{hub- end hub}}
+  {{- /* project-onboarding size estimate: {{hub $sizeAll hub}} bytes, limit {{hub $sizeLimit hub}} */}}
+  {{hub- if and (eq $want "enforce") $adminANPs hub}}
+  {{- if $anpCrd }}
+  {{hub- range $i, $a := $adminANPs hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: policy.networking.k8s.io/v1alpha1
+      kind: AdminNetworkPolicy
+      metadata:
+        name: {{hub printf "autoshift-admin-%s" $a.name | toJson hub}}
+        labels:
+          autoshift.io/managed-by: project-onboarding
+      spec:
+        priority: {{hub add 10 $i hub}}
+        subject: {{hub $a.subject | toJson hub}}
+        {{hub $a.direction hub}}:
+          {{hub- range $e := $a.rules hub}}
+          - {{hub $e | toJson hub}}
+          {{hub- end hub}}
+  {{hub- end hub}}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- range $a := $adminANPs hub}}{{hub- $_ := set $declared (printf "AdminNetworkPolicy||autoshift-admin-%s" $a.name) true hub}}{{hub- end hub}}
+  {{hub- if and $rcm $cfg (or (kindIs "map" $projVal) (kindIs "invalid" $projVal)) hub}}
+  {{- $nsOwners := {{hub $nsOwners | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $projOwners := {{hub $projOwners | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $shard := {{hub $shard hub}} }}
+  {{- $otherNs := dict }}
+  {{- range $n := splitList "," {{hub join "," $otherNs | toJson hub}} }}{{- $_ := set $otherNs $n true }}{{- end }}
+  {{- $_ := unset $otherNs "" }}
+  {{hub- if kindIs "map" $projVal hub}}
+  {{- $declaredKeys := {{hub $declared | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $heldBy := dict }}
+  {{- range $ns := $labeledNs }}
+  {{- $nsProject := printf "%v" (dig "metadata" "labels" "autoshift.io/project" "" $ns) }}
+  {{- $nsName := printf "%v" (dig "metadata" "name" "" $ns) }}
+  {{- if and $nsProject (or (hasKey $nsOwners $nsName) (hasKey $otherNs $nsName)) }}
+  {{- $_ := set $heldBy $nsProject true }}
+  {{- end }}
+  {{- end }}
+  {{- range $ns := $labeledNs }}
+  {{- $nsName := printf "%v" (dig "metadata" "name" "" $ns) }}
+  {{- $nsProject := printf "%v" (dig "metadata" "labels" "autoshift.io/project" "" $ns) }}
+  {{- $owner := index $projOwners $nsProject | default dict }}
+  {{- if and $owner (not (hasKey $nsOwners $nsName)) (not (hasKey $otherNs $nsName)) (not (regexMatch {{hub $platformNs | toJson hub}} $nsName)) (eq (printf "%v" $owner.ok) "true") (hasKey $live (printf "%v" $owner.namespace)) }}
+  {{- $target := ternary (printf "%v" $owner.mode) "inform" {{hub $pruneOn hub}} }}
+  {{- if eq $target "{{hub $want hub}}" }}
+  {{- $_ := set $nsWritten $nsName true }}
+  {{- $releasedLabels := dict }}
+  {{- range $k, $v := (dig "metadata" "labels" dict $ns) }}{{- if not (has $k (list "autoshift.io/project" "autoshift.io/managed-by" "autoshift.io/onboarding-created")) }}{{- $_ := set $releasedLabels $k $v }}{{- end }}{{- end }}
+  - complianceType: musthave
+    metadataComplianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{ $nsName | toJson }}
+        labels:
+          {{- range $k, $v := $releasedLabels }}
+          {{ $k | toJson }}: {{ $v | toJson }}
+          {{- end }}
+        annotations:
+          {{- range $k, $v := (dig "metadata" "annotations" dict $ns) }}
+          {{- if ne $k $pendingKey }}
+          {{ $k | toJson }}: {{ $v | toJson }}
+          {{- end }}
+          {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{hub- if eq $want "enforce" hub}}
+  {{- range $ns := $labeledNs }}
+  {{- $nsName := printf "%v" (dig "metadata" "name" "" $ns) }}
+  {{- $nsLbl := dig "metadata" "labels" dict $ns }}
+  {{- $nsAnn := dig "metadata" "annotations" dict $ns }}
+  {{- $nsProject := printf "%v" (index $nsLbl "autoshift.io/project") }}
+  {{- $po := index $projOwners $nsProject | default dict }}
+  {{- $own := and $po (eq (printf "%v" $po.namespace) $nsName) }}
+  {{- if and (or $own (hasKey $nsOwners $nsName) (and $po (not (hasKey $otherNs $nsName)))) (not (hasKey $nsWritten $nsName)) (not (and $own (hasKey $rendered $nsName) (eq (printf "%v" $po.mode) "enforce"))) }}
+  {{- $lbl := dict }}
+  {{- range $k, $v := $nsLbl }}{{- $_ := set $lbl $k $v }}{{- end }}
+  {{- $ann := dict }}
+  {{- range $k, $v := $nsAnn }}{{- $_ := set $ann $k $v }}{{- end }}
+  {{- $_ := unset $ann $pendingKey }}
+  {{- if not $own }}
+  {{- else if or (eq (printf "%v" $po.a) "true") (ne (printf "%v" (index $lbl "autoshift.io/onboarding-created")) "true") (ne (printf "%v" (index $ann "autoshift.io/onboarding-created-by")) $nsProject) }}
+  {{- range $k := $recordKeys }}{{- $_ := unset $lbl $k }}{{- $_ := unset $ann $k }}{{- end }}
+  {{- else }}
+  {{- if and (eq (printf "%v" $po.mode) "inform") (eq (printf "%v" (index $ann "autoshift.io/onboarding-mode")) "enforce") }}{{- $_ := set $ann "autoshift.io/onboarding-mode" "inform" }}{{- end }}
+  {{- if and (ne (printf "%v" $po.d) "true") (eq (printf "%v" (index $ann "autoshift.io/delete-on-removal")) "true") }}{{- $_ := set $ann "autoshift.io/delete-on-removal" "false" }}{{- end }}
+  {{- end }}
+  {{- if or (ne (toJson $lbl) (toJson $nsLbl)) (ne (toJson $ann) (toJson $nsAnn)) }}
+  {{- $_ := set $nsWritten $nsName true }}
+  - complianceType: musthave
+    metadataComplianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{ $nsName | toJson }}
+        labels:
+          {{- range $k, $v := $lbl }}
+          {{ $k | toJson }}: {{ $v | toJson }}
+          {{- end }}
+        annotations:
+          {{- range $k, $v := $ann }}
+          {{ $k | toJson }}: {{ $v | toJson }}
+          {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{- $nsCands := list }}
+  {{- $nsDelCount := 0 }}
+  {{- $storeKinds := list (dict "k" "PersistentVolumeClaim" "v" "v1" "ok" true) }}
+  {{- $policyNs := {{hub .PolicyMetadata.namespace | printf "%v" | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $mcCrd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "managedclusters.cluster.open-cluster-management.io" }}
+  {{hub- if and $nsDelOn $pruneOn hub}}
+  {{- range $sk := list (dict "k" "VolumeSnapshot" "v" "snapshot.storage.k8s.io/v1" "crd" "volumesnapshots.snapshot.storage.k8s.io") (dict "k" "ObjectBucketClaim" "v" "objectbucket.io/v1alpha1" "crd" "objectbucketclaims.objectbucket.io") (dict "k" "DataVolume" "v" "cdi.kubevirt.io/v1beta1" "crd" "datavolumes.cdi.kubevirt.io") (dict "k" "VirtualMachine" "v" "kubevirt.io/v1" "crd" "virtualmachines.kubevirt.io") }}
+  {{- $crd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" $sk.crd }}
+  {{- if $crd }}
+  {{- $served := false }}
+  {{- range $ver := dig "spec" "versions" list $crd }}{{- if and (eq (printf "%v" (dig "name" "" $ver)) (last (splitList "/" $sk.v))) (eq (printf "%v" (dig "served" false $ver)) "true") }}{{- $served = true }}{{- end }}{{- end }}
+  {{- $storeKinds = append $storeKinds (dict "k" $sk.k "v" $sk.v "ok" $served) }}
+  {{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- if $breaker hub}}
+  {{- $allNames := dict }}
+  {{- range $n := splitList "," {{hub join "," $allNames | toJson hub}} }}{{- $_ := set $allNames $n true }}{{- end }}
+  {{hub- end hub}}
+  {{- range $ns := $labeledNs }}
+  {{- $nsName := printf "%v" (dig "metadata" "name" "" $ns) }}
+  {{- $nsProject := printf "%v" (dig "metadata" "labels" "autoshift.io/project" "" $ns) }}
+  {{- $nsLbl := dig "metadata" "labels" dict $ns }}
+  {{- $nsAnn := dig "metadata" "annotations" dict $ns }}
+  {{- if and $nsProject (eq (printf "%v" (index $nsLbl "autoshift.io/managed-by")) "project-onboarding") (eq (printf "%v" (index $nsLbl "autoshift.io/onboarding-created")) "true") (eq (printf "%v" (index $nsAnn "autoshift.io/onboarding-created-by")) $nsProject) (eq (printf "%v" (index $nsAnn "autoshift.io/delete-on-removal")) "true") (not (hasKey $nsOwners $nsName)) (not (hasKey $otherNs $nsName)) (not (regexMatch {{hub $platformNs | toJson hub}} $nsName)) (ne $nsName $policyNs) }}
+  {{- $isCluster := false }}
+  {{- if $mcCrd }}{{- if lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" $nsName }}{{- $isCluster = true }}{{- end }}{{- end }}
+  {{- if not $isCluster }}
+  {{- $nsShard := mod (atoi (adler32sum $nsProject)) {{hub $shards hub}} }}
+  {{- $declared := true }}
+  {{- if eq $nsShard $shard }}{{- $declared = hasKey $projOwners $nsProject }}
+  {{hub- if $breaker hub}}
+  {{- else }}{{- $declared = hasKey $allNames $nsProject }}
+  {{hub- end hub}}
+  {{- end }}
+  {{- if not $declared }}
+  {{- $why := "" }}
+  {{- $uid := printf "%v" (dig "metadata" "uid" "" $ns) }}
+  {{- if or (not $uid) (ne (printf "%v" (index $nsAnn "autoshift.io/onboarding-created-uid")) $uid) }}
+  {{- $why = "its creation record is not bound to this namespace (autoshift.io/onboarding-created-uid is missing or is not its uid, as after a restore or migration); delete it by hand if it should go" }}
+  {{- end }}
+  {{hub- if and $nsDelOn $pruneOn hub}}
+  {{- if not $why }}
+  {{- $held := list }}
+  {{- range $sk := $storeKinds }}
+  {{- if not $sk.ok }}{{- $held = append $held (printf "%s (cannot list: its CRD does not serve %s)" $sk.k $sk.v) }}
+  {{- else }}{{- $n := len ((lookup $sk.v $sk.k $nsName "").items | default list) }}{{- if $n }}{{- $held = append $held (printf "%s %d" $sk.k $n) }}{{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if $held }}{{- $why = printf "namespace holds storage: %s" (join ", " $held) }}{{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{- $nsMode := ternary "enforce" "inform" (eq (printf "%v" (index $nsAnn "autoshift.io/onboarding-mode")) "enforce") }}
+  {{- $since := 0 }}
+  {{- $sinceRaw := printf "%v" (index $nsAnn $pendingKey | default "") }}
+  {{- if regexMatch $tsRe $sinceRaw }}
+  {{- $s := toDate "2006-01-02T15:04:05Z07:00" $sinceRaw | unixEpoch | atoi }}
+  {{- if and (gt $s 0) (le $s $now) }}{{- $since = $s }}{{- end }}
+  {{- end }}
+  {{- $expired := and (gt $since 0) (ge (sub $now $since) {{hub $graceSec hub}}) }}
+  {{- if and (not $why) (eq $nsMode "enforce") $expired }}{{- $nsDelCount = add $nsDelCount 1 }}{{- end }}
+  {{- if eq $nsShard $shard }}{{- $nsCands = append $nsCands (dict "ns" $nsName "p" $nsProject "mode" $nsMode "why" $why "since" $since "expired" $expired "marked" (hasKey $nsAnn $pendingKey) "lbl" $nsLbl "ann" $nsAnn) }}{{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- range $c := $nsCands }}
+  {{- $nsName := $c.ns }}
+  {{- $clusterWhy := "" }}
+  {{hub- if not $nsDelOn hub}}
+  {{- $clusterWhy = "the cluster label project-onboarding-delete-namespaces is not 'true'" }}
+  {{hub- else if not $pruneOn hub}}
+  {{- $clusterWhy = "the cluster label project-onboarding-prune is not 'true'" }}
+  {{hub- else if $projEmpty hub}}
+  {{- $clusterWhy = "config.projects is empty or missing, which never deletes a namespace" }}
+  {{hub- else if $graceBad hub}}
+  {{- $clusterWhy = "namespaceDeleteGracePeriod is invalid, which never deletes a namespace" }}
+  {{hub- end hub}}
+  {{- $why := $clusterWhy | default $c.why }}
+  {{- $msg := printf "namespace %s was created for project %s, which is no longer declared, and has deleteOnRemoval" $nsName $c.p }}
+  {{- $act := "" }}
+  {{- if $why }}
+  {{- if $c.since }}{{- $msg = printf "%s; it is pending deletion since %s, and can be deleted from %s" $msg (dateInZone "2006-01-02T15:04:05Z" $c.since "UTC") (dateInZone "2006-01-02T15:04:05Z" (add $c.since {{hub $graceSec hub}}) "UTC") }}{{- end }}
+  {{- $msg = printf "%s; it is not deleted: %s" $msg $why }}
+  {{hub- if not $dryRun hub}}
+  {{- if and $clusterWhy $c.marked }}
+  {{- $act = "unmark" }}
+  {{- $msg = printf "%s; its mark is removed, so a new grace period starts once that is resolved" $msg }}
+  {{- end }}
+  {{hub- end hub}}
+  {{- else if ne $c.mode "enforce" }}
+  {{- $msg = printf "%s; it would be deleted, but its last recorded mode is inform, so it is only reported" $msg }}
+  {{- else if not $c.since }}
+  {{hub- if $dryRun hub}}
+  {{- $msg = printf "%s; it would be marked for deletion, but the deployment runs as a dry run, so it is only reported" $msg }}
+  {{hub- else hub}}
+  {{- $act = "mark" }}
+  {{- $msg = printf "%s; it is marked for deletion now, and can be deleted from %s" $msg (dateInZone "2006-01-02T15:04:05Z" (add $now {{hub $graceSec hub}}) "UTC") }}
+  {{hub- end hub}}
+  {{- else if not $c.expired }}
+  {{- $msg = printf "%s; it is pending deletion since %s, and can be deleted from %s" $msg (dateInZone "2006-01-02T15:04:05Z" $c.since "UTC") (dateInZone "2006-01-02T15:04:05Z" (add $c.since {{hub $graceSec hub}}) "UTC") }}
+  {{- else }}
+  {{- $msg = printf "%s; it has been pending deletion since %s" $msg (dateInZone "2006-01-02T15:04:05Z" $c.since "UTC") }}
+  {{hub- if $maxDelBad hub}}
+  {{- $msg = printf "%s; it is not deleted: maxNamespaceDeletes is invalid, which counts as 0" $msg }}
+  {{hub- else if eq $maxDel 0 hub}}
+  {{- $msg = printf "%s; it is not deleted: maxNamespaceDeletes is 0" $msg }}
+  {{hub- else hub}}
+  {{hub- if $breaker hub}}
+  {{- if gt $nsDelCount {{hub $maxDel hub}} }}
+  {{- $msg = printf "%s; it is not deleted: blocked by maxNamespaceDeletes (%d candidates > %d)" $msg $nsDelCount {{hub $maxDel hub}} }}
+  {{- else }}{{- $act = "delete" }}{{- end }}
+  {{hub- else hub}}
+  {{- $act = "delete" }}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{- if eq $act "delete" }}
+  {{hub- if $dryRun hub}}
+  {{- $msg = printf "%s; it would be deleted, but the deployment runs as a dry run, so it is only reported" $msg }}
+  {{hub- else hub}}
+  {{- $msg = printf "%s; it is deleted with everything in it" $msg }}
+  {{hub- end hub}}
+  {{- end }}
+  {{- end }}
+  {{- $_ := set $status $c.p (append (index $status $c.p | default list) $msg) }}
+  {{hub- if and (eq $want "enforce") (not $dryRun) hub}}
+  {{- if eq $act "mark" }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{ $nsName | toJson }}
+        annotations:
+          {{ $pendingKey | toJson }}: {{ $nowTs | toJson }}
+  {{- else if eq $act "unmark" }}
+  - complianceType: musthave
+    metadataComplianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{ $nsName | toJson }}
+        labels:
+          {{- range $k, $v := $c.lbl }}
+          {{ $k | toJson }}: {{ $v | toJson }}
+          {{- end }}
+        annotations:
+          {{- range $k, $v := $c.ann }}
+          {{- if ne $k $pendingKey }}
+          {{ $k | toJson }}: {{ $v | toJson }}
+          {{- end }}
+          {{- end }}
+  {{- else if eq $act "delete" }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{ $nsName | toJson }}
+  {{- end }}
+  {{hub- end hub}}
+  {{- end }}
+  {{hub- if kindIs "map" $projVal hub}}
+  {{- range $kind := list (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "RoleBinding") (dict "apiVersion" "v1" "kind" "ResourceQuota") (dict "apiVersion" "v1" "kind" "LimitRange") (dict "apiVersion" "networking.k8s.io/v1" "kind" "NetworkPolicy") (dict "apiVersion" "k8s.ovn.org/v1" "kind" "EgressFirewall") (dict "apiVersion" "policy.networking.k8s.io/v1alpha1" "kind" "AdminNetworkPolicy") (dict "apiVersion" "k8s.ovn.org/v1" "kind" "EgressIP") }}
+  {{- $items := list }}
+  {{- if not (or (and (eq $kind.kind "EgressFirewall") (not $efCrd)) (and (eq $kind.kind "AdminNetworkPolicy") (not $anpCrd)) (and (eq $kind.kind "EgressIP") (not $eipCrd))) }}
+  {{- $items = (lookup $kind.apiVersion $kind.kind "" "" "autoshift.io/managed-by=project-onboarding").items | default list }}
+  {{- end }}
+  {{- range $obj := $items }}
+  {{- $objNs := printf "%v" (dig "metadata" "namespace" "" $obj) }}
+  {{- $objName := printf "%v" (dig "metadata" "name" "" $obj) }}
+  {{- $objProject := printf "%v" (dig "metadata" "labels" "autoshift.io/project" "" $obj) }}
+  {{- if and (eq $kind.kind "EgressIP") (hasPrefix "autoshift-" $objName) }}{{- $objProject = substr 10 (len $objName) $objName }}{{- end }}
+  {{- if and (eq $kind.kind "AdminNetworkPolicy") (hasPrefix "autoshift-project-" $objName) }}{{- $objProject = substr 18 (len $objName) $objName }}{{- end }}
+  {{- if and (eq $kind.kind "AdminNetworkPolicy") (hasPrefix "autoshift-admin-" $objName) }}{{- $objProject = "" }}{{- end }}
+  {{- $objShard := 0 }}
+  {{- if $objProject }}{{- $objShard = mod (atoi (adler32sum $objProject)) {{hub $shards hub}} }}{{- end }}
+  {{- $owner := dict }}
+  {{- if hasKey $nsOwners $objNs }}
+  {{- $owner = index $nsOwners $objNs }}
+  {{- $objShard = $shard }}
+  {{- else if hasKey $otherNs $objNs }}
+  {{- $objShard = -1 }}
+  {{- else if hasKey $projOwners $objProject }}
+  {{- $owner = index $projOwners $objProject }}
+  {{- end }}
+  {{- $eligible := eq $objShard $shard }}
+  {{- $target := "enforce" }}
+  {{- if not $eligible }}
+  {{- else if $owner }}
+  {{- $eligible = and (eq (printf "%v" $owner.ok) "true") (hasKey $rendered (printf "%v" $owner.namespace)) }}
+  {{- if and $objNs (ne $objNs (printf "%v" $owner.namespace)) (not (hasKey $live (printf "%v" $owner.namespace))) }}{{- $eligible = false }}{{- end }}
+  {{- $target = printf "%v" $owner.mode }}
+  {{- else if hasKey $heldBy $objProject }}
+  {{- $eligible = false }}
+  {{- end }}
+  {{- if not {{hub $pruneOn hub}} }}{{- $target = "inform" }}{{- end }}
+  {{hub- if $adminErrs hub}}
+  {{- if and (eq $kind.kind "AdminNetworkPolicy") (hasPrefix "autoshift-admin-" $objName) }}{{- $eligible = false }}{{- end }}
+  {{hub- end hub}}
+  {{- if and $eligible (eq $target "{{hub $want hub}}") (ne $kind.kind "Namespace") (not (hasKey $declaredKeys (printf "%s|%s|%s" $kind.kind $objNs $objName))) }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: '{{ $kind.apiVersion }}'
+      kind: '{{ $kind.kind }}'
+      metadata:
+        name: {{ $objName | toJson }}
+        {{- if $objNs }}
+        namespace: {{ $objNs | toJson }}
+        {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if eq $want "enforce" hub}}
+  {{- if $status }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: 'project-onboarding-status-{{hub $shard hub}}'
+        namespace: open-cluster-management-agent-addon
+        labels:
+          autoshift.io/project-onboarding-status: "true"
+      data:
+        {{- range $project, $msgs := $status }}
+        {{ $project | toJson }}: {{ join "; " $msgs | toJson }}
+        {{- end }}
+  {{- else }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: 'project-onboarding-status-{{hub $shard hub}}'
+        namespace: open-cluster-management-agent-addon
+  {{- end }}
+  {{hub- if eq $shard 0 hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: project-onboarding-status
+        namespace: open-cluster-management-agent-addon
+  {{hub- end hub}}
+  {{hub- else hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: 'project-onboarding-status-{{hub $shard hub}}'
+        namespace: open-cluster-management-agent-addon
+  {{hub- end hub}}
