@@ -1,12 +1,11 @@
 object-templates-raw: |
-  {{hub $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
-  {{hub- $upgradeCfg := (index $config "openshift-upgrade" | default dict) hub}}
-  {{hub- $upgradeGraphUrl := (index $upgradeCfg "upgradeGraphUrl" | default "https://api.openshift.com/api/upgrades_info/v1/graph") hub}}
+  {{- /* spec.upstream is owned by the channel policy, which this policy depends on. It is
+         repeated from the live object, never recomputed, so the two policies cannot disagree. */ -}}
   {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
-  {{- $upstream := "{{hub $upgradeGraphUrl hub}}" }}
   {{- $allowConditional := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-allow-conditional" | default "false" hub}}" }}
-  {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
+  {{- $cv := (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) }}
+  {{- $upstream := (dig "spec" "upstream" "" $cv) }}
+  {{- $status := (index $cv "status" | default dict) }}
   {{- $current := "" }}
   {{- range $h := (index $status "history" | default list) }}
   {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}{{- $current = (index $h "version") }}{{- end }}
@@ -35,7 +34,8 @@ object-templates-raw: |
   {{-     end }}
   {{-   end }}
   {{- end }}
-  {{- if and (ne $target "") (or (eq $current "") (semverCompare (printf "> %s" $current) $target)) }}
+  {{- $write := and (not $progressing) (ne $image "") }}
+  {{- if and (ne $target "") (or (eq $current "") (semverCompare (printf "> %s" $current) $target)) (or $write (ne $upstream "")) }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: config.openshift.io/v1
@@ -43,8 +43,10 @@ object-templates-raw: |
       metadata:
         name: version
       spec:
+        {{- if ne $upstream "" }}
         upstream: '{{ $upstream }}'
-        {{- if and (not $progressing) (ne $image "") }}
+        {{- end }}
+        {{- if $write }}
         desiredUpdate:
           version: '{{ $target }}'
           image: '{{ $image }}'
