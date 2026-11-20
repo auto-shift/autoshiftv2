@@ -73,8 +73,9 @@
 # system:serviceaccount:<namespace>:<name>; groups are not matched.
 #
 # Errors are found on the hub (the shape of the config, the safety gate) and on the managed cluster
-# (a missing namespace, an object of a declared name without the managed-by label). A namespace-level
-# error (name, platform namespace, shape) skips the whole namespace. Any other error skips only its
+# (a missing namespace, a ManagedCluster namespace, an object of a declared name without the
+# managed-by label). A namespace-level error (name, platform namespace, ManagedCluster namespace,
+# shape) skips the whole namespace. Any other error skips only its
 # ServiceAccount, Role or RoleBinding; a RoleBinding whose Role has an error or is not owned here is
 # skipped too. Every other entry still applies. Errors are reported in the ConfigMap
 # namespace-rbac-status (open-cluster-management-agent-addon), one data key per namespace, messages
@@ -99,10 +100,19 @@
 #   - nonResourceURLs, or a resourceNames list that is set but empty (it would mean every name).
 # Also refused: a platform namespace ($platformNs: kube-*, openshift, openshift-*, default,
 # open-cluster-management*, multicluster-engine, hive, local-cluster, policies-*, hypershift,
-# clusters, clusters-*) or the name of a ManagedCluster on the hub, as the namespace or as the
-# namespace of a subject, default as a serviceAccounts key or a subject, a name that is not DNS-1123
-# (namespaces are labels, the rest subdomains), and template delimiters in any name or value.
-# Keep the lists in sync with the README.
+# clusters, clusters-*) as the namespace or as the namespace of a subject, default as a
+# serviceAccounts key or a subject, a name that is not DNS-1123 (namespaces are labels, the rest
+# subdomains), and template delimiters in any name or value. Keep the lists in sync with the README.
+#
+# A ManagedCluster namespace is refused on the managed cluster, as the namespace (the whole
+# namespace is skipped, like a platform namespace) or as the namespace of a subject (the
+# RoleBinding is not rendered). A hub template would list the ManagedClusters of the hub that
+# placed the policy, which on a managed hub in a hub of hubs is its parent, not the cluster the
+# RoleBinding lands on. The list is read only when the ManagedCluster CRD exists, so a cluster that
+# is not a hub skips it; a lookup that fails (Forbidden, or the CRD not serving v1) fails the
+# template, so nothing is applied. A Namespace that carries a ManagedCluster namespace label
+# ($clusterNsLabels) is refused too, so a cluster namespace is caught even when the list is empty.
+# Either way it is reported.
 #
 # On the managed cluster, a Role is held when a secrets resourceName names a Secret of type
 # kubernetes.io/service-account-token or kubernetes.io/dockercfg in its namespace, or a
@@ -145,8 +155,6 @@ object-templates-raw: |
   {{hub- $dns1123 := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" hub}}
   {{hub- $subdomain := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" hub}}
   {{hub- $platformNs := "^(kube-.*|openshift|openshift-.*|default|open-cluster-management.*|multicluster-engine|hive|local-cluster|policies-.*|hypershift|clusters|clusters-.*)$" hub}}
-  {{hub- $clusters := dict hub}}
-  {{hub- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list hub}}{{hub- $_ := set $clusters (printf "%v" (dig "metadata" "name" "" $mc)) true hub}}{{hub- end hub}}
   {{hub- $ruleFields := list "apiGroups" "resources" "verbs" "resourceNames" hub}}
   {{hub- $badVerbs := list "escalate" "bind" "impersonate" hub}}
   {{hub- $readVerbs := list "get" "list" "watch" hub}}
@@ -362,8 +370,6 @@ object-templates-raw: |
   {{hub- $nbad = append $nbad (printf "namespace %s is not a valid DNS-1123 label" ($ns | toJson)) hub}}
   {{hub- else if regexMatch $platformNs $ns hub}}
   {{hub- $nbad = append $nbad (printf "namespace %s is a platform namespace, where namespace-rbac never grants access" $ns) hub}}
-  {{hub- else if hasKey $clusters $ns hub}}
-  {{hub- $nbad = append $nbad (printf "namespace %s is the namespace of the ManagedCluster %s on the hub, where namespace-rbac never grants access" $ns $ns) hub}}
   {{hub- end hub}}
   {{hub- $sasRaw := dict hub}}
   {{hub- $rolesRaw := dict hub}}
@@ -552,8 +558,6 @@ object-templates-raw: |
   {{hub- $bbad = append $bbad (printf "serviceAccounts.%s is not <namespace>/<serviceaccount>" ($ref | toJson)) hub}}
   {{hub- else if and (eq $on "true") (regexMatch $platformNs (index $parts 0)) hub}}
   {{hub- $bbad = append $bbad (printf "serviceAccounts.%s: %s is a platform namespace, where namespace-rbac never grants access" $ref (index $parts 0)) hub}}
-  {{hub- else if and (eq $on "true") (hasKey $clusters (index $parts 0)) hub}}
-  {{hub- $bbad = append $bbad (printf "serviceAccounts.%s: %s is the namespace of a ManagedCluster on the hub, where namespace-rbac never grants access" $ref (index $parts 0)) hub}}
   {{hub- else if and (eq $on "true") (eq (index $parts 1) "default") hub}}
   {{hub- $bbad = append $bbad (printf "serviceAccounts.%s: the default ServiceAccount runs every pod that names none, so it is never a subject" $ref) hub}}
   {{hub- else if and (eq $on "true") (hasKey $tokSAs $ref) (or (eq $kind "ClusterRole") (not (hasKey $minter (printf "%s|%v" $ns $rv)))) hub}}
@@ -676,8 +680,25 @@ object-templates-raw: |
   {{- end }}
   {{- end }}
   {{- end }}
+  {{- $clusterNs := dict }}
+  {{- $clusterNsLabels := list "cluster.open-cluster-management.io/managedCluster" "open-cluster-management.io/cluster-name" }}
+  {{- $clusterHeld := dict }}
+  {{- if $hub.entries }}
+  {{- if lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "managedclusters.cluster.open-cluster-management.io" }}
+  {{- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list }}{{- $_ := set $clusterNs (printf "%v" (dig "metadata" "name" "" $mc)) true }}{{- end }}
+  {{- end }}
+  {{- end }}
   {{- range $e := $hub.entries }}
-  {{- if not (lookup "v1" "Namespace" "" $e.ns) }}
+  {{- $nsObj := lookup "v1" "Namespace" "" $e.ns }}
+  {{- $nsMark := "" }}
+  {{- range $l := $clusterNsLabels }}{{- if hasKey (dig "metadata" "labels" dict $nsObj) $l }}{{- $nsMark = $l }}{{- end }}{{- end }}
+  {{- if hasKey $clusterNs $e.ns }}
+  {{- $_ := set $clusterHeld $e.ns true }}
+  {{- $_ := set $status $e.key (list (printf "namespace %s is the namespace of the ManagedCluster %s on the hub, where namespace-rbac never grants access" $e.ns $e.ns)) }}
+  {{- else if $nsMark }}
+  {{- $_ := set $clusterHeld $e.ns true }}
+  {{- $_ := set $status $e.key (list (printf "namespace %s carries the label %s of a ManagedCluster namespace, where namespace-rbac never grants access" $e.ns $nsMark)) }}
+  {{- else if not $nsObj }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "namespace %s does not exist, so nothing is created in it: namespace-rbac never creates namespaces" $e.ns)) }}
   {{- else }}
   {{- $foreignSA := dict }}
@@ -800,12 +821,24 @@ object-templates-raw: |
   {{- end }}
   {{- range $b := $e.bindings }}
   {{- $live := lookup "rbac.authorization.k8s.io/v1" "RoleBinding" $e.ns $b.name }}
+  {{- $clusterSubj := list }}
+  {{- range $s := $b.subjects }}
+  {{- $sMark := "" }}
+  {{- range $l := $clusterNsLabels }}{{- if hasKey (dig "metadata" "labels" dict (lookup "v1" "Namespace" "" $s.namespace)) $l }}{{- $sMark = $l }}{{- end }}{{- end }}
+  {{- if hasKey $clusterNs $s.namespace }}
+  {{- $clusterSubj = append $clusterSubj (printf "roleBindings.%s: serviceAccounts.%s/%s: %s is the namespace of a ManagedCluster on the hub, where namespace-rbac never grants access" ($b.name | toJson) $s.namespace $s.name $s.namespace) }}
+  {{- else if $sMark }}
+  {{- $clusterSubj = append $clusterSubj (printf "roleBindings.%s: serviceAccounts.%s/%s: %s carries the label %s of a ManagedCluster namespace, where namespace-rbac never grants access" ($b.name | toJson) $s.namespace $s.name $s.namespace $sMark) }}
+  {{- end }}
+  {{- end }}
   {{- $kept := list }}
+  {{- if not $clusterSubj }}
   {{- range $s := $b.subjects }}
   {{- if lookup "v1" "Namespace" "" $s.namespace }}
   {{- $kept = append $kept $s }}
   {{- else }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s: subject %s/%s is left out, because namespace %s does not exist" $e.ns $b.name $s.namespace $s.name $s.namespace)) }}
+  {{- end }}
   {{- end }}
   {{- end }}
   {{- $tokenHolders := list }}
@@ -843,7 +876,9 @@ object-templates-raw: |
   {{- if $by }}{{- $reached = append $reached (printf "%s/%s (by %s)" $s.namespace $s.name (join ", " (uniq $by))) }}{{- end }}
   {{- end }}
   {{- end }}
-  {{- if and (eq $b.kind "Role") (hasKey $heldRoles $b.role) }}
+  {{- if $clusterSubj }}
+  {{- $_ := set $status $e.key (concat (index $status $e.key | default list) $clusterSubj) }}
+  {{- else if and (eq $b.kind "Role") (hasKey $heldRoles $b.role) }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s is not changed: its Role %s is held" $e.ns $b.name $b.role)) }}
   {{- else if $tokenHolders }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s is not created or changed: subject %s has a long-lived token Secret managed by namespace-rbac, and %s %s is not minter-only" $e.ns $b.name (join ", " (uniq $tokenHolders)) $b.kind $b.role)) }}
@@ -967,7 +1002,7 @@ object-templates-raw: |
   {{- range $obj := (lookup $kind.apiVersion $kind.kind "" "" "autoshift.io/managed-by=namespace-rbac").items | default list }}
   {{- $objNs := printf "%v" (dig "metadata" "namespace" "" $obj) }}
   {{- $objName := printf "%v" (dig "metadata" "name" "" $obj) }}
-  {{- if not (or (hasKey $hub.held $objNs) (hasKey $hub.declared (printf "%s|%s|%s" $kind.kind $objNs $objName))) }}
+  {{- if not (or (hasKey $hub.held $objNs) (hasKey $clusterHeld $objNs) (hasKey $hub.declared (printf "%s|%s|%s" $kind.kind $objNs $objName))) }}
   - complianceType: mustnothave
     objectDefinition:
       apiVersion: {{ $kind.apiVersion | toJson }}

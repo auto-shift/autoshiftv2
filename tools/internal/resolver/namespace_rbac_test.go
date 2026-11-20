@@ -32,6 +32,20 @@ const (
 	nsRbacVault      = "example-vault"
 )
 
+// nsRbacHubStubs makes the managed cluster a hub: the ManagedCluster CRD, which the managed side
+// requires before it lists ManagedClusters, and the Namespace of the ManagedCluster stub
+// lint-cluster (tools/testdata/acs-managedclusters.yaml).
+var nsRbacHubStubs = nsdelManagedClusters() + nsStubs("lint-cluster")
+
+// nsStubs returns one Namespace stub per name, as a multi-document YAML string.
+func nsStubs(names ...string) string {
+	var docs []string
+	for _, n := range names {
+		docs = append(docs, "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: "+n+"\n")
+	}
+	return strings.Join(docs, "---\n")
+}
+
 // runNsRbac runs stable/namespace-rbac against tools/testdata plus extra as one more stub file (""
 // for none), with config.namespaceRbac of the example optionally mutated. It fails the test on any
 // render or resolve error, and whenever a Secret is rendered.
@@ -416,7 +430,8 @@ func TestNamespaceRbac_Refusals(t *testing.T) {
 	}
 	cases["subject in policies namespace"] = tc{addBinding(map[string]interface{}{"role": "example-ci-builds", "serviceAccounts": map[string]interface{}{"policies-autoshift/x": true}}),
 		nsRbacExampleNs, "policies-autoshift is a platform namespace", "RoleBinding|example-team|x-bad"}
-	// lint-cluster is a ManagedCluster stub on the hub (tools/testdata/eso-hub-bootstrap.yaml).
+	// lint-cluster is a ManagedCluster stub (tools/testdata/acs-managedclusters.yaml); nsRbacHubStubs
+	// makes the managed cluster a hub that lists it.
 	cases["ManagedCluster namespace"] = tc{addNs("lint-cluster"), "lint-cluster", "is the namespace of the ManagedCluster lint-cluster", "ServiceAccount|lint-cluster|x-sa"}
 	for _, ns := range []string{"openshift-config", "openshift", "kube-system", "kube-public", "default", "open-cluster-management-agent-addon", "multicluster-engine", "hive", "local-cluster", "policies-autoshift", "hypershift", "clusters", "clusters-example-hosted"} {
 		cases["platform namespace "+ns] = tc{addNs(ns), ns, "is a platform namespace", "ServiceAccount|" + ns + "|x-sa"}
@@ -425,9 +440,14 @@ func TestNamespaceRbac_Refusals(t *testing.T) {
 	cases["namespace extra key"] = tc{func(m map[string]interface{}) {
 		m["example-extra"] = map[string]interface{}{"serviceAccounts": map[string]interface{}{"x-sa": true}, "clusterRoles": map[string]interface{}{}}
 	}, "example-extra", `key "clusterRoles" is not one of`, "ServiceAccount|example-extra|x-sa"}
+	hubCases := map[string]bool{"ManagedCluster namespace": true, "subject in a ManagedCluster namespace": true}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			objs := runNsRbac(t, "", c.mutate)
+			extra := ""
+			if hubCases[name] {
+				extra = nsRbacHubStubs
+			}
+			objs := runNsRbac(t, extra, c.mutate)
 			if c.blocked != "" {
 				if _, ok := nsRbacRendered(objs)[c.blocked]; ok {
 					t.Errorf("%s rendered", c.blocked)
@@ -866,16 +886,19 @@ func TestNamespaceRbac_SubjectNamespaceMissing(t *testing.T) {
 	}
 }
 
-// Hub template lookups of ManagedClusters need the policy service account.
+// The hub templates read only the policy namespace (TestNamespaceRbac_HubTemplateReadsPolicyNamespaceOnly),
+// so neither Policy runs them as a service account: one would widen what a hub template can read.
 func TestNamespaceRbac_HubTemplateServiceAccount(t *testing.T) {
 	t.Parallel()
 	rendered, err := KustomizeBuildWithRemediation(filepath.Join(repoRoot(t), "policies", nsRbacPolicy), "enforce")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Both Policies resolve the same hub template, so both need it.
-	if n := strings.Count(rendered, "hubTemplateOptions:\n    serviceAccountName: autoshift-policy-service-account"); n != 2 {
-		t.Errorf("%d of the 2 Policies set hubTemplateOptions.serviceAccountName: autoshift-policy-service-account", n)
+	if n := strings.Count(rendered, "\nkind: Policy\n"); n != 2 {
+		t.Fatalf("%d Policies rendered, want 2", n)
+	}
+	if strings.Contains(rendered, "hubTemplateOptions") || strings.Contains(rendered, "serviceAccountName") {
+		t.Error("a Policy sets hubTemplateOptions.serviceAccountName")
 	}
 }
 

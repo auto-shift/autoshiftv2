@@ -95,7 +95,6 @@ func TestNamespaceRbac_ClusterRoleRefusals(t *testing.T) {
 		"platform subject":    {clusterBinding("view", "openshift-config/x"), "openshift-config is a platform namespace"},
 		"kube-system subject": {clusterBinding("edit", "kube-system/x"), "kube-system is a platform namespace"},
 		"default subject":     {clusterBinding("edit", "example-team/default"), "the default ServiceAccount"},
-		"cluster namespace":   {clusterBinding("view", "lint-cluster/x"), "lint-cluster is the namespace of a ManagedCluster"},
 		"bad subject":         {clusterBinding("view", "example-ci"), "is not <namespace>/<serviceaccount>"},
 		"groups": {map[string]interface{}{"clusterRole": "view", "serviceAccounts": []interface{}{"system:authenticated"}},
 			"serviceAccounts is not a map"},
@@ -112,6 +111,17 @@ func TestNamespaceRbac_ClusterRoleRefusals(t *testing.T) {
 			assertExampleIntact(t, objs)
 		})
 	}
+	// On a hub (nsRbacHubStubs), a subject in a ManagedCluster namespace refuses the binding.
+	t.Run("cluster namespace", func(t *testing.T) {
+		objs := runNsRbac(t, nsRbacHubStubs, addClusterBinding("x-cr", clusterBinding("view", "lint-cluster/x")))
+		if _, ok := nsRbacRendered(objs)[blocked]; ok {
+			t.Errorf("%s rendered", blocked)
+		}
+		if got, want := nsRbacStatusData(t, objs)[nsRbacExampleNs], "lint-cluster is the namespace of a ManagedCluster"; !strings.Contains(got, want) {
+			t.Errorf("status = %q, want it to contain %q", got, want)
+		}
+		assertExampleIntact(t, objs)
+	})
 	// An entry in a platform namespace is refused as a whole, clusterRole or not.
 	t.Run("platform namespace entry", func(t *testing.T) {
 		objs := runNsRbac(t, "", func(m map[string]interface{}) {

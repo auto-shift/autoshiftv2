@@ -384,8 +384,14 @@ The policy also refuses:
   `open-cluster-management*`, `multicluster-engine`, `hive`, `local-cluster`, `policies-*` (the
   AutoShift policy namespace), `hypershift`, `clusters`, and `clusters-*` (the default namespaces of
   hosted clusters and of their hosted control planes);
-- a namespace named after a ManagedCluster on the hub, as the namespace of an entry or of a
-  subject, because the hub keeps the configuration and credentials of that cluster there;
+- the namespace of a ManagedCluster, as the namespace of an entry or of a subject, because a hub
+  keeps the configuration and credentials of that cluster there. This check runs on the managed
+  cluster, so it follows the ManagedClusters of the cluster that the RoleBinding lands on: on a
+  managed hub in a hub of hubs, its own clusters, not those of its parent. ManagedClusters are
+  listed only where their CRD exists, and a namespace labeled
+  `cluster.open-cluster-management.io/managedCluster` or `open-cluster-management.io/cluster-name`
+  is refused too, so a cluster namespace is refused even when the list is empty. A list that fails,
+  for example as Forbidden, fails the template, and nothing is applied;
 - `default` as a key of `serviceAccounts` or as a subject ServiceAccount: OpenShift creates it in
   every namespace, and it runs every pod of its namespace that names no ServiceAccount;
 - a RoleBinding whose `role` is not declared in the same namespace, or has an error itself;
@@ -414,10 +420,8 @@ Holding or skipping an object never changes what is live. A held Role keeps its 
 a held RoleBinding, or one with no subject left, keeps its earlier subjects, until the cause is
 fixed or the object is changed or deleted by hand. Check the status ConfigMap after every refusal.
 
-The hub templates of this policy run as `autoshift-policy-service-account`
-(`hubTemplateOptions.serviceAccountName`), because listing ManagedClusters is a cluster-scoped
-lookup. Values from the configuration never reach template text, so the account runs only the
-lookups of the policy itself.
+The hub templates of this policy read only the rendered configuration in the policy namespace, so
+they run without a hub template service account (`hubTemplateOptions.serviceAccountName`).
 
 The gate is a deny list, so it cannot know every resource of every operator. Review each new rule
 for what it allows, in particular verbs that create workloads: a subject that can create pods or
