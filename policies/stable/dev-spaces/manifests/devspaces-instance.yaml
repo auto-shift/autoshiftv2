@@ -1,0 +1,37 @@
+# OpenShift Dev Spaces instance: the CheCluster that runs the Dev Spaces server, dashboard and
+# gateway in openshift-devspaces. Without it the operator is installed but nobody can open a
+# workspace.
+#
+# The spec is a small base with config.dev-spaces.checluster from the cluster's rendered-config
+# merged over it (maps merge key by key and config wins; lists are replaced whole). Any CheCluster
+# spec field is accepted, for example devEnvironments.secondsOfInactivityBeforeIdling or
+# devEnvironments.maxNumberOfWorkspacesPerUser.
+#
+# musthave, not mustonlyhave: the Dev Spaces operator fills in defaults across the CheCluster spec,
+# and owning the whole spec would fight them. A key removed from config therefore stays on the
+# cluster until it is removed by hand.
+#
+# fromConfigMap fails the policy when rendered-config is missing, rather than applying the base alone.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $spec := (`
+  components:
+    cheServer:
+      debug: false
+  devEnvironments:
+    startTimeoutSeconds: 300` | fromYaml) hub}}
+  {{hub- $spec = (mergeOverwrite $spec (dig "dev-spaces" "checluster" (dict) $cfg)) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: openshift-devspaces
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: org.eclipse.che/v2
+      kind: CheCluster
+      metadata:
+        name: devspaces
+        namespace: openshift-devspaces
+      spec: {{hub $spec | toJson hub}}
