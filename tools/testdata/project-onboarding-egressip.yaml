@@ -1,0 +1,40 @@
+# Stubs for project-onboarding: the EgressIP CRD (k8s.ovn.org/v1, cluster scoped), which gates the
+# policy's EgressIP lookups, and owned EgressIPs from an earlier run. payments-api's is declared, so
+# it is corrected in place (an earlier address is replaced) and never pruned; the removed project's
+# is pruned. Tests drop this file to model a cluster without the CRD.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: egressips.k8s.ovn.org
+spec:
+  group: k8s.ovn.org
+  names:
+    kind: EgressIP
+    plural: egressips
+  scope: Cluster
+---
+apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+  name: autoshift-payments-api
+  labels:
+    autoshift.io/project: payments-api
+    autoshift.io/managed-by: project-onboarding
+spec:
+  egressIPs: ['198.51.100.40']
+  namespaceSelector:
+    matchLabels:
+      autoshift.io/project: payments-api
+---
+apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+  name: autoshift-removed-project
+  labels:
+    autoshift.io/project: removed-project
+    autoshift.io/managed-by: project-onboarding
+spec:
+  egressIPs: ['198.51.100.41']
+  namespaceSelector:
+    matchLabels:
+      autoshift.io/project: removed-project
