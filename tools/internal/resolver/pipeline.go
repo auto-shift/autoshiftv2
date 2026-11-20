@@ -79,9 +79,15 @@ func HelmTemplate(chartDir string, extraValuesFiles ...string) (string, error) {
 // $KUSTOMIZE_BIN / $KUSTOMIZE_PLUGIN_HOME, then the repo-local .tools/ that
 // `make install-policy-generator` stages, then `kustomize` on PATH.
 func KustomizeBuild(policyDir string) (string, error) {
+	return KustomizeBuildWithRemediation(policyDir, "enforce")
+}
+
+// KustomizeBuildWithRemediation is KustomizeBuild with an explicit ${REMEDIATION} value, to render a
+// dry run (inform).
+func KustomizeBuildWithRemediation(policyDir, remediation string) (string, error) {
 	repl := strings.NewReplacer(
 		"${POLICY_NAMESPACE}", "policies-autoshift",
-		"${REMEDIATION}", "enforce",
+		"${REMEDIATION}", remediation,
 		"${EVAL_COMPLIANT}", "watch",
 		"${EVAL_NONCOMPLIANT}", "watch",
 		"${CLUSTER_SET_SUFFIX}", "",
@@ -270,9 +276,63 @@ func RunPipeline(
 	configs *ExampleConfigs,
 	testdataDir string,
 ) (map[string]*labels.Consumed, []ChartResult, error) {
+	return runPipeline(policiesDir, nil, ctx, extraCtxs, r, spokeR, declared, configs, testdataDir)
+}
+
+// runPipeline is RunPipeline restricted to the discovered charts for which include
+// returns true (every chart when include is nil). Tests that assert on one policy use it
+// to skip rendering and resolving the rest of the tree on every call.
+func runPipeline(
+	policiesDir string,
+	include func(policy string) bool,
+	ctx HubContext,
+	extraCtxs []NamedContext,
+	r *Resolver,
+	spokeR *Resolver,
+	declared map[string]*labels.Declared,
+	configs *ExampleConfigs,
+	testdataDir string,
+) (map[string]*labels.Consumed, []ChartResult, error) {
+	return runPipelineTransform(policiesDir, include, nil, nil, ctx, extraCtxs, r, spokeR, declared, configs, testdataDir)
+}
+
+// runPipelineTransform is runPipeline rendering PolicyGenerator directories with render
+// (KustomizeBuild when nil), and with transform (when not nil) applied to each chart's rendered
+// output before anything else reads it. Tests use render to reuse a cached render, and transform
+// to drop documents they do not assert on, such as project-onboarding shard Policies that hold
+// none of their projects.
+// loadTestResources is LoadTestResources; the integration tests replace it with a cached copy
+// (harness_cache_test.go), since they run the pipeline hundreds of times over the same stubs.
+var loadTestResources = LoadTestResources
+
+func runPipelineTransform(
+	policiesDir string,
+	include func(policy string) bool,
+	render func(policyDir string) (string, error),
+	transform func(policy, rawYAML string) string,
+	ctx HubContext,
+	extraCtxs []NamedContext,
+	r *Resolver,
+	spokeR *Resolver,
+	declared map[string]*labels.Declared,
+	configs *ExampleConfigs,
+	testdataDir string,
+) (map[string]*labels.Consumed, []ChartResult, error) {
+	if render == nil {
+		render = KustomizeBuild
+	}
 	charts, err := discoverCharts(policiesDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("discover charts: %w", err)
+	}
+	if include != nil {
+		kept := charts[:0]
+		for _, chart := range charts {
+			if include(chart.policy) {
+				kept = append(kept, chart)
+			}
+		}
+		charts = kept
 	}
 
 	tmpDir, err := os.MkdirTemp("", "autoshift-lint-*")
@@ -301,7 +361,7 @@ func RunPipeline(
 	// These provide realistic hub template lookup results from the very first
 	// chart. The cluster-config-maps helm output (processed later in the loop)
 	// supplements these with the actual rendered values.
-	testResources, err := LoadTestResources(testdataDir)
+	testResources, err := loadTestResources(testdataDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load test resources: %w", err)
 	}
@@ -367,7 +427,7 @@ func RunPipeline(
 		// 1. Render the policy — kustomize+PolicyGenerator or Helm, per marker file.
 		var rawYAML string
 		if chart.kind == "kustomize" {
-			rawYAML, err = KustomizeBuild(chart.dir)
+			rawYAML, err = render(chart.dir)
 			if err != nil {
 				result.Err = err
 				results = append(results, result)
@@ -390,6 +450,9 @@ func RunPipeline(
 			}
 		}
 		result.HelmOK = true
+		if transform != nil {
+			rawYAML = transform(chart.policy, rawYAML)
+		}
 
 		// 2. Non-empty document check — a chart that renders nothing under
 		// full-coverage test values almost certainly has a template bug.
@@ -409,13 +472,14 @@ func RunPipeline(
 		consumed := make(map[string]bool)
 
 		// Pass a: declared keys → check if consumed.
+		mentions := newLabelMentions(rawYAML)
 		for key := range declaredKeys {
-			if strings.Contains(rawYAML, "autoshift.io/"+key) {
+			if mentions.contains(key) {
 				consumed[key] = true
 				continue
 			}
 			prefix := stripNumberedSuffix(key)
-			if prefix != key && strings.Contains(rawYAML, "autoshift.io/"+prefix) {
+			if prefix != key && mentions.contains(prefix) {
 				consumed[key] = true
 			}
 		}
@@ -847,4 +911,50 @@ func discoverCharts(policiesDir string) ([]chartInfo, error) {
 	})
 
 	return charts, err
+}
+
+// labelMentions answers strings.Contains(raw, "autoshift.io/"+key) for many keys without scanning
+// raw once per key: it collects, once, the distinct runs of label-key characters that follow each
+// "autoshift.io/" in raw. A key made only of those characters is contained exactly when one of the
+// runs starts with it; any other key falls back to the plain substring search.
+type labelMentions struct {
+	raw   string
+	tails map[string]bool
+}
+
+func isLabelKeyChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.'
+}
+
+func newLabelMentions(raw string) labelMentions {
+	const marker = "autoshift.io/"
+	m := labelMentions{raw: raw, tails: map[string]bool{}}
+	rest := raw
+	for {
+		idx := strings.Index(rest, marker)
+		if idx < 0 {
+			break
+		}
+		rest = rest[idx+len(marker):]
+		end := 0
+		for end < len(rest) && isLabelKeyChar(rest[end]) {
+			end++
+		}
+		m.tails[rest[:end]] = true
+	}
+	return m
+}
+
+func (m labelMentions) contains(key string) bool {
+	for i := 0; i < len(key); i++ {
+		if !isLabelKeyChar(key[i]) {
+			return strings.Contains(m.raw, "autoshift.io/"+key)
+		}
+	}
+	for tail := range m.tails {
+		if strings.HasPrefix(tail, key) {
+			return true
+		}
+	}
+	return false
 }

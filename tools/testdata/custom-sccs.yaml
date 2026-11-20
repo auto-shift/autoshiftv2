@@ -1,0 +1,72 @@
+# Stubs for custom-sccs. They also register the SecurityContextConstraints and ClusterRole kinds
+# with the fake discovery client, which the policy's managed-cluster lookups need.
+#
+# example-ci exists, so the _example entry example-fixed-uid gets its RoleBinding there.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-ci
+---
+# An SCC that custom-sccs created earlier and no entry declares any more: reported as stale.
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: example-retired
+  labels:
+    autoshift.io/managed-by: custom-sccs
+    autoshift.io/scc: example-retired
+allowPrivilegedContainer: false
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+users: []
+groups: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: autoshift-scc-example-retired
+  labels:
+    autoshift.io/managed-by: custom-sccs
+    autoshift.io/scc: example-retired
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - example-retired
+    verbs:
+      - use
+---
+# A RoleBinding of the declared example-fixed-uid in a namespace that left serviceAccounts: stale.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoshift-scc-example-fixed-uid
+  namespace: example-old
+  labels:
+    autoshift.io/managed-by: custom-sccs
+    autoshift.io/scc: example-fixed-uid
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: autoshift-scc-example-fixed-uid
+subjects:
+  - kind: ServiceAccount
+    name: builder
+    namespace: example-old
+---
+# An SCC another tool owns (no custom-sccs label): an entry of this name must not take it over.
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: example-operator-scc
+allowPrivilegedContainer: false
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+users: []
+groups: []
