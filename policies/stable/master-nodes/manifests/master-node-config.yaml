@@ -1,4 +1,46 @@
 object-templates-raw: |
+  {{hub- $raw := fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "{}" hub}}
+  {{hub- $mn := dig "masterNodes" dict ($raw | fromYaml) hub}}
+  {{hub- $maxPods := dig "maxPods" "" $mn hub}}
+  {{hub- $sysMem := dig "systemReserved" "memory" "" $mn hub}}
+  {{hub- $sysCpu := dig "systemReserved" "cpu" "" $mn hub}}
+  {{hub- $autoSizingReserved := dig "autoSizingReserved" false $mn hub}}
+  {{hub- $kubeMem := dig "kubeReserved" "memory" "" $mn hub}}
+  {{hub- $kubeCpu := dig "kubeReserved" "cpu" "" $mn hub}}
+  {{hub- $evictMem := dig "evictionHard" "memoryAvailable" "" $mn hub}}
+  {{hub- if and (empty $maxPods) (empty $sysMem) (empty $sysCpu) (empty $kubeMem) (empty $kubeCpu) (empty $evictMem) (not $autoSizingReserved) hub}}
+    {{ fail "master-nodes is enabled but config.masterNodes has no settings. Set at least one of maxPods, systemReserved.memory, systemReserved.cpu, kubeReserved.memory, kubeReserved.cpu, evictionHard.memoryAvailable, or autoSizingReserved: true." }}
+  {{hub- end hub}}
+  {{hub- $kubelet := dict hub}}
+  {{hub- if $autoSizingReserved hub}}
+  {{hub- $_ := set $kubelet "autoSizingReserved" true hub}}
+  {{hub- end hub}}
+  {{hub- if not (empty $maxPods) hub}}
+  {{hub- $_ := set $kubelet "maxPods" (int $maxPods) hub}}
+  {{hub- end hub}}
+  {{hub- $systemReserved := dict hub}}
+  {{hub- if not (empty $sysMem) hub}}
+  {{hub- $_ := set $systemReserved "memory" $sysMem hub}}
+  {{hub- end hub}}
+  {{hub- if not (empty $sysCpu) hub}}
+  {{hub- $_ := set $systemReserved "cpu" $sysCpu hub}}
+  {{hub- end hub}}
+  {{hub- if not (empty $systemReserved) hub}}
+  {{hub- $_ := set $kubelet "systemReserved" $systemReserved hub}}
+  {{hub- end hub}}
+  {{hub- $kubeReserved := dict hub}}
+  {{hub- if not (empty $kubeMem) hub}}
+  {{hub- $_ := set $kubeReserved "memory" $kubeMem hub}}
+  {{hub- end hub}}
+  {{hub- if not (empty $kubeCpu) hub}}
+  {{hub- $_ := set $kubeReserved "cpu" $kubeCpu hub}}
+  {{hub- end hub}}
+  {{hub- if not (empty $kubeReserved) hub}}
+  {{hub- $_ := set $kubelet "kubeReserved" $kubeReserved hub}}
+  {{hub- end hub}}
+  {{hub- if not (empty $evictMem) hub}}
+  {{hub- $_ := set $kubelet "evictionHard" (dict "memory.available" $evictMem) hub}}
+  {{hub- end hub}}
   {{- $cores := 0 }}
   {{- range (lookup "v1" "Node" "" "").items }}
     {{- if hasKey .metadata.labels "node-role.kubernetes.io/master" }}
@@ -7,12 +49,11 @@ object-templates-raw: |
       {{- end }}
     {{- end }}
   {{- end }}
-  {{- $maxPods := ("{{hub index .ManagedClusterLabels "autoshift.io/master-max-pods" | default 250 hub}}" | toInt) }}
-  {{- $systemReservedMemory := "{{hub index .ManagedClusterLabels "autoshift.io/master-system-reserved-memory" | default "3Gi" hub}}" }}
-  {{- $systemReservedCpu := "{{hub index .ManagedClusterLabels "autoshift.io/master-system-reserved-cpu" | default "500m" hub}}" }}
-  {{- $kubeReservedMemory := "{{hub index .ManagedClusterLabels "autoshift.io/master-kube-reserved-memory" | default "1536Mi" hub}}" }}
-  {{- $kubeReservedCpu := "{{hub index .ManagedClusterLabels "autoshift.io/master-kube-reserved-cpu" | default "500m" hub}}" }}
-  - complianceType: musthave
+  {{- $kubelet := ({{hub $kubelet | toRawJson | quote hub}} | fromJson) }}
+  {{- if and (hasKey $kubelet "maxPods") (gt $cores 0) }}
+  {{- $_ := set $kubelet "podsPerCore" (add 1 (div (index $kubelet "maxPods" | int) $cores)) }}
+  {{- end }}
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: machineconfiguration.openshift.io/v1
       kind: KubeletConfig
@@ -22,17 +63,4 @@ object-templates-raw: |
         machineConfigPoolSelector:
           matchLabels:
             pools.operator.machineconfiguration.openshift.io/master: ""
-        kubeletConfig:
-          podsPerCore: {{ add 1 (div $maxPods $cores) }}
-          maxPods: {{ $maxPods }}
-          systemReserved:
-            memory: {{ $systemReservedMemory }}
-            cpu: {{ $systemReservedCpu }}
-          kubeReserved:
-            memory: {{ $kubeReservedMemory }}
-            cpu: {{ $kubeReservedCpu }}
-          {{- /* evictionHard is deliberately NOT set here. It replaces the kubelet default set
-                 rather than merging into it, so a partial map silently drops the thresholds it
-                 omits and the node stops evicting on disk. The kubelet defaults already satisfy
-                 the NIST kubelet-eviction-thresholds-set-hard-* rules, and the kubelet-eviction
-                 manual remediation is the one place that overrides them. */}}
+        kubeletConfig: {{ $kubelet | toRawJson }}
