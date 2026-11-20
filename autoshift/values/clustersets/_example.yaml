@@ -2183,6 +2183,21 @@ hubClusterSets:
           team: legacy
           environment: PROD
           adopt: true
+      # =======================================================================
+      # Project networks (project-networks label). Each entry becomes a ClusterUserDefinedNetwork
+      # with Localnet topology (always a secondary network) on an access VLAN. physicalNetworkName
+      # must match a localnet in the nmstate ovnMappings. Without subnets, IPAM is disabled. The
+      # network is immutable once created: change vlan, physicalNetworkName or subnets under a new
+      # entry name. A removed entry is reported, never deleted.
+      # =======================================================================
+      projectNetworks:
+        vlan-70:
+          vlan: 70
+          physicalNetworkName: physnet-vlan70
+          subnets: ['10.70.0.0/24']             # optional; omit for IPAM-less
+          namespaceSelector:                    # which namespaces attach
+            matchLabels:
+              network.example.com/vlan-70: 'true'
     labels:
       # =======================================================================
       # Core Configuration
@@ -3091,3 +3106,9 @@ hubClusterSets:
       # Adopted namespaces are never deleted. Any other value, the default, keeps the namespace and
       # reports it in the status ConfigMap.
       project-onboarding-delete-namespaces: 'false'
+
+      # =======================================================================
+      # VLAN attachments for projects as ClusterUserDefinedNetworks (settings in
+      # config.projectNetworks; needs nmstate ovnMappings for the physical network)
+      # =======================================================================
+      project-networks: 'false'

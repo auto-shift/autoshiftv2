@@ -1,0 +1,52 @@
+# Stubs for project-networks: the ClusterUserDefinedNetwork CRD (k8s.ovn.org/v1), which gates the
+# policy's lookups, an owned CUDN from an earlier run that is no longer declared (reported by the
+# inform ConfigurationPolicy, never deleted), and one created by something else (never reported).
+# Tests drop this file to model a cluster without the CRD.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clusteruserdefinednetworks.k8s.ovn.org
+spec:
+  group: k8s.ovn.org
+  names:
+    kind: ClusterUserDefinedNetwork
+    plural: clusteruserdefinednetworks
+  scope: Cluster
+---
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: vlan-99
+  labels:
+    autoshift.io/managed-by: project-networks
+spec:
+  namespaceSelector:
+    matchLabels:
+      network.example.com/vlan-99: 'true'
+  network:
+    topology: Localnet
+    localnet:
+      role: Secondary
+      physicalNetworkName: physnet-example99
+      vlan:
+        mode: Access
+        access:
+          id: 99
+      ipam:
+        mode: Disabled
+---
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: storage-net
+spec:
+  namespaceSelector:
+    matchLabels:
+      example.com/storage: 'true'
+  network:
+    topology: Localnet
+    localnet:
+      role: Secondary
+      physicalNetworkName: physnet-storage
+      ipam:
+        mode: Disabled
