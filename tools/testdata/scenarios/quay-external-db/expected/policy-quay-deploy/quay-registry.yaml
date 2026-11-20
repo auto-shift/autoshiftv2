@@ -1,0 +1,48 @@
+# Both databases are unmanaged and Clair stays managed.
+#
+# zoneSpread: the Operator replaces its whole affinity with an override, so the generated one must
+# carry the zone term and repeat the hostname term, and must not drop the component's other
+# overrides. An explicit affinity (clair here) wins, and redis is never given one.
+apiVersion: quay.redhat.com/v1
+kind: QuayRegistry
+metadata:
+  name: registry
+  namespace: quay-enterprise
+spec:
+  components:
+    - kind: postgres
+      managed: false
+    - kind: clairpostgres
+      managed: false
+    - kind: clair
+      managed: true
+      overrides:
+        volumeSize: 50Gi
+        affinity:
+          nodeAffinity: {}
+          podAntiAffinity: null
+    - kind: quay
+      overrides:
+        replicas: 3
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - podAffinityTerm:
+                  topologyKey: topology.kubernetes.io/zone
+                  labelSelector:
+                    matchExpressions:
+                      - values:
+                          - quay-app
+              - podAffinityTerm:
+                  topologyKey: kubernetes.io/hostname
+    - kind: mirror
+      overrides:
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - podAffinityTerm:
+                  topologyKey: topology.kubernetes.io/zone
+                  labelSelector:
+                    matchExpressions:
+                      - values:
+                          - quay-mirror

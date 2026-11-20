@@ -1,0 +1,70 @@
+# Alerts for the Day 2 signals the Quay Operator does not alert on. Its monitoring component ships only
+# QuayPodFrequentlyRestarting. These read the quay_* metrics that component exposes, so they render only
+# while it is managed. On by default; config.quay.alerts.enabled: false turns them off. Each threshold is
+# a Prometheus duration in config.quay.alerts. Metric names were checked against a live 3.18.2 registry:
+# the 3.18 docs list quay_repository_mirror_sync_failures_total and
+# quay_security_scanning_unscanned_images_remaining_total, which it does not expose.
+object-templates-raw: |
+  {{hub- $quayCfg := (index (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) "quay" | default dict) hub}}
+  {{hub- $alertCfg := (index $quayCfg "alerts" | default dict) hub}}
+  {{hub- $alerts := true hub}}
+  {{hub- if hasKey $alertCfg "enabled" hub}}{{hub- $alerts = index $alertCfg "enabled" hub}}{{hub- end hub}}
+  {{hub- $severity := (index $alertCfg "severity" | default "warning") hub}}
+  {{hub- $gcFor := (index $alertCfg "garbageCollectionStalledFor" | default "6h") hub}}
+  {{hub- $mirrorFor := (index $alertCfg "mirrorUnsyncedFor" | default "2h") hub}}
+  {{hub- $scanFor := (index $alertCfg "scanStalledFor" | default "1h") hub}}
+  {{hub- $monitoring := true hub}}
+  {{hub- $components := (index $quayCfg "components" | default dict) hub}}
+  {{hub- if hasKey $components "monitoring" hub}}{{hub- $monitoring = index $components "monitoring" hub}}{{hub- end hub}}
+  {{hub- $state := ternary "mustonlyhave" "mustnothave" (and $alerts $monitoring) hub}}
+  - complianceType: {{hub $state hub}}
+    objectDefinition:
+      apiVersion: monitoring.coreos.com/v1
+      kind: PrometheusRule
+      metadata:
+        name: autoshift-quay
+        namespace: quay-enterprise
+      spec:
+        groups:
+          - name: autoshift-quay
+            rules:
+              - alert: QuayGarbageCollectionStalled
+                expr: sum by (queue_name) (quay_queue_items_available{namespace="quay-enterprise", queue_name=~"namespacegc|repositorygc"}) > 0
+                for: '{{hub $gcFor hub}}'
+                labels:
+                  severity: '{{hub $severity hub}}'
+                annotations:
+                  summary: Red Hat Quay garbage collection has had queued work for {{hub $gcFor hub}}.
+                  description: >-
+                    The {{ "{{" }} $labels.queue_name {{ "}}" }} queue has not drained in {{hub $gcFor hub}}, so deleted
+                    namespaces or repositories are not being reclaimed and storage keeps growing. Check
+                    the quay-app pod logs for garbage collection errors and that Redis is running, because
+                    garbage collection takes its lock there.
+              # Every mirror pod reports the same database count, so take the max rather than a sum.
+              - alert: QuayMirrorNotSynced
+                expr: (max(quay_repository_rows_unmirrored{namespace="quay-enterprise"}) or vector(0)) + (max(quay_org_mirror_repositories_unmirrored{namespace="quay-enterprise"}) or vector(0)) > 0
+                for: '{{hub $mirrorFor hub}}'
+                labels:
+                  severity: '{{hub $severity hub}}'
+                annotations:
+                  summary: Red Hat Quay has had repositories waiting to mirror for {{hub $mirrorFor hub}}.
+                  description: >-
+                    {{ "{{" }} $value {{ "}}" }} repositories configured for mirroring have not synced. Check
+                    the mirror status of those repositories, the robot account credentials, and that the
+                    quay-mirror pods can reach the upstream registry.
+              # Fires only when images were pushed and none were scanned, so an idle registry stays quiet.
+              # Every mirror pod re-exports the same series, so drop the scrape labels before summing.
+              # A scan is a successful Clair Index request; quay_secscan_v2_scan_duration_seconds stays at 0 on 3.18.2.
+              - alert: QuaySecurityScanStalled
+                expr: >-
+                  sum(max without (instance, pod) (increase(quay_registry_image_pushed_bytes_total{namespace="quay-enterprise"}[{{hub $scanFor hub}}]))) > 0
+                  and on() (sum(max without (instance, pod) (increase(quay_secscan_request_duration_seconds_count{namespace="quay-enterprise", action="Index", status=~"2.."}[{{hub $scanFor hub}}]))) or vector(0)) == 0
+                for: 15m
+                labels:
+                  severity: '{{hub $severity hub}}'
+                annotations:
+                  summary: Red Hat Quay has scanned no images in {{hub $scanFor hub}} despite new pushes.
+                  description: >-
+                    Images were pushed in the last {{hub $scanFor hub}} but the security worker scanned
+                    none, so vulnerability reports are missing. Check that the clair-app pods are Ready,
+                    have the memory they need, and can reach their database.

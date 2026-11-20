@@ -3,8 +3,7 @@
 # credentials Secret and ConfigMap, so a slow bucket does not park the policy in violation.
 # The Quay Operator does not back up its own managed database — this only exists in db-mode managed.
 object-templates-raw: |
-  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $rcmConfig := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $quayCfg := (index $rcmConfig "quay" | default dict) hub}}
   {{- $obcSecret := (lookup "v1" "Secret" "quay-enterprise" "quay-db-backup") | default dict }}
   {{- $obcData := ($obcSecret.data | default dict) }}

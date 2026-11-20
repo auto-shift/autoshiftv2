@@ -6,8 +6,7 @@
 # for the requested issuer to be in effect, so it reports NonCompliant naming whichever is missing
 # rather than emitting a stand-in object. Inform only, so neither is ever created.
 object-templates-raw: |
-  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $rcmConfig := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $quayCfg := (index $rcmConfig "quay" | default dict) hub}}
   {{hub- $tlsCfg := (index $quayCfg "tls" | default dict) hub}}
   {{hub- $certCfg := (index $tlsCfg "certificate" | default dict) hub}}
