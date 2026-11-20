@@ -1,0 +1,287 @@
+# Stress stubs for project-onboarding (P1b). Kept in tools/testdata/stress/, a subdirectory that
+# LoadTestResources does not read, so these objects are seeded only into the stress tests that ask
+# for them (stressRun stubs), never into the shared baseline.
+#
+# stress-a is a fully featured project, stress-b a minimal one. Each object below is a prune
+# candidate or a decoy; the comment says which.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+    example.com/team: a
+    other.tool/keep: 'y'
+  annotations:
+    autoshift.io/project-labels: example.com/team
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stress-b
+  labels:
+    autoshift.io/project: stress-b
+    autoshift.io/managed-by: project-onboarding
+---
+# Declared by stress-a: corrected in place, never pruned.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoshift-admin
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: admin}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: OLD_GROUP}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoshift-write
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: edit}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: OLD_GROUP}]
+---
+# Owned by stress-a, no longer declared: a prune candidate.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoshift-stale
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: OLD_GROUP}]
+---
+# Decoy: no managed-by label at all. Must never be touched.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: unlabeled
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: SOMEONE}]
+---
+# Decoy: managed by another tool. Must never be touched.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: other-tool
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: argocd
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: SOMEONE}]
+---
+# Forged: managed-by project-onboarding in stress-b's namespace, but the project label names
+# stress-a. Ownership is by namespace first, so it belongs to stress-b.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: forged-a-in-b
+  namespace: stress-b
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: SOMEONE}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoshift-admin
+  namespace: stress-b
+  labels:
+    autoshift.io/project: stress-b
+    autoshift.io/managed-by: project-onboarding
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: admin}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: B_ADMINS}]
+---
+# stress-a quota objects (declared while stress-a has size small).
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: autoshift-quota
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+spec:
+  hard:
+    pods: '10'
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: autoshift-limits
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 100m
+---
+# stress-a network objects from an earlier run: the default denies and from-web are declared,
+# autoshift-rule-old is not.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: autoshift-default-deny-ingress
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: autoshift-default-deny-egress
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: autoshift-rule-from-web
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: autoshift-rule-old
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: k8s.ovn.org/v1
+kind: EgressFirewall
+metadata:
+  name: default
+  namespace: stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+spec:
+  egress:
+    - type: Deny
+      to:
+        cidrSelector: 0.0.0.0/0
+---
+# Cluster-scoped objects of stress-a. Their only tie to the project is the project label.
+apiVersion: policy.networking.k8s.io/v1alpha1
+kind: AdminNetworkPolicy
+metadata:
+  name: autoshift-project-stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+spec:
+  priority: 50
+  subject:
+    namespaces:
+      matchLabels:
+        autoshift.io/project: stress-a
+  egress:
+    - name: deny-db
+      action: Deny
+      to:
+        - namespaces:
+            matchExpressions:
+              - {key: kubernetes.io/metadata.name, operator: In, values: [stress-db]}
+---
+apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+  name: autoshift-stress-a
+  labels:
+    autoshift.io/project: stress-a
+    autoshift.io/managed-by: project-onboarding
+spec:
+  egressIPs: ['198.51.100.10']
+  namespaceSelector:
+    matchLabels:
+      autoshift.io/project: stress-a
+---
+# Owned by managed-by label only, in a namespace no project declares, naming stress-b: belongs to
+# stress-b through the label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: stress-orphan-b
+  namespace: stress-elsewhere
+  labels:
+    autoshift.io/project: stress-b
+    autoshift.io/managed-by: project-onboarding
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: SOMEONE}]
+---
+# System namespaces, as they exist on every cluster, without AutoShift ownership.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-system
+  labels:
+    kubernetes.io/metadata.name: kube-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: default
+  labels:
+    kubernetes.io/metadata.name: default
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-dns
+  labels:
+    kubernetes.io/metadata.name: openshift-dns
+    openshift.io/run-level: '0'
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: open-cluster-management-agent-addon
+  labels:
+    kubernetes.io/metadata.name: open-cluster-management-agent-addon
+---
+# Created by another tool with conflicting labels: its own managed-by and a value for a key the
+# catalog also sets.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stress-tool
+  labels:
+    autoshift.io/managed-by: argocd
+    example.com/team: from-other-tool
+    app.kubernetes.io/part-of: other

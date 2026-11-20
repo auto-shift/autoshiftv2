@@ -301,6 +301,10 @@ func runPipeline(
 // output before anything else reads it. Tests use render to reuse a cached render, and transform
 // to drop documents they do not assert on, such as project-onboarding shard Policies that hold
 // none of their projects.
+// loadTestResources is LoadTestResources; the integration tests replace it with a cached copy
+// (harness_cache_test.go), since they run the pipeline hundreds of times over the same stubs.
+var loadTestResources = LoadTestResources
+
 func runPipelineTransform(
 	policiesDir string,
 	include func(policy string) bool,
@@ -357,7 +361,7 @@ func runPipelineTransform(
 	// These provide realistic hub template lookup results from the very first
 	// chart. The cluster-config-maps helm output (processed later in the loop)
 	// supplements these with the actual rendered values.
-	testResources, err := LoadTestResources(testdataDir)
+	testResources, err := loadTestResources(testdataDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load test resources: %w", err)
 	}
