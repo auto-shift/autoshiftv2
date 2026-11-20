@@ -1954,6 +1954,27 @@ hubClusterSets:
       openshift-upgrade:
         upgradeGraphUrl: 'https://api.openshift.com/api/upgrades_info/v1/graph'
       # =======================================================================
+      # SecurityContextConstraints (custom-sccs label). A map keyed by SCC name. spec fields that are
+      # not set keep the built-in nonroot-v2 posture. serviceAccounts maps <namespace>/<name> to
+      # true or false; each true entry may use the SCC through a RoleBinding to the ClusterRole
+      # autoshift-scc-<name>. users and groups are never set on the SCC. Privileged settings
+      # (allowPrivilegedContainer, allowHost*, runAsUser or seLinuxContext RunAsAny, hostPath or *
+      # volumes, privileged capabilities such as SYS_ADMIN, allowedUnsafeSysctls) are rejected
+      # unless the entry sets allowPrivileged: true. Removed entries are reported, never deleted.
+      # =======================================================================
+      securityContextConstraints:
+        example-fixed-uid:
+          enabled: true
+          spec:
+            runAsUser:
+              type: MustRunAsRange
+              uidRangeMin: 1000
+              uidRangeMax: 1999
+            readOnlyRootFilesystem: true
+          serviceAccounts:
+            example-ci/builder: true
+            example-ci/legacy-builder: false
+      # =======================================================================
       # ServiceAccount RBAC per namespace (namespace-rbac label). A map keyed by namespace, which
       # must already exist. serviceAccounts maps a name to true (create and keep) or false. roles
       # are Roles with exact rules; roleBindings bind a Role of the same namespace (role), or the
@@ -3040,6 +3061,11 @@ hubClusterSets:
       # Red Hat's 'hosted' mode is refused by the chart: it disables the policy add-on for that hub,
       # so the hub of hubs could no longer configure it.
       global-hub-deploy-mode: ''
+
+      # =======================================================================
+      # SecurityContextConstraints with RBAC-only access (settings in config.securityContextConstraints)
+      # =======================================================================
+      custom-sccs: 'false'
 
       # =======================================================================
       # ServiceAccounts, Roles, and RoleBindings per existing namespace, behind a safety gate

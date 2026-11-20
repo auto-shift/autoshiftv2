@@ -1,0 +1,373 @@
+# SecurityContextConstraints from config.securityContextConstraints, a map keyed by SCC name.
+# Rendered twice, identically except for $want: manifests/sccs.yaml is the enforce
+# ConfigurationPolicy (Policy policy-custom-sccs), test/sccs.yaml the inform one (Policy
+# policy-custom-sccs-test). Keep the two files in sync (a test enforces it).
+#
+# Each enabled, valid entry renders three kinds of object, all mustonlyhave (musthave would append to
+# the capability and volume lists instead of replacing them) and all labelled
+# autoshift.io/managed-by: custom-sccs and autoshift.io/scc: <name>:
+#   - the cluster-scoped SecurityContextConstraints <name>: the entry's spec over the nonroot-v2
+#     posture, key by key (a strategy map such as runAsUser replaces the default whole), with
+#     users and groups always empty, since access is granted through RBAC only. Every field but
+#     userNamespaceLevel is rendered, empty lists as [] and unset priority and
+#     defaultAllowPrivilegeEscalation as null, the way the API server returns them, so mustonlyhave
+#     converges and a field removed from the config is cleared on the live SCC. userNamespaceLevel
+#     is rendered only when the entry sets it, so the policy also applies on OpenShift versions
+#     whose SCC schema lacks the field;
+#   - the ClusterRole autoshift-scc-<name>, verb use on that SCC only;
+#   - one RoleBinding autoshift-scc-<name> per namespace listed in serviceAccounts, binding the
+#     ClusterRole to that namespace's ServiceAccounts whose value is true.
+#
+# Errors are found on the hub (the shape of the config) and on the managed cluster (an SCC,
+# ClusterRole or RoleBinding of the generated name that custom-sccs does not own, a namespace that
+# does not exist). An entry with a hub error renders nothing; an SCC or ClusterRole that is owned
+# elsewhere (no autoshift.io/managed-by: custom-sccs label) holds the entry, which renders nothing;
+# a RoleBinding owned elsewhere or a missing namespace skips only that RoleBinding. Every error is
+# reported in the ConfigMap custom-sccs-status (open-cluster-management-agent-addon), one data key
+# per entry, messages joined by "; ". The enforce ConfigurationPolicy writes it while there are
+# errors and deletes it when there are none; the inform one asserts it is absent, so
+# policy-custom-sccs-test is NonCompliant while any error stands. A hub `fail` is not used: it would block every valid entry on
+# the cluster because of one bad one.
+#
+# Safety gate: allowPrivilegedContainer true, any allowHost* true, runAsUser or seLinuxContext
+# RunAsAny, runAsUser MustRunAs uid 0 or MustRunAsRange uidRangeMin 0 (negative values too), a
+# seLinuxOptions.type in $privSELinux, a seLinuxOptions.level that weakens MCS separation (no
+# categories, more than two categories, or any range: s0, s0:c0.c511, s0-s0:c1,c2, SystemLow,
+# SystemHigh), a seccomp profile in $privSeccomp or an empty seccompProfiles list, a volume in
+# $privVolumes, a capability in $privCaps (allowed or default-added, with or without CAP_), or any
+# allowedUnsafeSysctls is an error unless the entry sets allowPrivileged: true, the deliberate
+# acknowledgment. SELinux types and levels, seccomp profiles and capabilities match in any case. An
+# unset uid or uidRangeMin is not gated: SCC admission fills it from the namespace's
+# openshift.io/sa.scc.uid-range annotation, not 0. Keep the lists in sync with the README.
+#
+# Validity (errors with or without allowPrivileged): priority fits int32, uid, uidRangeMin and
+# uidRangeMax are integers, defaultAllowPrivilegeEscalation true needs allowPrivilegeEscalation
+# true, no volume is a case variant of an SCC volume type in $fsTypes (HostPath for hostPath; the
+# types are case-sensitive), and seLinuxOptions is a map of user, role, type and level strings.
+#
+# serviceAccounts never grants use in a platform namespace ($platformNs: kube-*, openshift,
+# openshift-*, default, open-cluster-management*, multicluster-engine, hive), with no override.
+#
+# Status keys are the entry name with invalid characters replaced by _, a leading . replaced by _,
+# "" mapped to _, cut to 240 characters, and suffixed -2, -3, ... when two names map to the same
+# key, so each is a valid ConfigMap key and one error never hides another.
+#
+# Removal is manual. An object labelled autoshift.io/managed-by: custom-sccs that this run does not
+# declare (its entry was removed or disabled, or a namespace left serviceAccounts) gets mustnothave in
+# the inform ConfigurationPolicy only, so it is reported and never deleted. Objects of an entry with
+# errors are held: never reported, since the entry is still declared. No sweep runs when the rendered
+# config cannot be read or securityContextConstraints is not a map.
+#
+# Hub results reach the managed side as base64-encoded JSON in one quoted string, never as template
+# text: go-template-utils rewrites template text with regexes (autoindent, toInt) before parsing,
+# also inside a quoted string.
+object-templates-raw: |
+  {{hub- $want := "inform" hub}}
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfgRaw := index ($rcm.data | default dict) "config" | default "" | fromYaml hub}}
+  {{hub- $cfg := dict hub}}
+  {{hub- if kindIs "map" $cfgRaw hub}}{{hub- $cfg = $cfgRaw hub}}{{hub- end hub}}
+  {{hub- $errs := dict hub}}
+  {{hub- $held := dict hub}}
+  {{hub- $declared := dict hub}}
+  {{hub- $entries := list hub}}
+  {{hub- $sweep := false hub}}
+  {{hub- $sccs := dict hub}}
+  {{hub- $sccsRaw := index $cfg "securityContextConstraints" hub}}
+  {{hub- if not (and $rcm $cfg) hub}}
+  {{hub- $_ := set $errs "rendered-config" (list (printf "cannot read %s.rendered-config" .ManagedClusterName)) hub}}
+  {{hub- else if kindIs "map" $sccsRaw hub}}
+  {{hub- $sccs = $sccsRaw hub}}
+  {{hub- $sweep = true hub}}
+  {{hub- else if kindIs "invalid" $sccsRaw hub}}
+  {{hub- $sweep = true hub}}
+  {{hub- else hub}}
+  {{hub- $_ := set $errs "securityContextConstraints" (list "config.securityContextConstraints is not a map") hub}}
+  {{hub- end hub}}
+  {{hub- $dns1123 := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" hub}}
+  {{hub- $subdomain := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" hub}}
+  {{hub- $reserved := list "anyuid" "hostaccess" "hostmount-anyuid" "hostmount-anyuid-v2" "hostnetwork" "hostnetwork-v2" "insights-runtime-extractor-scc" "machine-api-termination-handler" "nested-container" "node-exporter" "nonroot" "nonroot-v2" "privileged" "restricted" "restricted-v2" "restricted-v3" hub}}
+  {{hub- $boolFields := list "allowHostDirVolumePlugin" "allowHostIPC" "allowHostNetwork" "allowHostPID" "allowHostPorts" "allowPrivilegeEscalation" "allowPrivilegedContainer" "defaultAllowPrivilegeEscalation" "readOnlyRootFilesystem" hub}}
+  {{hub- $hostFields := list "allowHostDirVolumePlugin" "allowHostIPC" "allowHostNetwork" "allowHostPID" "allowHostPorts" hub}}
+  {{hub- $listFields := list "allowedCapabilities" "allowedUnsafeSysctls" "defaultAddCapabilities" "forbiddenSysctls" "requiredDropCapabilities" "seccompProfiles" "volumes" hub}}
+  {{hub- $strategies := dict "runAsUser" (dict "types" (list "MustRunAs" "MustRunAsNonRoot" "MustRunAsRange" "RunAsAny") "keys" (list "type" "uid" "uidRangeMin" "uidRangeMax")) "seLinuxContext" (dict "types" (list "MustRunAs" "RunAsAny") "keys" (list "type" "seLinuxOptions")) "fsGroup" (dict "types" (list "MustRunAs" "RunAsAny") "keys" (list "type" "ranges")) "supplementalGroups" (dict "types" (list "MustRunAs" "RunAsAny") "keys" (list "type" "ranges")) hub}}
+  {{hub- $otherFields := list "allowedFlexVolumes" "priority" "userNamespaceLevel" hub}}
+  {{hub- $known := concat $boolFields $listFields (keys $strategies) $otherFields hub}}
+  {{hub- $privCaps := list "*" "ALL" "SYS_ADMIN" "SYS_MODULE" "SYS_PTRACE" "SYS_RAWIO" "SYS_BOOT" "SYS_TIME" "NET_ADMIN" "NET_RAW" "BPF" "PERFMON" "DAC_READ_SEARCH" "MAC_ADMIN" "MAC_OVERRIDE" "SYSLOG" "AUDIT_CONTROL" "SYS_RESOURCE" "SYS_PACCT" "SYS_NICE" "LINUX_IMMUTABLE" "SETFCAP" "CHECKPOINT_RESTORE" "IPC_LOCK" "BLOCK_SUSPEND" "WAKE_ALARM" "SYS_TTY_CONFIG" hub}}
+  {{hub- $fsTypes := list "*" "awsElasticBlockStore" "azureDisk" "azureFile" "cephFS" "cinder" "configMap" "csi" "downwardAPI" "emptyDir" "ephemeral" "fc" "flexVolume" "flocker" "gcePersistentDisk" "gitRepo" "glusterfs" "hostPath" "image" "iscsi" "nfs" "none" "persistentVolumeClaim" "photonPersistentDisk" "portworxVolume" "projected" "quobyte" "rbd" "scaleIO" "secret" "serviceAccountToken" "storageOS" "vsphere" hub}}
+  {{hub- $privVolumes := list "*" "hostPath" "awsElasticBlockStore" "azureDisk" "azureFile" "cephFS" "cinder" "fc" "flexVolume" "flocker" "gcePersistentDisk" "gitRepo" "glusterfs" "iscsi" "nfs" "photonPersistentDisk" "portworxVolume" "quobyte" "rbd" "scaleIO" "storageOS" "vsphere" hub}}
+  {{hub- $privSELinux := list "spc_t" "unconfined_t" "container_runtime_t" "unconfined_service_t" "kernel_t" "init_t" hub}}
+  {{hub- $mcsLevel := "^s[0-9]+(:[c0-9.,]+)?(-s[0-9]+(:[c0-9.,]+)?)?$" hub}}
+  {{hub- $platformNs := "^(kube-.*|openshift|openshift-.*|default|open-cluster-management.*|multicluster-engine|hive)$" hub}}
+  {{hub- $privSeccomp := list "*" "unconfined" hub}}
+  {{hub- $rootUid := "^(-.*|0+([.]0*)?)$" hub}}
+  {{hub- $usedKeys := dict hub}}
+  {{hub- range $name := keys $sccs | sortAlpha hub}}
+  {{hub- $entry := index $sccs $name hub}}
+  {{hub- $key := regexReplaceAll "^[.]" (regexReplaceAll "[^-._a-zA-Z0-9]" $name "_") "_" | trunc 240 | default "_" hub}}
+  {{hub- $baseKey := $key hub}}
+  {{hub- range $i := until (len $sccs) hub}}{{hub- if hasKey $usedKeys $key hub}}{{hub- $key = printf "%s-%d" $baseKey (add $i 2) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $_ := set $usedKeys $key true hub}}
+  {{hub- $bad := list hub}}
+  {{hub- $enabled := "true" hub}}
+  {{hub- if kindIs "map" $entry hub}}{{hub- $enabled = printf "%v" (dig "enabled" true $entry) hub}}{{hub- end hub}}
+  {{hub- if not (kindIs "map" $entry) hub}}
+  {{hub- $bad = append $bad "entry is not a map" hub}}
+  {{hub- else if not (has $enabled (list "true" "false")) hub}}
+  {{hub- $bad = append $bad "enabled is not true or false" hub}}
+  {{hub- else if eq $enabled "true" hub}}
+  {{hub- if or (gt (len $name) 63) (not (regexMatch $dns1123 $name)) hub}}{{hub- $bad = append $bad "name is not a valid DNS-1123 label" hub}}{{hub- end hub}}
+  {{hub- if has $name $reserved hub}}{{hub- $bad = append $bad "name is a built-in OpenShift SCC and cannot be managed here" hub}}{{hub- end hub}}
+  {{hub- range $ek := keys $entry | sortAlpha hub}}{{hub- if not (has $ek (list "enabled" "allowPrivileged" "spec" "serviceAccounts")) hub}}{{hub- $bad = append $bad (printf "key %s is not one of enabled, allowPrivileged, spec, serviceAccounts" $ek) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $ack := printf "%v" (dig "allowPrivileged" false $entry) hub}}
+  {{hub- if not (has $ack (list "true" "false")) hub}}{{hub- $bad = append $bad "allowPrivileged is not true or false" hub}}{{hub- end hub}}
+  {{hub- $scc := dict "allowHostDirVolumePlugin" false "allowHostIPC" false "allowHostNetwork" false "allowHostPID" false "allowHostPorts" false "allowPrivilegeEscalation" false "allowPrivilegedContainer" false "allowedCapabilities" (list "NET_BIND_SERVICE") "defaultAddCapabilities" (list) "requiredDropCapabilities" (list "ALL") "runAsUser" (dict "type" "MustRunAsNonRoot") "seLinuxContext" (dict "type" "MustRunAs") "fsGroup" (dict "type" "RunAsAny") "supplementalGroups" (dict "type" "RunAsAny") "seccompProfiles" (list "runtime/default") "readOnlyRootFilesystem" false "volumes" (list "configMap" "csi" "downwardAPI" "emptyDir" "ephemeral" "image" "persistentVolumeClaim" "projected" "secret") "allowedUnsafeSysctls" (list) "forbiddenSysctls" (list) "allowedFlexVolumes" (list) "defaultAllowPrivilegeEscalation" nil "priority" nil hub}}
+  {{hub- $spec := index $entry "spec" hub}}
+  {{hub- if kindIs "invalid" $spec hub}}{{hub- $spec = dict hub}}{{hub- end hub}}
+  {{hub- if not (kindIs "map" $spec) hub}}
+  {{hub- $bad = append $bad "spec is not a map" hub}}
+  {{hub- $spec = dict hub}}
+  {{hub- end hub}}
+  {{hub- range $f := keys $spec | sortAlpha hub}}
+  {{hub- $v := index $spec $f hub}}
+  {{hub- if has $f (list "users" "groups") hub}}
+  {{hub- $bad = append $bad (printf "spec.%s is not allowed: grant use through serviceAccounts" $f) hub}}
+  {{hub- else if not (has $f $known) hub}}
+  {{hub- $bad = append $bad (printf "spec.%s is not a SecurityContextConstraints field this policy manages" $f) hub}}
+  {{hub- else if kindIs "invalid" $v hub}}
+  {{hub- else if has $f $boolFields hub}}
+  {{hub- if kindIs "bool" $v hub}}{{hub- $_ := set $scc $f $v hub}}{{hub- else hub}}{{hub- $bad = append $bad (printf "spec.%s is not true or false" $f) hub}}{{hub- end hub}}
+  {{hub- else if has $f $listFields hub}}
+  {{hub- $strOk := kindIs "slice" $v hub}}
+  {{hub- if $strOk hub}}{{hub- range $item := $v hub}}{{hub- if or (not (kindIs "string" $item)) (not $item) hub}}{{hub- $strOk = false hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if $strOk hub}}{{hub- $_ := set $scc $f $v hub}}{{hub- else hub}}{{hub- $bad = append $bad (printf "spec.%s is not a list of strings" $f) hub}}{{hub- end hub}}
+  {{hub- else if hasKey $strategies $f hub}}
+  {{hub- $st := index $strategies $f hub}}
+  {{hub- if not (kindIs "map" $v) hub}}
+  {{hub- $bad = append $bad (printf "spec.%s is not a map" $f) hub}}
+  {{hub- else if not (has (printf "%v" (dig "type" "" $v)) $st.types) hub}}
+  {{hub- $bad = append $bad (printf "spec.%s.type is not one of %s" $f (join ", " $st.types)) hub}}
+  {{hub- else hub}}
+  {{hub- $stOk := true hub}}
+  {{hub- range $sk := keys $v | sortAlpha hub}}{{hub- if not (has $sk $st.keys) hub}}{{hub- $stOk = false hub}}{{hub- $bad = append $bad (printf "spec.%s.%s is not one of %s" $f $sk (join ", " $st.keys)) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if $stOk hub}}{{hub- $_ := set $scc $f $v hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else if eq $f "allowedFlexVolumes" hub}}
+  {{hub- $flexOk := kindIs "slice" $v hub}}
+  {{hub- if $flexOk hub}}{{hub- range $item := $v hub}}{{hub- if not (and (kindIs "map" $item) (eq (len $item) 1) (kindIs "string" (index $item "driver" | default 0))) hub}}{{hub- $flexOk = false hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if $flexOk hub}}{{hub- $_ := set $scc $f $v hub}}{{hub- else hub}}{{hub- $bad = append $bad "spec.allowedFlexVolumes is not a list of {driver: <name>} maps" hub}}{{hub- end hub}}
+  {{hub- else if eq $f "priority" hub}}
+  {{hub- $pv := printf "%v" $v hub}}
+  {{hub- if and (not (kindIs "string" $v)) (regexMatch "^[0-9]+$" $pv) (or (lt (len $pv) 10) (and (eq (len $pv) 10) (le $pv "2147483647"))) hub}}{{hub- $_ := set $scc $f $v hub}}{{hub- else hub}}{{hub- $bad = append $bad "spec.priority is not a non-negative integer of at most 2147483647" hub}}{{hub- end hub}}
+  {{hub- else if eq $f "userNamespaceLevel" hub}}
+  {{hub- if has (printf "%v" $v) (list "AllowHostLevel" "RequirePodLevel") hub}}{{hub- $_ := set $scc $f $v hub}}{{hub- else hub}}{{hub- $bad = append $bad "spec.userNamespaceLevel is not AllowHostLevel or RequirePodLevel" hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if and (eq (printf "%v" $scc.defaultAllowPrivilegeEscalation) "true") (ne (printf "%v" $scc.allowPrivilegeEscalation) "true") hub}}{{hub- $bad = append $bad "spec.defaultAllowPrivilegeEscalation true needs spec.allowPrivilegeEscalation true" hub}}{{hub- end hub}}
+  {{hub- range $uk := list "uid" "uidRangeMin" "uidRangeMax" hub}}{{hub- if hasKey $scc.runAsUser $uk hub}}{{hub- $uv := index $scc.runAsUser $uk hub}}{{hub- if or (kindIs "string" $uv) (not (regexMatch "^-?[0-9]+$" (printf "%v" $uv))) hub}}{{hub- $bad = append $bad (printf "spec.runAsUser.%s is not an integer" $uk) hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $fsLower := list hub}}{{hub- range $t := $fsTypes hub}}{{hub- $fsLower = append $fsLower (lower $t) hub}}{{hub- end hub}}
+  {{hub- range $vol := $scc.volumes hub}}{{hub- if and (not (has $vol $fsTypes)) (has (lower $vol) $fsLower) hub}}{{hub- $bad = append $bad (printf "spec.volumes %s is not a volume type: volume types are case-sensitive, for example hostPath or persistentVolumeClaim" $vol) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $seOpts := dig "seLinuxOptions" dict $scc.seLinuxContext hub}}
+  {{hub- if kindIs "map" $seOpts hub}}
+  {{hub- range $sk := keys $seOpts | sortAlpha hub}}{{hub- if not (has $sk (list "user" "role" "type" "level")) hub}}{{hub- $bad = append $bad (printf "spec.seLinuxContext.seLinuxOptions.%s is not one of user, role, type, level" $sk) hub}}{{hub- else if not (kindIs "string" (index $seOpts $sk)) hub}}{{hub- $bad = append $bad (printf "spec.seLinuxContext.seLinuxOptions.%s is not a string" $sk) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- else if not (kindIs "invalid" $seOpts) hub}}
+  {{hub- $bad = append $bad "spec.seLinuxContext.seLinuxOptions is not a map" hub}}
+  {{hub- $seOpts = dict hub}}
+  {{hub- end hub}}
+  {{hub- if ne $ack "true" hub}}
+  {{hub- range $f := concat (list "allowPrivilegedContainer") $hostFields hub}}{{hub- if eq (printf "%v" (index $scc $f)) "true" hub}}{{hub- $bad = append $bad (printf "spec.%s: true needs allowPrivileged: true on the entry" $f) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $f := list "runAsUser" "seLinuxContext" hub}}{{hub- if eq (printf "%v" (dig $f "type" "" $scc)) "RunAsAny" hub}}{{hub- $bad = append $bad (printf "spec.%s.type RunAsAny needs allowPrivileged: true on the entry" $f) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $vol := $scc.volumes hub}}{{hub- if has $vol $privVolumes hub}}{{hub- $bad = append $bad (printf "spec.volumes %s needs allowPrivileged: true on the entry" $vol) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $f := list "allowedCapabilities" "defaultAddCapabilities" hub}}{{hub- range $cap := index $scc $f hub}}{{hub- if has (regexReplaceAll "^CAP_" (upper $cap) "") $privCaps hub}}{{hub- $bad = append $bad (printf "spec.%s %s needs allowPrivileged: true on the entry" $f $cap) hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if $scc.allowedUnsafeSysctls hub}}{{hub- $bad = append $bad "spec.allowedUnsafeSysctls needs allowPrivileged: true on the entry" hub}}{{hub- end hub}}
+  {{hub- $rau := $scc.runAsUser hub}}
+  {{hub- $rauType := printf "%v" (dig "type" "" $rau) hub}}
+  {{hub- if and (eq $rauType "MustRunAs") (hasKey $rau "uid") (regexMatch $rootUid (printf "%v" $rau.uid)) hub}}{{hub- $bad = append $bad (printf "spec.runAsUser.uid %v needs allowPrivileged: true on the entry" $rau.uid) hub}}{{hub- end hub}}
+  {{hub- if and (eq $rauType "MustRunAsRange") (hasKey $rau "uidRangeMin") (regexMatch $rootUid (printf "%v" $rau.uidRangeMin)) hub}}{{hub- $bad = append $bad (printf "spec.runAsUser.uidRangeMin %v needs allowPrivileged: true on the entry" $rau.uidRangeMin) hub}}{{hub- end hub}}
+  {{hub- if kindIs "map" $seOpts hub}}{{hub- if has (lower (printf "%v" (dig "type" "" $seOpts))) $privSELinux hub}}{{hub- $bad = append $bad (printf "spec.seLinuxContext.seLinuxOptions.type %v needs allowPrivileged: true on the entry" $seOpts.type) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $p := $scc.seccompProfiles hub}}{{hub- if has (lower $p) $privSeccomp hub}}{{hub- $bad = append $bad (printf "spec.seccompProfiles %s needs allowPrivileged: true on the entry" $p) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if not $scc.seccompProfiles hub}}{{hub- $bad = append $bad "spec.seccompProfiles [] lets pods run without a seccomp profile and needs allowPrivileged: true on the entry" hub}}{{hub- end hub}}
+  {{hub- $lvl := lower (trim (printf "%v" (dig "level" "" $seOpts))) hub}}
+  {{hub- $mcsBad := regexMatch "system(low|high)" $lvl hub}}
+  {{hub- if regexMatch $mcsLevel $lvl hub}}
+  {{hub- $high := last (splitList "-" $lvl) hub}}
+  {{hub- $cats := 0 hub}}
+  {{hub- if contains ":" $high hub}}
+  {{hub- range $c := splitList "," (index (splitList ":" $high) 1) hub}}
+  {{hub- $ab := splitList "." $c hub}}
+  {{hub- if eq (len $ab) 2 hub}}{{hub- $cats = add $cats (sub (atoi (regexReplaceAll "^c" (index $ab 1) "")) (atoi (regexReplaceAll "^c" (index $ab 0) ""))) 1 hub}}{{hub- else hub}}{{hub- $cats = add $cats 1 hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if or (contains "-" $lvl) (not (contains ":" $high)) (gt $cats 2) hub}}{{hub- $mcsBad = true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $mcsBad hub}}{{hub- $bad = append $bad (printf "spec.seLinuxContext.seLinuxOptions.level %v weakens the MCS separation between containers (it has no categories, more than two, or is a range) and needs allowPrivileged: true on the entry" $seOpts.level) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $byNs := dict hub}}
+  {{hub- $sasRaw := index $entry "serviceAccounts" hub}}
+  {{hub- if kindIs "map" $sasRaw hub}}
+  {{hub- range $ref := keys $sasRaw | sortAlpha hub}}
+  {{hub- $on := printf "%v" (index $sasRaw $ref) hub}}
+  {{hub- $parts := splitList "/" $ref hub}}
+  {{hub- if not (has $on (list "true" "false")) hub}}
+  {{hub- $bad = append $bad (printf "serviceAccounts.%s is not true or false" $ref) hub}}
+  {{hub- else if not (and (eq (len $parts) 2) (le (len (index $parts 0)) 63) (regexMatch $dns1123 (index $parts 0)) (le (len (index $parts 1)) 253) (regexMatch $subdomain (index $parts 1))) hub}}
+  {{hub- $bad = append $bad (printf "serviceAccounts.%s is not <namespace>/<serviceaccount>" $ref) hub}}
+  {{hub- else if and (eq $on "true") (regexMatch $platformNs (index $parts 0)) hub}}
+  {{hub- $bad = append $bad (printf "serviceAccounts.%s: %s is a platform namespace, where custom-sccs never grants use" $ref (index $parts 0)) hub}}
+  {{hub- else if eq $on "true" hub}}
+  {{hub- $ns := index $parts 0 hub}}
+  {{hub- $_ := set $byNs $ns (append (index $byNs $ns | default list) (index $parts 1)) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else if not (kindIs "invalid" $sasRaw) hub}}
+  {{hub- $bad = append $bad "serviceAccounts is not a map" hub}}
+  {{hub- end hub}}
+  {{hub- if not $bad hub}}
+  {{hub- $entries = append $entries (dict "name" $name "key" $key "scc" $scc "byNs" $byNs) hub}}
+  {{hub- $_ := set $declared (printf "SecurityContextConstraints||%s" $name) true hub}}
+  {{hub- $_ := set $declared (printf "ClusterRole||autoshift-scc-%s" $name) true hub}}
+  {{hub- range $ns := keys $byNs hub}}{{hub- $_ := set $declared (printf "RoleBinding|%s|autoshift-scc-%s" $ns $name) true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $bad hub}}
+  {{hub- $_ := set $errs $key $bad hub}}
+  {{hub- $_ := set $held $name true hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{- $hub := {{hub dict "entries" $entries "errs" $errs "held" $held "declared" $declared "sweep" $sweep | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $status := $hub.errs }}
+  {{- $held := $hub.held }}
+  {{- range $e := $hub.entries }}
+  {{- $live := lookup "security.openshift.io/v1" "SecurityContextConstraints" "" $e.name }}
+  {{- $liveRole := lookup "rbac.authorization.k8s.io/v1" "ClusterRole" "" (printf "autoshift-scc-%s" $e.name) }}
+  {{- if and $live (ne (printf "%v" (index (dig "metadata" "labels" dict $live) "autoshift.io/managed-by" | default "")) "custom-sccs") }}
+  {{- $_ := set $status $e.key (list (printf "SecurityContextConstraints %s already exists and is not managed by custom-sccs" $e.name)) }}
+  {{- $_ := set $held $e.name true }}
+  {{- else if and $liveRole (ne (printf "%v" (index (dig "metadata" "labels" dict $liveRole) "autoshift.io/managed-by" | default "")) "custom-sccs") }}
+  {{- $_ := set $status $e.key (list (printf "ClusterRole autoshift-scc-%s already exists and is not managed by custom-sccs" $e.name)) }}
+  {{- $_ := set $held $e.name true }}
+  {{- else }}
+  {{hub- if eq $want "enforce" hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: security.openshift.io/v1
+      kind: SecurityContextConstraints
+      metadata:
+        name: {{ $e.name | toJson }}
+        labels:
+          autoshift.io/managed-by: custom-sccs
+          autoshift.io/scc: {{ $e.name | toJson }}
+      {{- range $f, $v := $e.scc }}
+      {{ $f }}: {{ $v | toJson }}
+      {{- end }}
+      users: []
+      groups: []
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: {{ printf "autoshift-scc-%s" $e.name | toJson }}
+        labels:
+          autoshift.io/managed-by: custom-sccs
+          autoshift.io/scc: {{ $e.name | toJson }}
+      rules:
+        - apiGroups:
+            - security.openshift.io
+          resources:
+            - securitycontextconstraints
+          resourceNames:
+            - {{ $e.name | toJson }}
+          verbs:
+            - use
+  {{hub- end hub}}
+  {{- range $ns, $sas := $e.byNs }}
+  {{- if not (lookup "v1" "Namespace" "" $ns) }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "namespace %s does not exist, so its RoleBinding is not created" $ns)) }}
+  {{- else }}
+  {{- $liveRB := lookup "rbac.authorization.k8s.io/v1" "RoleBinding" $ns (printf "autoshift-scc-%s" $e.name) }}
+  {{- if and $liveRB (ne (printf "%v" (index (dig "metadata" "labels" dict $liveRB) "autoshift.io/managed-by" | default "")) "custom-sccs") }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/autoshift-scc-%s already exists and is not managed by custom-sccs, so it is not changed" $ns $e.name)) }}
+  {{- else }}
+  {{hub- if eq $want "enforce" hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: {{ printf "autoshift-scc-%s" $e.name | toJson }}
+        namespace: {{ $ns | toJson }}
+        labels:
+          autoshift.io/managed-by: custom-sccs
+          autoshift.io/scc: {{ $e.name | toJson }}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: {{ printf "autoshift-scc-%s" $e.name | toJson }}
+      subjects:
+        {{- range $sa := $sas }}
+        - kind: ServiceAccount
+          name: {{ $sa | toJson }}
+          namespace: {{ $ns | toJson }}
+        {{- end }}
+  {{hub- end hub}}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{hub- if eq $want "inform" hub}}
+  {{- if $hub.sweep }}
+  {{- range $kind := list (dict "apiVersion" "security.openshift.io/v1" "kind" "SecurityContextConstraints") (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "ClusterRole") (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "RoleBinding") }}
+  {{- range $obj := (lookup $kind.apiVersion $kind.kind "" "" "autoshift.io/managed-by=custom-sccs").items | default list }}
+  {{- $objNs := printf "%v" (dig "metadata" "namespace" "" $obj) }}
+  {{- $objName := printf "%v" (dig "metadata" "name" "" $obj) }}
+  {{- $owner := printf "%v" (index (dig "metadata" "labels" dict $obj) "autoshift.io/scc" | default "") }}
+  {{- if not (or (hasKey $held $owner) (hasKey $hub.declared (printf "%s|%s|%s" $kind.kind $objNs $objName))) }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: {{ $kind.apiVersion | toJson }}
+      kind: {{ $kind.kind | toJson }}
+      metadata:
+        name: {{ $objName | toJson }}
+        {{- if $objNs }}
+        namespace: {{ $objNs | toJson }}
+        {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- if eq $want "enforce" hub}}
+  {{- if $status }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: custom-sccs-status
+        namespace: open-cluster-management-agent-addon
+        labels:
+          autoshift.io/managed-by: custom-sccs
+      data:
+        {{- range $k, $msgs := $status }}
+        {{ $k | toJson }}: {{ join "; " $msgs | toJson }}
+        {{- end }}
+  {{- else }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: custom-sccs-status
+        namespace: open-cluster-management-agent-addon
+  {{- end }}
+  {{hub- else hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: custom-sccs-status
+        namespace: open-cluster-management-agent-addon
+  {{hub- end hub}}
