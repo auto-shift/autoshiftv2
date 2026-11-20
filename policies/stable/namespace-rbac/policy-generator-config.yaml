@@ -43,18 +43,13 @@ policies:
   # the enforcing one has something to report, so gating the enforcing Policy on it would deadlock,
   # and gating the -test Policy on the enforcing one would hide its report under dry run.
   #
-  # Hub templates resolve as autoshift-policy-service-account, because they list the cluster-scoped
-  # ManagedClusters (a namespace named after one is refused). Without it, hub lookups are limited to
-  # the policy namespace. User data never reaches template text, so the account only runs the
-  # policy's own lookups.
+  # No hubTemplateOptions.serviceAccountName: the hub template reads only the rendered config in the
+  # policy namespace, which needs none. ManagedCluster namespaces are refused by a lookup on the
+  # managed cluster (README, "Safety gate"), never by a hub-template list.
   - name: policy-namespace-rbac
-    hubTemplateOptions:
-      serviceAccountName: autoshift-policy-service-account
     manifests:
       - path: manifests
   - name: policy-namespace-rbac-test
     remediationAction: inform
-    hubTemplateOptions:
-      serviceAccountName: autoshift-policy-service-account
     manifests:
       - path: test/namespace-rbac.yaml
