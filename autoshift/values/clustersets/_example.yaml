@@ -1954,6 +1954,44 @@ hubClusterSets:
       openshift-upgrade:
         upgradeGraphUrl: 'https://api.openshift.com/api/upgrades_info/v1/graph'
       # =======================================================================
+      # ServiceAccount RBAC per namespace (namespace-rbac label). A map keyed by namespace, which
+      # must already exist. serviceAccounts maps a name to true (create and keep) or false. roles
+      # are Roles with exact rules; roleBindings bind a Role of the same namespace (role), or the
+      # built-in ClusterRole edit or view (clusterRole, in place of role), to
+      # <namespace>/<serviceaccount> subjects. Every other ClusterRole is refused, and edit or view
+      # is never bound to a ServiceAccount a long-lived token can act as. A ServiceAccount set to {tokenSecret: <name>} also
+      # gets a long-lived token Secret, only if every RoleBinding of it points to a minter-only
+      # Role (serviceaccounts/token create and serviceaccounts get only); see the README.
+      # Wildcards, the escalate, bind, and impersonate verbs, RBAC and SCC resources, exec into
+      # pods, secrets without resourceNames, and platform namespaces are rejected. Objects that
+      # already exist without the autoshift.io/managed-by: namespace-rbac label are reported, never
+      # changed, and removed entries are reported, never deleted.
+      # =======================================================================
+      namespaceRbac:
+        example-team:
+          serviceAccounts:
+            example-ci: true
+            example-old-ci: false
+          roles:
+            example-ci-builds:
+              rules:
+                - apiGroups: [build.openshift.io]
+                  resources: [buildconfigs]
+                  verbs: [get, create, patch]
+                - apiGroups: ['']
+                  resources: [secrets]
+                  verbs: [get]
+                  resourceNames: [example-registry-token]
+          roleBindings:
+            example-ci-builds:
+              role: example-ci-builds
+              serviceAccounts:
+                example-team/example-ci: true
+            # example-viewers:
+            #   clusterRole: view            # edit or view only
+            #   serviceAccounts:
+            #     example-team/example-ci: true
+      # =======================================================================
       # Project onboarding (project-onboarding label). Each entry in projects becomes a Namespace
       # (an OpenShift Project) with templated labels and annotations. A template is a string with
       # {field} placeholders filled from the project's fields; {name} is the project name. An entry
@@ -3002,6 +3040,12 @@ hubClusterSets:
       # Red Hat's 'hosted' mode is refused by the chart: it disables the policy add-on for that hub,
       # so the hub of hubs could no longer configure it.
       global-hub-deploy-mode: ''
+
+      # =======================================================================
+      # ServiceAccounts, Roles, and RoleBindings per existing namespace, behind a safety gate
+      # (settings in config.namespaceRbac)
+      # =======================================================================
+      namespace-rbac: 'false'
 
       # =======================================================================
       # Namespaces (OpenShift Projects) with templated labels and annotations (settings in

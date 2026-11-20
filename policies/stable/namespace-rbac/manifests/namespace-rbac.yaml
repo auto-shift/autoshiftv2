@@ -1,0 +1,1028 @@
+# ServiceAccounts, Roles and RoleBindings per namespace, from config.namespaceRbac, a map keyed by
+# namespace. Rendered twice, identically except for $want: manifests/namespace-rbac.yaml is the
+# enforce ConfigurationPolicy (Policy policy-namespace-rbac), test/namespace-rbac.yaml the inform one
+# (Policy policy-namespace-rbac-test). Keep the two files in sync (a test enforces it).
+#
+#   config:
+#     namespaceRbac:
+#       <namespace>:                       # must already exist; never created here
+#         serviceAccounts:
+#           <name>: true                   # true creates and keeps it, false stops declaring it
+#           <name>: {tokenSecret: <secret>} # true, plus a long-lived token Secret (the exception)
+#         roles:
+#           <name>:
+#             rules: [<PolicyRule>, ...]   # apiGroups, resources, verbs, resourceNames only
+#         roleBindings:
+#           <name>:
+#             role: <name>                 # a Role declared in roles of the same namespace, or
+#             clusterRole: edit            # edit or view ($clusterRoles), never both keys
+#             serviceAccounts:
+#               <namespace>/<name>: true   # ServiceAccount subjects only
+#
+# clusterRole binds a built-in ClusterRole from the fixed allowlist $clusterRoles, edit and view.
+# admin and cluster-admin are never bound: they manage RBAC in the namespace, past the safety gate.
+# edit creates workloads, reads Secrets, and requests tokens for every ServiceAccount of its
+# namespace, so it is refused in a namespace with a tokenSecret ServiceAccount ($tokNs, accepted or
+# refused), held on the managed cluster while its namespace has a live labelled token Secret, and a
+# live labelled edit RoleBinding in the namespace of a pending token Secret refuses that Secret. No
+# token-reachable ServiceAccount is a subject of a clusterRole binding: the closure of what the
+# holder of a long-lived token can act as ($reach on the hub from config, $liveReach on the managed
+# cluster from live token Secrets and every RoleBinding/ClusterRoleBinding, groups included). An
+# identity that can request tokens adds those ServiceAccounts; one that can create workloads, read or
+# write Secrets, exec/attach/ephemeralcontainers, request tokens without resourceNames, bind or
+# escalate, or impersonate adds its whole namespace (every namespace through a ClusterRoleBinding).
+# Each binding is classified once ($declEdges from config, $edges from live bindings with a
+# ServiceAccount subject); the rounds then only walk those edges, both sources in every round, and
+# stop when a round adds nothing. At most 6 rounds; still growing means every clusterRole binding is
+# refused (fail closed). system:authenticated is not matched (README). A pending token Secret is
+# refused while a live edit or view binding names a ServiceAccount it can act as.
+#
+# Every object is labelled autoshift.io/managed-by: namespace-rbac. Roles and RoleBindings are
+# mustonlyhave, so rules and subjects are replaced, never merged; a RoleBinding whose role changes is
+# re-created (recreateOption: IfRequired), because roleRef is immutable. ServiceAccounts are
+# musthave: they carry only metadata here, and OpenShift adds image pull secrets to them that
+# mustonlyhave would fight over. Tokens come from the TokenRequest API.
+#
+# The one exception (approved 2026-11-13): tokenSecret renders a Secret of type
+# kubernetes.io/service-account-token, musthave, with only the kubernetes.io/service-account.name
+# annotation and the managed-by label; the cluster fills in the token, and no token or other data
+# is ever rendered or read. It is refused unless every RoleBinding anywhere in config.namespaceRbac
+# that binds the ServiceAccount points to a minter-only Role ($minter: every rule exactly
+# serviceaccounts/token create or serviceaccounts get, in the core group, with resourceNames that
+# are ServiceAccounts set to true in that Role's namespace), and unless the tokenSecret name is used
+# by one ServiceAccount only. On the managed cluster it is held when the ServiceAccount is not owned,
+# or the Secret exists without the managed-by label or for another ServiceAccount. Each rendered
+# token Secret is listed under the token-secret-exceptions key of the status ConfigMap, an
+# informational line: with no error, the inform ConfigurationPolicy asserts the ConfigMap present
+# (musthave) instead of absent, so policy-namespace-rbac-test stays Compliant. A refused or removed token Secret is
+# not declared, so a labelled live one is reported by the stale sweep. Whenever a ServiceAccount has
+# a tokenSecret ($tokSAs, accepted or refused): a RoleBinding binding it to a non-minter Role is
+# refused, and so is a Role bound to it that is not minter-only ($tokRoles); a Role reading a
+# declared tokenSecret ($tokSecrets) or minting tokens for such a ServiceAccount is refused. On the
+# managed cluster, a RoleBinding to a non-minter Role is held while a subject has a live labelled
+# service-account-token Secret (a tokenSecret removed from the values), and so is a non-minter Role
+# while a live RoleBinding in its namespace binds it to such a subject ($tokCache caches the token
+# holders per namespace). A tokenSecret is refused while any part of the config cannot be inspected
+# ($uninspect), or while its namespace has a config Role, accepted or refused, that creates or
+# changes workloads ($workloads, $nsWorkload) or can read the Secret ($nsReaders); a config Role
+# that creates workloads is held while its namespace has a live labelled token Secret. Token Secrets
+# are rendered last ($pending): each is refused while any live ClusterRoleBinding names its
+# ServiceAccount, any live RoleBinding names it without pointing to a minter-only Role rendered in
+# this evaluation ($renderedMinters), or a live Role in its namespace creates workloads or can read
+# it. A subject names a ServiceAccount as kind ServiceAccount or as kind User
+# system:serviceaccount:<namespace>:<name>; groups are not matched.
+#
+# Errors are found on the hub (the shape of the config, the safety gate) and on the managed cluster
+# (a missing namespace, an object of a declared name without the managed-by label). A namespace-level
+# error (name, platform namespace, shape) skips the whole namespace. Any other error skips only its
+# ServiceAccount, Role or RoleBinding; a RoleBinding whose Role has an error or is not owned here is
+# skipped too. Every other entry still applies. Errors are reported in the ConfigMap
+# namespace-rbac-status (open-cluster-management-agent-addon), one data key per namespace, messages
+# joined by "; ". The enforce ConfigurationPolicy writes it while there are errors and deletes it
+# when there are none; the inform one asserts it is absent, so policy-namespace-rbac-test is
+# NonCompliant while any error stands. A hub `fail` is not used: one bad entry would block every valid one.
+#
+# Safety gate, rule by rule (strings are trimmed and lower-cased before the checks):
+#   - * anywhere in apiGroups, resources, verbs or resourceNames;
+#   - the verbs escalate, bind and impersonate;
+#   - the resources roles, rolebindings, clusterroles, clusterrolebindings, rolebindingrestrictions,
+#     securitycontextconstraints and nodes, with any subresource;
+#   - pods/exec, pods/attach, pods/portforward, pods/proxy, pods/ephemeralcontainers, services/proxy
+#     and builds/custom;
+#   - manifestworks, policies, placementbindings, placements, managedclusteractions and
+#     managedclusterviews, in any apiGroup, with any subresource;
+#   - secrets and serviceaccounts/token without resourceNames, and serviceaccounts with create
+#     without resourceNames;
+#   - serviceaccounts/token resourceNames that are not a true entry of serviceAccounts of the same
+#     namespace;
+#   - namespaces and projects with any verb other than get, list and watch;
+#   - nonResourceURLs, or a resourceNames list that is set but empty (it would mean every name).
+# Also refused: a platform namespace ($platformNs: kube-*, openshift, openshift-*, default,
+# open-cluster-management*, multicluster-engine, hive, local-cluster, policies-*, hypershift,
+# clusters, clusters-*) or the name of a ManagedCluster on the hub, as the namespace or as the
+# namespace of a subject, default as a serviceAccounts key or a subject, a name that is not DNS-1123
+# (namespaces are labels, the rest subdomains), and template delimiters in any name or value.
+# Keep the lists in sync with the README.
+#
+# On the managed cluster, a Role is held when a secrets resourceName names a Secret of type
+# kubernetes.io/service-account-token or kubernetes.io/dockercfg in its namespace, or a
+# serviceaccounts/token resourceName names a ServiceAccount without the managed-by label, and a
+# subject whose namespace does not exist is left out of its RoleBinding (no RoleBinding is rendered
+# when none is left); all are reported. A held or skipped object keeps its live state.
+#
+# Removal is manual. An object labelled autoshift.io/managed-by: namespace-rbac that this run does
+# not declare (removed, set to false, a RoleBinding with no true subject left) gets mustnothave in
+# the inform ConfigurationPolicy only, so it is reported and never deleted. Objects with errors stay
+# declared and are never reported, and nothing in a namespace with a namespace-level error is. No
+# sweep runs when the rendered config cannot be read or namespaceRbac is not a map.
+#
+# Hub results reach the managed side as base64-encoded JSON in one quoted string, never as template
+# text: go-template-utils rewrites template text with regexes (autoindent, toInt) before parsing,
+# also inside a quoted string.
+object-templates-raw: |
+  {{hub- $want := "enforce" hub}}
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfgRaw := index ($rcm.data | default dict) "config" | default "" | fromYaml hub}}
+  {{hub- $cfg := dict hub}}
+  {{hub- if kindIs "map" $cfgRaw hub}}{{hub- $cfg = $cfgRaw hub}}{{hub- end hub}}
+  {{hub- $errs := dict hub}}
+  {{hub- $held := dict hub}}
+  {{hub- $declared := dict hub}}
+  {{hub- $entries := list hub}}
+  {{hub- $sweep := false hub}}
+  {{hub- $nsMap := dict hub}}
+  {{hub- $nsRaw := index $cfg "namespaceRbac" hub}}
+  {{hub- if not (and $rcm $cfg) hub}}
+  {{hub- $_ := set $errs "rendered-config" (list (printf "cannot read %s.rendered-config" .ManagedClusterName)) hub}}
+  {{hub- else if kindIs "map" $nsRaw hub}}
+  {{hub- $nsMap = $nsRaw hub}}
+  {{hub- $sweep = true hub}}
+  {{hub- else if kindIs "invalid" $nsRaw hub}}
+  {{hub- $sweep = true hub}}
+  {{hub- else hub}}
+  {{hub- $_ := set $errs "namespaceRbac" (list "config.namespaceRbac is not a map") hub}}
+  {{hub- end hub}}
+  {{hub- $dns1123 := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" hub}}
+  {{hub- $subdomain := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" hub}}
+  {{hub- $platformNs := "^(kube-.*|openshift|openshift-.*|default|open-cluster-management.*|multicluster-engine|hive|local-cluster|policies-.*|hypershift|clusters|clusters-.*)$" hub}}
+  {{hub- $clusters := dict hub}}
+  {{hub- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list hub}}{{hub- $_ := set $clusters (printf "%v" (dig "metadata" "name" "" $mc)) true hub}}{{hub- end hub}}
+  {{hub- $ruleFields := list "apiGroups" "resources" "verbs" "resourceNames" hub}}
+  {{hub- $badVerbs := list "escalate" "bind" "impersonate" hub}}
+  {{hub- $readVerbs := list "get" "list" "watch" hub}}
+  {{hub- $workloads := list "pods" "deployments" "statefulsets" "daemonsets" "replicasets" "jobs" "cronjobs" "replicationcontrollers" "deploymentconfigs" "deploymentconfigs/instantiate" "deploymentconfigs/rollback" "builds" "builds/clone" "builds/docker" "builds/source" "buildconfigs" "buildconfigs/instantiate" "buildconfigs/instantiatebinary" "buildconfigs/webhooks" "podtemplates" "taskruns" "pipelineruns" "virtualmachines" "virtualmachineinstances" "workflows" hub}}
+  {{hub- $denied := list (dict "re" "^(roles|rolebindings|clusterroles|clusterrolebindings|rolebindingrestrictions)(/.*)?$" "why" "RBAC objects grant permissions") (dict "re" "^securitycontextconstraints(/.*)?$" "why" "SCC use changes the security posture of pods") (dict "re" "^nodes(/.*)?$" "why" "nodes are not namespaced and reach the host") (dict "re" "^(pods/(exec|attach|portforward|proxy|ephemeralcontainers)|services/proxy)$" "why" "it reaches into running workloads") (dict "re" "^builds/custom$" "why" "custom builds run privileged") (dict "re" "^(manifestworks|policies|placementbindings|placements|managedclusteractions|managedclusterviews)(/.*)?$" "why" "it acts on managed clusters through Red Hat Advanced Cluster Management") hub}}
+  {{hub- $exKey := "token-secret-exceptions" hub}}
+  {{hub- $usedKeys := dict $exKey true hub}}
+  {{hub- $saInfo := dict hub}}
+  {{hub- $owned := dict hub}}
+  {{hub- $tokUsers := dict hub}}
+  {{hub- $tokSAs := dict hub}}
+  {{hub- $tokNs := dict hub}}
+  {{hub- $clusterRoles := list "edit" "view" hub}}
+  {{hub- $tokSecrets := dict hub}}
+  {{hub- $tokRoles := dict hub}}
+  {{hub- $uninspect := list hub}}
+  {{hub- $nsWorkload := dict hub}}
+  {{hub- $nsReaders := dict hub}}
+  {{hub- range $ns := keys $nsMap | sortAlpha hub}}
+  {{hub- $ent := index $nsMap $ns hub}}
+  {{hub- if and (not (kindIs "invalid" $ent)) (not (kindIs "map" $ent)) hub}}{{hub- $uninspect = append $uninspect (printf "namespaceRbac.%s is not a map" ($ns | toJson)) hub}}{{hub- end hub}}
+  {{hub- if kindIs "map" $ent hub}}
+  {{hub- range $sec := list "serviceAccounts" "roleBindings" hub}}{{hub- $sv := index $ent $sec hub}}{{hub- if and (not (kindIs "invalid" $sv)) (not (kindIs "map" $sv)) hub}}{{hub- $uninspect = append $uninspect (printf "namespaceRbac.%s.%s is not a map" ($ns | toJson) $sec) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $rbU := index $ent "roleBindings" hub}}
+  {{hub- if kindIs "map" $rbU hub}}{{hub- range $bn := keys $rbU | sortAlpha hub}}{{hub- $bU := index $rbU $bn hub}}{{hub- if not (kindIs "map" $bU) hub}}{{hub- $uninspect = append $uninspect (printf "namespaceRbac.%s.roleBindings.%s is not a map" ($ns | toJson) ($bn | toJson)) hub}}{{hub- else if not (kindIs "map" (index $bU "serviceAccounts")) hub}}{{hub- $uninspect = append $uninspect (printf "namespaceRbac.%s.roleBindings.%s.serviceAccounts is not a map" ($ns | toJson) ($bn | toJson)) hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $sasP := dict hub}}
+  {{hub- if kindIs "map" $ent hub}}{{hub- if kindIs "map" (index $ent "serviceAccounts") hub}}{{hub- $sasP = index $ent "serviceAccounts" hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $sa := keys $sasP | sortAlpha hub}}
+  {{hub- $sv := index $sasP $sa hub}}
+  {{hub- $serr := "" hub}}
+  {{hub- $on := "false" hub}}
+  {{hub- $tok := "" hub}}
+  {{hub- if or (contains "{{" $sa) (contains "}}" $sa) hub}}
+  {{hub- $serr = "contains template delimiters" hub}}
+  {{hub- else if or (gt (len $sa) 253) (not (regexMatch $subdomain $sa)) hub}}
+  {{hub- $serr = "is not a valid DNS-1123 subdomain" hub}}
+  {{hub- else if eq $sa "default" hub}}
+  {{hub- $serr = "is the ServiceAccount of every pod that names none, which OpenShift creates in every namespace; it is never managed here" hub}}
+  {{hub- else if kindIs "map" $sv hub}}
+  {{hub- range $sk := keys $sv | sortAlpha hub}}{{hub- if ne $sk "tokenSecret" hub}}{{hub- $serr = printf "key %s is not tokenSecret" ($sk | toJson) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $t := index $sv "tokenSecret" hub}}
+  {{hub- if $serr hub}}
+  {{hub- else if not (kindIs "string" $t) hub}}
+  {{hub- $serr = "tokenSecret is not a string" hub}}
+  {{hub- else if or (contains "{{" $t) (contains "}}" $t) hub}}
+  {{hub- $serr = "tokenSecret contains template delimiters" hub}}
+  {{hub- else if or (gt (len $t) 253) (not (regexMatch $subdomain $t)) hub}}
+  {{hub- $serr = "tokenSecret is not a valid DNS-1123 subdomain" hub}}
+  {{hub- else hub}}
+  {{hub- $on = "true" hub}}
+  {{hub- $tok = $t hub}}
+  {{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- $on = printf "%v" $sv hub}}
+  {{hub- if or (contains "{{" $on) (contains "}}" $on) hub}}
+  {{hub- $serr = "contains template delimiters" hub}}
+  {{hub- else if not (has $on (list "true" "false")) hub}}
+  {{hub- $serr = "is not true, false, or a map with tokenSecret" hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $saInfo (printf "%s/%s" $ns $sa) (dict "err" $serr "on" $on "tok" $tok) hub}}
+  {{hub- if kindIs "map" $sv hub}}{{hub- if hasKey $sv "tokenSecret" hub}}{{hub- $_ := set $tokSAs (printf "%s/%s" $ns $sa) true hub}}{{hub- $_ := set $tokNs $ns (append (index $tokNs $ns | default list) $sa) hub}}{{hub- $_ := set $tokSecrets (printf "%s|%v" $ns (index $sv "tokenSecret")) true hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if and (not $serr) (eq $on "true") hub}}{{hub- $_ := set $owned (printf "%s/%s" $ns $sa) true hub}}{{hub- end hub}}
+  {{hub- if and (not $serr) $tok hub}}{{hub- $tk := printf "%s|%s" $ns $tok hub}}{{hub- $_ := set $tokUsers $tk (append (index $tokUsers $tk | default list) $sa) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $minter := dict hub}}
+  {{hub- $saRefs := dict hub}}
+  {{hub- range $ns := keys $nsMap | sortAlpha hub}}
+  {{hub- $ent := index $nsMap $ns hub}}
+  {{hub- if kindIs "map" $ent hub}}
+  {{hub- $rolesP := index $ent "roles" hub}}
+  {{hub- if kindIs "map" $rolesP hub}}
+  {{hub- range $rn := keys $rolesP | sortAlpha hub}}
+  {{hub- $role := index $rolesP $rn hub}}
+  {{hub- $wl := false hub}}
+  {{hub- $rd := list hub}}
+  {{hub- $rdAll := false hub}}
+  {{hub- if kindIs "map" $role hub}}{{hub- if kindIs "slice" (index $role "rules") hub}}
+  {{hub- range $rule := index $role "rules" hub}}{{hub- if kindIs "map" $rule hub}}
+  {{hub- $rr := list hub}}{{hub- $rv := list hub}}{{hub- $rnn := list hub}}
+  {{hub- if kindIs "slice" (index $rule "resources") hub}}{{hub- range $x := index $rule "resources" hub}}{{hub- $rr = append $rr (lower (trim (printf "%v" $x))) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if kindIs "slice" (index $rule "verbs") hub}}{{hub- range $x := index $rule "verbs" hub}}{{hub- $rv = append $rv (lower (trim (printf "%v" $x))) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if kindIs "slice" (index $rule "resourceNames") hub}}{{hub- range $x := index $rule "resourceNames" hub}}{{hub- $rnn = append $rnn (printf "%v" $x) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $wv := false hub}}{{hub- range $x := $rv hub}}{{hub- if has $x (list "create" "update" "patch" "*") hub}}{{hub- $wv = true hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $x := $rr hub}}
+  {{hub- if and $wv (or (has $x $workloads) (contains "*" $x)) hub}}{{hub- $wl = true hub}}{{hub- end hub}}
+  {{hub- if or (eq $x "secrets") (eq $x "*") hub}}{{hub- if $rnn hub}}{{hub- $rd = concat $rd $rnn hub}}{{hub- else hub}}{{hub- $rdAll = true hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}{{hub- end hub}}
+  {{hub- if $wl hub}}{{hub- $_ := set $nsWorkload $ns (append (index $nsWorkload $ns | default list) $rn) hub}}{{hub- end hub}}
+  {{hub- range $x := $rd hub}}{{hub- $k := printf "%s|%s" $ns $x hub}}{{hub- $_ := set $nsReaders $k (append (index $nsReaders $k | default list) $rn) hub}}{{hub- end hub}}
+  {{hub- if $rdAll hub}}{{hub- $k := printf "%s|*" $ns hub}}{{hub- $_ := set $nsReaders $k (append (index $nsReaders $k | default list) $rn) hub}}{{hub- end hub}}
+  {{hub- $mo := false hub}}
+  {{hub- if kindIs "map" $role hub}}{{hub- if and (eq (len $role) 1) (kindIs "slice" (index $role "rules")) hub}}{{hub- $mo = gt (len (index $role "rules")) 0 hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if $mo hub}}
+  {{hub- range $rule := index $role "rules" hub}}
+  {{hub- if not (kindIs "map" $rule) hub}}
+  {{hub- $mo = false hub}}
+  {{hub- else hub}}
+  {{hub- range $rk := keys $rule hub}}{{hub- if not (has $rk $ruleFields) hub}}{{hub- $mo = false hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $ag := index $rule "apiGroups" hub}}{{hub- $rs := index $rule "resources" hub}}{{hub- $vb := index $rule "verbs" hub}}{{hub- $rnm := index $rule "resourceNames" hub}}
+  {{hub- if not (and (kindIs "slice" $ag) (kindIs "slice" $rs) (kindIs "slice" $vb) (kindIs "slice" $rnm)) hub}}
+  {{hub- $mo = false hub}}
+  {{hub- else if not (and (eq (len $ag) 1) (eq (len $rs) 1) (eq (len $vb) 1) (gt (len $rnm) 0)) hub}}
+  {{hub- $mo = false hub}}
+  {{hub- else if not (has (printf "%v|%v|%v" (index $ag 0) (index $rs 0) (index $vb 0)) (list "|serviceaccounts/token|create" "|serviceaccounts|get")) hub}}
+  {{hub- $mo = false hub}}
+  {{hub- else hub}}
+  {{hub- range $n := $rnm hub}}{{hub- if or (not (hasKey $owned (printf "%s/%v" $ns $n))) (hasKey $tokSAs (printf "%s/%v" $ns $n)) hub}}{{hub- $mo = false hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $mo hub}}{{hub- $_ := set $minter (printf "%s|%s" $ns $rn) true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $bindP := index $ent "roleBindings" hub}}
+  {{hub- if kindIs "map" $bindP hub}}
+  {{hub- range $bn := keys $bindP | sortAlpha hub}}
+  {{hub- $b := index $bindP $bn hub}}
+  {{hub- if kindIs "map" $b hub}}
+  {{hub- $subjP := index $b "serviceAccounts" hub}}
+  {{hub- $refKind := "Role" hub}}
+  {{hub- $refName := printf "%v" (index $b "role") hub}}
+  {{hub- if hasKey $b "clusterRole" hub}}{{hub- $refKind = "ClusterRole" hub}}{{hub- $refName = printf "%v" (index $b "clusterRole") hub}}{{hub- end hub}}
+  {{hub- if kindIs "map" $subjP hub}}
+  {{hub- range $ref := keys $subjP | sortAlpha hub}}
+  {{hub- if eq (printf "%v" (index $subjP $ref)) "true" hub}}
+  {{hub- $_ := set $saRefs $ref (append (index $saRefs $ref | default list) (dict "rb" (printf "%s/%s" $ns $bn) "kind" $refKind "role" $refName "ns" $ns)) hub}}
+  {{hub- if and (eq $refKind "Role") (hasKey $tokSAs $ref) hub}}{{hub- $rk := printf "%s|%v" $ns (index $b "role") hub}}{{hub- $_ := set $tokRoles $rk (append (index $tokRoles $rk | default list) $ref) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $declEdges := dict hub}}
+  {{hub- range $ref := keys $saRefs | sortAlpha hub}}
+  {{hub- range $r := index $saRefs $ref hub}}
+  {{hub- $targets := list hub}}
+  {{hub- $all := false hub}}
+  {{hub- $rules := list hub}}
+  {{hub- if ne $r.kind "Role" hub}}
+  {{hub- $all = ne $r.role "view" hub}}
+  {{hub- else hub}}
+  {{hub- $rent := index $nsMap $r.ns hub}}
+  {{hub- $rrole := dict hub}}
+  {{hub- if kindIs "map" $rent hub}}{{hub- if kindIs "map" (index $rent "roles") hub}}{{hub- $rrole = index (index $rent "roles") $r.role hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if and (kindIs "map" $rrole) (kindIs "slice" (index $rrole "rules")) hub}}{{hub- $rules = index $rrole "rules" hub}}{{hub- else hub}}{{hub- $all = true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $rule := $rules hub}}
+  {{hub- if not (kindIs "map" $rule) hub}}
+  {{hub- $all = true hub}}
+  {{hub- else hub}}
+  {{hub- $rs := list "*" hub}}{{hub- if kindIs "slice" (index $rule "resources") hub}}{{hub- $rs = list hub}}{{hub- range $x := index $rule "resources" hub}}{{hub- $rs = append $rs (lower (trim (printf "%v" $x))) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $vs := list "*" hub}}{{hub- if kindIs "slice" (index $rule "verbs") hub}}{{hub- $vs = list hub}}{{hub- range $x := index $rule "verbs" hub}}{{hub- $vs = append $vs (lower (trim (printf "%v" $x))) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $any := has "*" $vs hub}}
+  {{hub- $write := or $any (has "create" $vs) (has "update" $vs) (has "patch" $vs) hub}}
+  {{hub- $read := or $any (has "get" $vs) (has "list" $vs) (has "watch" $vs) hub}}
+  {{hub- $imp := or $any (has "impersonate" $vs) hub}}
+  {{hub- $bindEsc := or $any (has "bind" $vs) (has "escalate" $vs) hub}}
+  {{hub- range $x := $rs hub}}
+  {{hub- $wild := contains "*" $x hub}}
+  {{hub- if and $write (or (has $x $workloads) (eq $x "secrets") $wild) hub}}{{hub- $all = true hub}}{{hub- end hub}}
+  {{hub- if and $read (or (eq $x "secrets") $wild) hub}}{{hub- $all = true hub}}{{hub- end hub}}
+  {{hub- if and (or $any (has "create" $vs) (has "get" $vs)) (has $x (list "pods/exec" "pods/attach")) hub}}{{hub- $all = true hub}}{{hub- end hub}}
+  {{hub- if and (or $any (has "patch" $vs) (has "update" $vs)) (eq $x "pods/ephemeralcontainers") hub}}{{hub- $all = true hub}}{{hub- end hub}}
+  {{hub- if and $bindEsc (or (has $x (list "roles" "clusterroles" "rolebindings" "clusterrolebindings")) $wild) hub}}{{hub- $all = true hub}}{{hub- end hub}}
+  {{hub- if and $imp (or (has $x (list "serviceaccounts" "users" "groups" "uids")) (hasPrefix "userextras" $x) $wild) hub}}{{hub- $all = true hub}}{{hub- end hub}}
+  {{hub- if and (eq $x "serviceaccounts/token") (or $any (has "create" $vs)) hub}}
+  {{hub- $rnm := index $rule "resourceNames" hub}}
+  {{hub- if and (kindIs "slice" $rnm) $rnm hub}}{{hub- range $n := $rnm hub}}{{hub- $targets = append $targets (printf "%s/%v" $r.ns $n) hub}}{{hub- end hub}}{{hub- else hub}}{{hub- $all = true hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $all hub}}{{hub- $targets = append $targets (printf "%s/*" $r.ns) hub}}{{hub- end hub}}
+  {{hub- if $targets hub}}{{hub- $_ := set $declEdges $ref (concat (index $declEdges $ref | default list) $targets | uniq) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $reach := dict hub}}
+  {{hub- range $t := keys $tokSAs | sortAlpha hub}}{{hub- $_ := set $reach $t (list $t) hub}}{{hub- end hub}}
+  {{hub- $reachGrew := false hub}}
+  {{hub- $reachDone := false hub}}
+  {{hub- range $round := until 6 hub}}
+  {{hub- if not $reachDone hub}}
+  {{hub- $sigBefore := 0 hub}}{{hub- range $k, $v := $reach hub}}{{hub- $sigBefore = add $sigBefore 1 (len $v) hub}}{{hub- end hub}}
+  {{hub- range $ref := keys $declEdges | sortAlpha hub}}
+  {{hub- $by := concat (index $reach $ref | default list) (index $reach (printf "%s/*" (first (splitList "/" $ref))) | default list) (index $reach "*" | default list) | uniq hub}}
+  {{hub- if $by hub}}{{hub- range $x := index $declEdges $ref hub}}{{hub- $_ := set $reach $x (concat (index $reach $x | default list) $by | uniq) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $sigAfter := 0 hub}}{{hub- range $k, $v := $reach hub}}{{hub- $sigAfter = add $sigAfter 1 (len $v) hub}}{{hub- end hub}}
+  {{hub- $reachGrew = ne $sigBefore $sigAfter hub}}
+  {{hub- $reachDone = not $reachGrew hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $ns := keys $nsMap | sortAlpha hub}}
+  {{hub- $entry := index $nsMap $ns hub}}
+  {{hub- $key := regexReplaceAll "^[.]" (regexReplaceAll "[^-._a-zA-Z0-9]" $ns "_") "_" | trunc 240 | default "_" hub}}
+  {{hub- $baseKey := $key hub}}
+  {{hub- range $i := until (len $nsMap) hub}}{{hub- if hasKey $usedKeys $key hub}}{{hub- $key = printf "%s-%d" $baseKey (add $i 2) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $_ := set $usedKeys $key true hub}}
+  {{hub- $nbad := list hub}}
+  {{hub- $bad := list hub}}
+  {{hub- if or (contains "{{" $ns) (contains "}}" $ns) hub}}
+  {{hub- $nbad = append $nbad (printf "namespace %s contains template delimiters" ($ns | toJson)) hub}}
+  {{hub- else if or (gt (len $ns) 63) (not (regexMatch $dns1123 $ns)) hub}}
+  {{hub- $nbad = append $nbad (printf "namespace %s is not a valid DNS-1123 label" ($ns | toJson)) hub}}
+  {{hub- else if regexMatch $platformNs $ns hub}}
+  {{hub- $nbad = append $nbad (printf "namespace %s is a platform namespace, where namespace-rbac never grants access" $ns) hub}}
+  {{hub- else if hasKey $clusters $ns hub}}
+  {{hub- $nbad = append $nbad (printf "namespace %s is the namespace of the ManagedCluster %s on the hub, where namespace-rbac never grants access" $ns $ns) hub}}
+  {{hub- end hub}}
+  {{hub- $sasRaw := dict hub}}
+  {{hub- $rolesRaw := dict hub}}
+  {{hub- $bindRaw := dict hub}}
+  {{hub- if kindIs "invalid" $entry hub}}
+  {{hub- else if not (kindIs "map" $entry) hub}}
+  {{hub- $nbad = append $nbad "entry is not a map" hub}}
+  {{hub- else hub}}
+  {{hub- range $ek := keys $entry | sortAlpha hub}}{{hub- if not (has $ek (list "serviceAccounts" "roles" "roleBindings")) hub}}{{hub- $nbad = append $nbad (printf "key %s is not one of serviceAccounts, roles, roleBindings" ($ek | toJson)) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $v := index $entry "serviceAccounts" hub}}{{hub- if kindIs "map" $v hub}}{{hub- $sasRaw = $v hub}}{{hub- else if not (kindIs "invalid" $v) hub}}{{hub- $nbad = append $nbad "serviceAccounts is not a map" hub}}{{hub- end hub}}
+  {{hub- $v = index $entry "roles" hub}}{{hub- if kindIs "map" $v hub}}{{hub- $rolesRaw = $v hub}}{{hub- else if not (kindIs "invalid" $v) hub}}{{hub- $nbad = append $nbad "roles is not a map" hub}}{{hub- end hub}}
+  {{hub- $v = index $entry "roleBindings" hub}}{{hub- if kindIs "map" $v hub}}{{hub- $bindRaw = $v hub}}{{hub- else if not (kindIs "invalid" $v) hub}}{{hub- $nbad = append $nbad "roleBindings is not a map" hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $nbad hub}}
+  {{hub- $_ := set $held $ns true hub}}
+  {{hub- else if not (kindIs "invalid" $entry) hub}}
+  {{hub- $sas := list hub}}
+  {{hub- $tokens := list hub}}
+  {{hub- range $sa := keys $sasRaw | sortAlpha hub}}
+  {{hub- $si := index $saInfo (printf "%s/%s" $ns $sa) hub}}
+  {{hub- if $si.err hub}}
+  {{hub- $bad = append $bad (printf "serviceAccounts.%s %s" ($sa | toJson) $si.err) hub}}
+  {{hub- $_ := set $declared (printf "ServiceAccount|%s|%s" $ns $sa) true hub}}
+  {{hub- else if eq $si.on "true" hub}}
+  {{hub- $sas = append $sas $sa hub}}
+  {{hub- $_ := set $declared (printf "ServiceAccount|%s|%s" $ns $sa) true hub}}
+  {{hub- if $si.tok hub}}
+  {{hub- $tbad := list hub}}
+  {{hub- $users := index $tokUsers (printf "%s|%s" $ns $si.tok) hub}}
+  {{hub- if gt (len $users) 1 hub}}
+  {{hub- $tbad = append $tbad (printf "Secret %s is the tokenSecret of more than one ServiceAccount: %s" $si.tok (join ", " $users)) hub}}
+  {{hub- end hub}}
+  {{hub- range $r := index $saRefs (printf "%s/%s" $ns $sa) | default list hub}}
+  {{hub- if or (ne $r.kind "Role") (not (hasKey $minter (printf "%s|%s" $r.ns $r.role))) hub}}
+  {{hub- $tbad = append $tbad (printf "RoleBinding %s binds it to %s %s, which is not minter-only (every rule exactly serviceaccounts/token create or serviceaccounts get in the core group, with resourceNames that are ServiceAccounts declared true in that namespace)" $r.rb $r.kind ($r.role | toJson)) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if index $nsWorkload $ns hub}}
+  {{hub- $tbad = append $tbad (printf "Roles %s of namespace %s create or change workloads, which could mount the token Secret" (join ", " (index $nsWorkload $ns)) $ns) hub}}
+  {{hub- end hub}}
+  {{hub- $rdr := concat (index $nsReaders (printf "%s|%s" $ns $si.tok) | default list) (index $nsReaders (printf "%s|*" $ns) | default list) hub}}
+  {{hub- if $rdr hub}}
+  {{hub- $tbad = append $tbad (printf "Roles %s of namespace %s can read Secret %s" (join ", " (uniq $rdr)) $ns $si.tok) hub}}
+  {{hub- end hub}}
+  {{hub- if $uninspect hub}}
+  {{hub- $tbad = append $tbad (printf "config.namespaceRbac cannot be fully inspected (%s), so no token Secret is rendered" (join "; " $uninspect)) hub}}
+  {{hub- end hub}}
+  {{hub- if $tbad hub}}
+  {{hub- $bad = append $bad (printf "serviceAccounts.%s.tokenSecret %s is refused: %s" ($sa | toJson) $si.tok (join "; " $tbad)) hub}}
+  {{hub- else hub}}
+  {{hub- $tokens = append $tokens (dict "sa" $sa "secret" $si.tok) hub}}
+  {{hub- $_ := set $declared (printf "Secret|%s|%s" $ns $si.tok) true hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $roles := list hub}}
+  {{hub- $roleBad := dict hub}}
+  {{hub- range $rn := keys $rolesRaw | sortAlpha hub}}
+  {{hub- $role := index $rolesRaw $rn hub}}
+  {{hub- $rbad := list hub}}
+  {{hub- $_ := set $declared (printf "Role|%s|%s" $ns $rn) true hub}}
+  {{hub- if or (contains "{{" $rn) (contains "}}" $rn) hub}}
+  {{hub- $rbad = append $rbad "contains template delimiters" hub}}
+  {{hub- else if or (gt (len $rn) 253) (not (regexMatch $subdomain $rn)) hub}}
+  {{hub- $rbad = append $rbad "name is not a valid DNS-1123 subdomain" hub}}
+  {{hub- else if not (kindIs "map" $role) hub}}
+  {{hub- $rbad = append $rbad "entry is not a map" hub}}
+  {{hub- else hub}}
+  {{hub- range $rk := keys $role | sortAlpha hub}}{{hub- if ne $rk "rules" hub}}{{hub- $rbad = append $rbad (printf "key %s is not rules" ($rk | toJson)) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $rules := index $role "rules" hub}}
+  {{hub- $outRules := list hub}}
+  {{hub- $secretNames := list hub}}
+  {{hub- $tokenNames := list hub}}
+  {{hub- if not (and (kindIs "slice" $rules) $rules) hub}}
+  {{hub- $rbad = append $rbad "rules is not a non-empty list" hub}}
+  {{hub- else hub}}
+  {{hub- range $ri, $rule := $rules hub}}
+  {{hub- $p := printf "rules[%d]" $ri hub}}
+  {{hub- if not (kindIs "map" $rule) hub}}
+  {{hub- $rbad = append $rbad (printf "%s is not a map" $p) hub}}
+  {{hub- else hub}}
+  {{hub- range $rk := keys $rule | sortAlpha hub}}{{hub- if not (has $rk $ruleFields) hub}}{{hub- $rbad = append $rbad (printf "%s.%s is not one of apiGroups, resources, verbs, resourceNames" $p ($rk | toJson)) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $norm := dict hub}}
+  {{hub- range $f := $ruleFields hub}}
+  {{hub- $fv := index $rule $f hub}}
+  {{hub- $ok := kindIs "slice" $fv hub}}
+  {{hub- $delim := false hub}}
+  {{hub- if $ok hub}}{{hub- range $s := $fv hub}}{{hub- if not (kindIs "string" $s) hub}}{{hub- $ok = false hub}}{{hub- else if or (contains "{{" $s) (contains "}}" $s) hub}}{{hub- $delim = true hub}}{{hub- else if and (ne $f "apiGroups") (not (trim $s)) hub}}{{hub- $ok = false hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if $delim hub}}
+  {{hub- $rbad = append $rbad (printf "%s.%s contains template delimiters" $p $f) hub}}
+  {{hub- else if and (eq $f "resourceNames") (kindIs "invalid" $fv) hub}}
+  {{hub- else if not (and $ok $fv) hub}}
+  {{hub- $rbad = append $rbad (printf "%s.%s is not a non-empty list of strings" $p $f) hub}}
+  {{hub- else hub}}
+  {{hub- $_ := set $norm $f $fv hub}}
+  {{hub- range $s := $fv hub}}{{hub- if contains "*" $s hub}}{{hub- $rbad = append $rbad (printf "%s.%s %s: wildcards are not allowed" $p $f ($s | toJson)) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $lres := list hub}}{{hub- range $s := index $norm "resources" | default list hub}}{{hub- $lres = append $lres (lower (trim $s)) hub}}{{hub- end hub}}
+  {{hub- $verbs := list hub}}{{hub- range $s := index $norm "verbs" | default list hub}}{{hub- $verbs = append $verbs (lower (trim $s)) hub}}{{hub- end hub}}
+  {{hub- $named := gt (len (index $norm "resourceNames" | default list)) 0 hub}}
+  {{hub- range $vb := $verbs hub}}{{hub- if has $vb $badVerbs hub}}{{hub- $rbad = append $rbad (printf "%s.verbs %s is never granted: it escalates privileges" $p $vb) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $s := index $norm "resources" | default list hub}}
+  {{hub- $r := lower (trim $s) hub}}
+  {{hub- range $d := $denied hub}}{{hub- if regexMatch $d.re $r hub}}{{hub- $rbad = append $rbad (printf "%s.resources %s is never granted: %s" $p ($s | toJson) $d.why) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if and (has $r (list "secrets" "serviceaccounts/token")) (not $named) hub}}
+  {{hub- $rbad = append $rbad (printf "%s.resources %s needs resourceNames" $p ($s | toJson)) hub}}
+  {{hub- else if eq $r "serviceaccounts/token" hub}}
+  {{hub- range $n := index $norm "resourceNames" hub}}{{hub- if not (hasKey $owned (printf "%s/%v" $ns $n)) hub}}{{hub- $rbad = append $rbad (printf "%s.resourceNames %s: a token can only be requested for a ServiceAccount set to true in serviceAccounts of this namespace" $p ($n | toJson)) hub}}{{hub- else if hasKey $tokSAs (printf "%s/%v" $ns $n) hub}}{{hub- $rbad = append $rbad (printf "%s.resourceNames %s: the ServiceAccount has a tokenSecret, and no Role may mint tokens for it" $p ($n | toJson)) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- else if and (eq $r "serviceaccounts") (has "create" $verbs) (not $named) hub}}
+  {{hub- $rbad = append $rbad (printf "%s.resources %s with verb create needs resourceNames" $p ($s | toJson)) hub}}
+  {{hub- else if regexMatch "^(namespaces|projects)(/.*)?$" $r hub}}
+  {{hub- range $vb := $verbs hub}}{{hub- if not (has $vb $readVerbs) hub}}{{hub- $rbad = append $rbad (printf "%s.resources %s allows only get, list and watch, not %s: the labels and annotations of a namespace set its pod security and UID range" $p ($s | toJson) $vb) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if has "secrets" $lres hub}}{{hub- $secretNames = concat $secretNames (index $norm "resourceNames" | default list) hub}}{{hub- range $n := index $norm "resourceNames" | default list hub}}{{hub- if hasKey $tokSecrets (printf "%s|%v" $ns $n) hub}}{{hub- $rbad = append $rbad (printf "%s.resourceNames %s is the tokenSecret of a ServiceAccount, which no Role may read" $p ($n | toJson)) hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if has "serviceaccounts/token" $lres hub}}{{hub- $tokenNames = concat $tokenNames (index $norm "resourceNames" | default list) hub}}{{hub- end hub}}
+  {{hub- $outRules = append $outRules $norm hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if and (hasKey $tokRoles (printf "%s|%s" $ns $rn)) (not (hasKey $minter (printf "%s|%s" $ns $rn))) hub}}{{hub- $rbad = append $rbad (printf "it is bound to %s, which has a tokenSecret, so it must be minter-only (every rule exactly serviceaccounts/token create or serviceaccounts get in the core group, for ServiceAccounts declared true here that have no tokenSecret)" (join ", " (index $tokRoles (printf "%s|%s" $ns $rn)))) hub}}{{hub- end hub}}
+  {{hub- if not $rbad hub}}{{hub- $roles = append $roles (dict "name" $rn "rules" $outRules "secretNames" (uniq $secretNames) "tokenNames" (uniq $tokenNames) "minter" (hasKey $minter (printf "%s|%s" $ns $rn)) "workload" (has $rn (index $nsWorkload $ns | default list))) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $rbad hub}}
+  {{hub- $_ := set $roleBad $rn true hub}}
+  {{hub- range $m := $rbad hub}}{{hub- $bad = append $bad (printf "roles.%s: %s" ($rn | toJson) $m) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $bindings := list hub}}
+  {{hub- range $bn := keys $bindRaw | sortAlpha hub}}
+  {{hub- $b := index $bindRaw $bn hub}}
+  {{hub- $bbad := list hub}}
+  {{hub- $subjects := list hub}}
+  {{hub- $role := "" hub}}
+  {{hub- $kind := "Role" hub}}
+  {{hub- if or (contains "{{" $bn) (contains "}}" $bn) hub}}
+  {{hub- $bbad = append $bbad "contains template delimiters" hub}}
+  {{hub- else if or (gt (len $bn) 253) (not (regexMatch $subdomain $bn)) hub}}
+  {{hub- $bbad = append $bbad "name is not a valid DNS-1123 subdomain" hub}}
+  {{hub- else if not (kindIs "map" $b) hub}}
+  {{hub- $bbad = append $bbad "entry is not a map" hub}}
+  {{hub- else hub}}
+  {{hub- range $bk := keys $b | sortAlpha hub}}{{hub- if not (has $bk (list "role" "clusterRole" "serviceAccounts")) hub}}{{hub- $bbad = append $bbad (printf "key %s is not one of role, clusterRole, serviceAccounts" ($bk | toJson)) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $rv := index $b "role" hub}}
+  {{hub- $crv := index $b "clusterRole" hub}}
+  {{hub- if hasKey $b "clusterRole" hub}}{{hub- $kind = "ClusterRole" hub}}{{hub- $rv = $crv hub}}{{hub- end hub}}
+  {{hub- if and (hasKey $b "role") (hasKey $b "clusterRole") hub}}
+  {{hub- $bbad = append $bbad "role and clusterRole are mutually exclusive: set one of them" hub}}
+  {{hub- else if eq $kind "ClusterRole" hub}}
+  {{hub- if not (and (kindIs "string" $crv) $crv) hub}}
+  {{hub- $bbad = append $bbad "clusterRole is not a non-empty string" hub}}
+  {{hub- else if or (contains "{{" $crv) (contains "}}" $crv) hub}}
+  {{hub- $bbad = append $bbad "clusterRole contains template delimiters" hub}}
+  {{hub- else if not (has $crv $clusterRoles) hub}}
+  {{hub- $bbad = append $bbad (printf "clusterRole %s is not one of edit, view: no other ClusterRole is ever bound, because admin and cluster-admin manage RBAC in the namespace" ($crv | toJson)) hub}}
+  {{hub- else if and (eq $crv "edit") (index $tokNs $ns) hub}}
+  {{hub- $bbad = append $bbad (printf "clusterRole edit is refused in namespace %s, which has ServiceAccounts with a tokenSecret (%s): edit creates workloads, reads Secrets, and requests tokens for every ServiceAccount of the namespace" $ns (join ", " (index $tokNs $ns))) hub}}
+  {{hub- else hub}}
+  {{hub- $role = $crv hub}}
+  {{hub- end hub}}
+  {{hub- else if not (and (kindIs "string" $rv) $rv) hub}}
+  {{hub- $bbad = append $bbad "role is not a non-empty string" hub}}
+  {{hub- else if or (contains "{{" $rv) (contains "}}" $rv) hub}}
+  {{hub- $bbad = append $bbad "role contains template delimiters" hub}}
+  {{hub- else if not (hasKey $rolesRaw $rv) hub}}
+  {{hub- $bbad = append $bbad (printf "role %s is not declared in roles of namespace %s" ($rv | toJson) $ns) hub}}
+  {{hub- else if hasKey $roleBad $rv hub}}
+  {{hub- $bbad = append $bbad (printf "role %s has errors" $rv) hub}}
+  {{hub- else hub}}
+  {{hub- $role = $rv hub}}
+  {{hub- end hub}}
+  {{hub- $subj := index $b "serviceAccounts" hub}}
+  {{hub- if not (kindIs "map" $subj) hub}}
+  {{hub- $bbad = append $bbad "serviceAccounts is not a map of <namespace>/<serviceaccount> to true or false" hub}}
+  {{hub- else hub}}
+  {{hub- range $ref := keys $subj | sortAlpha hub}}
+  {{hub- $on := printf "%v" (index $subj $ref) hub}}
+  {{hub- $parts := splitList "/" $ref hub}}
+  {{hub- if or (contains "{{" $ref) (contains "}}" $ref) (contains "{{" $on) (contains "}}" $on) hub}}
+  {{hub- $bbad = append $bbad (printf "serviceAccounts.%s contains template delimiters" ($ref | toJson)) hub}}
+  {{hub- else if not (has $on (list "true" "false")) hub}}
+  {{hub- $bbad = append $bbad (printf "serviceAccounts.%s is not true or false" ($ref | toJson)) hub}}
+  {{hub- else if not (and (eq (len $parts) 2) (le (len (index $parts 0)) 63) (regexMatch $dns1123 (index $parts 0)) (le (len (index $parts 1)) 253) (regexMatch $subdomain (index $parts 1))) hub}}
+  {{hub- $bbad = append $bbad (printf "serviceAccounts.%s is not <namespace>/<serviceaccount>" ($ref | toJson)) hub}}
+  {{hub- else if and (eq $on "true") (regexMatch $platformNs (index $parts 0)) hub}}
+  {{hub- $bbad = append $bbad (printf "serviceAccounts.%s: %s is a platform namespace, where namespace-rbac never grants access" $ref (index $parts 0)) hub}}
+  {{hub- else if and (eq $on "true") (hasKey $clusters (index $parts 0)) hub}}
+  {{hub- $bbad = append $bbad (printf "serviceAccounts.%s: %s is the namespace of a ManagedCluster on the hub, where namespace-rbac never grants access" $ref (index $parts 0)) hub}}
+  {{hub- else if and (eq $on "true") (eq (index $parts 1) "default") hub}}
+  {{hub- $bbad = append $bbad (printf "serviceAccounts.%s: the default ServiceAccount runs every pod that names none, so it is never a subject" $ref) hub}}
+  {{hub- else if and (eq $on "true") (hasKey $tokSAs $ref) (or (eq $kind "ClusterRole") (not (hasKey $minter (printf "%s|%v" $ns $rv)))) hub}}
+  {{hub- $bbad = append $bbad (printf "serviceAccounts.%s has a tokenSecret, so it can only be bound to a minter-only Role, and %s%s is not one" $ref (ternary "ClusterRole " "" (eq $kind "ClusterRole")) ($rv | toJson)) hub}}
+  {{hub- else if and (eq $on "true") (eq $kind "ClusterRole") $reachGrew hub}}
+  {{hub- $bbad = append $bbad (printf "serviceAccounts.%s: token reachability did not converge within 6 rounds, so no ClusterRole is bound (fail closed)" $ref) hub}}
+  {{hub- else if and (eq $on "true") (eq $kind "ClusterRole") (or (hasKey $reach $ref) (hasKey $reach (printf "%s/*" (index $parts 0))) (hasKey $reach "*")) hub}}
+  {{hub- $bbad = append $bbad (printf "serviceAccounts.%s is never bound to a ClusterRole: whoever holds the long-lived token of %s can act as it" $ref (join ", " (concat (index $reach $ref | default list) (index $reach (printf "%s/*" (index $parts 0)) | default list) (index $reach "*" | default list) | uniq))) hub}}
+  {{hub- else if eq $on "true" hub}}
+  {{hub- $subjects = append $subjects (dict "namespace" (index $parts 0) "name" (index $parts 1)) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $bbad hub}}
+  {{hub- $_ := set $declared (printf "RoleBinding|%s|%s" $ns $bn) true hub}}
+  {{hub- range $m := $bbad hub}}{{hub- $bad = append $bad (printf "roleBindings.%s: %s" ($bn | toJson) $m) hub}}{{hub- end hub}}
+  {{hub- else if $subjects hub}}
+  {{hub- $_ := set $declared (printf "RoleBinding|%s|%s" $ns $bn) true hub}}
+  {{hub- $bindings = append $bindings (dict "name" $bn "kind" $kind "role" $role "subjects" $subjects "minter" (and (eq $kind "Role") (hasKey $minter (printf "%s|%s" $ns $role)))) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $entries = append $entries (dict "ns" $ns "key" $key "sas" $sas "tokens" $tokens "roles" $roles "bindings" $bindings) hub}}
+  {{hub- end hub}}
+  {{hub- if or $nbad $bad hub}}{{hub- $_ := set $errs $key (concat $nbad $bad) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{- $hub := {{hub dict "reach" $reach "reachGrew" $reachGrew "declEdges" $declEdges "entries" $entries "errs" $errs "held" $held "declared" $declared "sweep" $sweep "exKey" $exKey "workloads" $workloads | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $status := $hub.errs }}
+  {{- $exceptions := list }}
+  {{- $tokCache := dict }}
+  {{- $clusterRoleNames := list "edit" "view" }}
+  {{- $renderedMinters := dict }}
+  {{- $pending := list }}
+  {{- $liveReach := dict }}
+  {{- range $k, $v := $hub.reach }}{{- $_ := set $liveReach $k $v }}{{- end }}
+  {{- range $sec := (lookup "v1" "Secret" "" "" "autoshift.io/managed-by=namespace-rbac").items | default list }}
+  {{- $hn := printf "%v" (index (dig "metadata" "annotations" dict $sec) "kubernetes.io/service-account.name" | default "") }}
+  {{- if and $hn (eq (printf "%v" (dig "type" "" $sec)) "kubernetes.io/service-account-token") }}
+  {{- $h := printf "%v/%s" (dig "metadata" "namespace" "" $sec) $hn }}
+  {{- $_ := set $liveReach $h (concat (index $liveReach $h | default list) (list $h) | uniq) }}
+  {{- end }}
+  {{- end }}
+  {{- $liveGrew := false }}
+  {{- $edges := list }}
+  {{- $crBinds := list }}
+  {{- $liveRBs := list }}
+  {{- $liveCRBs := list }}
+  {{- if $liveReach }}
+  {{- $liveRBs = (lookup "rbac.authorization.k8s.io/v1" "RoleBinding" "" "").items | default list }}
+  {{- $liveCRBs = (lookup "rbac.authorization.k8s.io/v1" "ClusterRoleBinding" "" "").items | default list }}
+  {{- $ruleCache := dict }}
+  {{- range $kb := concat $liveRBs $liveCRBs }}
+  {{- $rbNs := printf "%v" (dig "metadata" "namespace" "" $kb) }}
+  {{- $subs := list }}
+  {{- range $ls := (index $kb "subjects" | default list) }}
+  {{- $sk := printf "%v" (index $ls "kind" | default "") }}
+  {{- $sn := printf "%v" (index $ls "name" | default "") }}
+  {{- $sp := splitList ":" $sn }}
+  {{- if eq $sk "ServiceAccount" }}{{- $subs = append $subs (dict "label" (printf "ServiceAccount %v/%s" (index $ls "namespace" | default $rbNs) $sn) "ref" (printf "%v/%s" (index $ls "namespace" | default $rbNs) $sn) "gns" "" "gall" false) }}
+  {{- else if and (eq $sk "User") (eq (len $sp) 4) (eq (index $sp 0) "system") (eq (index $sp 1) "serviceaccount") }}{{- $subs = append $subs (dict "label" (printf "User %s/%s" (index $sp 2) (index $sp 3)) "ref" (printf "%s/%s" (index $sp 2) (index $sp 3)) "gns" "" "gall" false) }}
+  {{- else if and (eq $sk "Group") (eq $sn "system:serviceaccounts") }}{{- $subs = append $subs (dict "label" (printf "Group %s" $sn) "ref" "" "gns" "" "gall" true) }}
+  {{- else if and (eq $sk "Group") (eq (len $sp) 3) (eq (index $sp 0) "system") (eq (index $sp 1) "serviceaccounts") }}{{- $subs = append $subs (dict "label" (printf "Group %s" $sn) "ref" "" "gns" (index $sp 2) "gall" false) }}
+  {{- end }}
+  {{- end }}
+  {{- if $subs }}
+  {{- $rk := printf "%v" (dig "roleRef" "kind" "" $kb) }}
+  {{- $rn := printf "%v" (dig "roleRef" "name" "" $kb) }}
+  {{- $bname := ternary (printf "RoleBinding %s/%v" $rbNs (dig "metadata" "name" "" $kb)) (printf "ClusterRoleBinding %v" (dig "metadata" "name" "" $kb)) (ne $rbNs "") }}
+  {{- if and (eq $rk "ClusterRole") (has $rn $clusterRoleNames) }}{{- $crBinds = append $crBinds (dict "name" $bname "role" $rn "subs" $subs) }}{{- end }}
+  {{- $ck := printf "%s|%s|%s" $rk (ternary $rbNs "" (eq $rk "Role")) $rn }}
+  {{- if not (hasKey $ruleCache $ck) }}
+  {{- if eq $rk "Role" }}{{- $_ := set $ruleCache $ck (index (lookup "rbac.authorization.k8s.io/v1" "Role" $rbNs $rn) "rules" | default list) }}{{- else }}{{- $_ := set $ruleCache $ck (index (lookup "rbac.authorization.k8s.io/v1" "ClusterRole" "" $rn) "rules" | default list) }}{{- end }}
+  {{- end }}
+  {{- $targets := list }}
+  {{- $all := false }}
+  {{- range $rule := index $ruleCache $ck }}
+  {{- $rs := list }}{{- range $x := (index $rule "resources" | default list) }}{{- $rs = append $rs (lower (printf "%v" $x)) }}{{- end }}
+  {{- $vs := list }}{{- range $x := (index $rule "verbs" | default list) }}{{- $vs = append $vs (lower (printf "%v" $x)) }}{{- end }}
+  {{- $any := has "*" $vs }}
+  {{- $write := or $any (has "create" $vs) (has "update" $vs) (has "patch" $vs) }}
+  {{- $read := or $any (has "get" $vs) (has "list" $vs) (has "watch" $vs) }}
+  {{- $imp := or $any (has "impersonate" $vs) }}
+  {{- $bindEsc := or $any (has "bind" $vs) (has "escalate" $vs) }}
+  {{- range $x := $rs }}
+  {{- $wild := contains "*" $x }}
+  {{- if and $write (or (has $x $hub.workloads) (eq $x "secrets") $wild) }}{{- $all = true }}{{- end }}
+  {{- if and $read (or (eq $x "secrets") $wild) }}{{- $all = true }}{{- end }}
+  {{- if and (or $any (has "create" $vs) (has "get" $vs)) (has $x (list "pods/exec" "pods/attach")) }}{{- $all = true }}{{- end }}
+  {{- if and (or $any (has "patch" $vs) (has "update" $vs)) (eq $x "pods/ephemeralcontainers") }}{{- $all = true }}{{- end }}
+  {{- if and $bindEsc (or (has $x (list "roles" "clusterroles" "rolebindings" "clusterrolebindings")) $wild) }}{{- $all = true }}{{- end }}
+  {{- if and $imp (or (has $x (list "serviceaccounts" "users" "groups" "uids")) (hasPrefix "userextras" $x) $wild) }}{{- $all = true }}{{- end }}
+  {{- if and (eq $x "serviceaccounts/token") (or $any (has "create" $vs)) }}
+  {{- $rnm := index $rule "resourceNames" | default list }}
+  {{- if and $rnm $rbNs }}{{- range $n := $rnm }}{{- $targets = append $targets (printf "%s/%v" $rbNs $n) }}{{- end }}{{- else }}{{- $all = true }}{{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if $all }}{{- $targets = append $targets (ternary (printf "%s/*" $rbNs) "*" (ne $rbNs "")) }}{{- end }}
+  {{- if $targets }}{{- $edges = append $edges (dict "subs" $subs "targets" (uniq $targets)) }}{{- end }}
+  {{- end }}
+  {{- end }}
+  {{- range $ref, $tg := $hub.declEdges }}{{- $edges = append $edges (dict "subs" (list (dict "label" "" "ref" $ref "gns" "" "gall" false)) "targets" $tg) }}{{- end }}
+  {{- $liveDone := false }}
+  {{- range $round := until 6 }}
+  {{- if not $liveDone }}
+  {{- $sigBefore := 0 }}{{- range $k, $v := $liveReach }}{{- $sigBefore = add $sigBefore 1 (len $v) }}{{- end }}
+  {{- range $ed := $edges }}
+  {{- $by := list }}
+  {{- range $sub := $ed.subs }}
+  {{- if $sub.gall }}{{- range $k, $v := $liveReach }}{{- $by = concat $by $v }}{{- end }}
+  {{- else if $sub.gns }}{{- range $k, $v := $liveReach }}{{- if or (eq $k "*") (hasPrefix (printf "%s/" $sub.gns) $k) }}{{- $by = concat $by $v }}{{- end }}{{- end }}
+  {{- else }}{{- $by = concat $by (index $liveReach $sub.ref | default list) (index $liveReach (printf "%s/*" (first (splitList "/" $sub.ref))) | default list) (index $liveReach "*" | default list) }}
+  {{- end }}
+  {{- end }}
+  {{- if $by }}{{- range $x := $ed.targets }}{{- $_ := set $liveReach $x (concat (index $liveReach $x | default list) $by | uniq) }}{{- end }}{{- end }}
+  {{- end }}
+  {{- $sigAfter := 0 }}{{- range $k, $v := $liveReach }}{{- $sigAfter = add $sigAfter 1 (len $v) }}{{- end }}
+  {{- $liveGrew = ne $sigBefore $sigAfter }}
+  {{- $liveDone = not $liveGrew }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- range $e := $hub.entries }}
+  {{- if not (lookup "v1" "Namespace" "" $e.ns) }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "namespace %s does not exist, so nothing is created in it: namespace-rbac never creates namespaces" $e.ns)) }}
+  {{- else }}
+  {{- $foreignSA := dict }}
+  {{- range $sa := $e.sas }}
+  {{- $live := lookup "v1" "ServiceAccount" $e.ns $sa }}
+  {{- if and $live (ne (printf "%v" (index (dig "metadata" "labels" dict $live) "autoshift.io/managed-by" | default "")) "namespace-rbac") }}
+  {{- $_ := set $foreignSA $sa true }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "ServiceAccount %s/%s already exists and is not managed by namespace-rbac, so it is not changed" $e.ns $sa)) }}
+  {{- else }}
+  {{hub- if eq $want "enforce" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: {{ $sa | toJson }}
+        namespace: {{ $e.ns | toJson }}
+        labels:
+          autoshift.io/managed-by: namespace-rbac
+  {{hub- end hub}}
+  {{- end }}
+  {{- end }}
+  {{- range $tk := $e.tokens }}
+  {{- $liveSec := lookup "v1" "Secret" $e.ns $tk.secret }}
+  {{- $secLabels := dig "metadata" "labels" dict $liveSec }}
+  {{- $secFor := printf "%v" (index (dig "metadata" "annotations" dict $liveSec) "kubernetes.io/service-account.name" | default "") }}
+  {{- if hasKey $foreignSA $tk.sa }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "token Secret %s/%s is not created or changed: its ServiceAccount %s is not managed by namespace-rbac" $e.ns $tk.secret $tk.sa)) }}
+  {{- else if and $liveSec (ne (printf "%v" (index $secLabels "autoshift.io/managed-by" | default "")) "namespace-rbac") }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "Secret %s/%s already exists and is not managed by namespace-rbac, so it is not changed" $e.ns $tk.secret)) }}
+  {{- else if and $liveSec (or (ne (printf "%v" (dig "type" "" $liveSec)) "kubernetes.io/service-account-token") (ne $secFor $tk.sa)) }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "Secret %s/%s is managed by namespace-rbac but is not the token Secret of ServiceAccount %s, so it is not changed: delete it by hand" $e.ns $tk.secret $tk.sa)) }}
+  {{- else }}
+  {{- $pending = append $pending (dict "ns" $e.ns "key" $e.key "sa" $tk.sa "secret" $tk.secret) }}
+  {{- end }}
+  {{- end }}
+  {{- $heldRoles := dict }}
+  {{- range $r := $e.roles }}
+  {{- $live := lookup "rbac.authorization.k8s.io/v1" "Role" $e.ns $r.name }}
+  {{- $tokenSecrets := list }}
+  {{- range $n := $r.secretNames }}
+  {{- if has (printf "%v" (dig "type" "" (lookup "v1" "Secret" $e.ns $n))) (list "kubernetes.io/service-account-token" "kubernetes.io/dockercfg") }}{{- $tokenSecrets = append $tokenSecrets $n }}{{- end }}
+  {{- end }}
+  {{- $foreignSAs := list }}
+  {{- range $n := $r.tokenNames }}
+  {{- $sa := lookup "v1" "ServiceAccount" $e.ns $n }}
+  {{- if and $sa (ne (printf "%v" (index (dig "metadata" "labels" dict $sa) "autoshift.io/managed-by" | default "")) "namespace-rbac") }}{{- $foreignSAs = append $foreignSAs $n }}{{- end }}
+  {{- end }}
+  {{- $roleHolders := list }}
+  {{- if not $r.minter }}
+  {{- range $lrb := (lookup "rbac.authorization.k8s.io/v1" "RoleBinding" $e.ns "").items | default list }}
+  {{- if and (eq (printf "%v" (dig "roleRef" "kind" "" $lrb)) "Role") (eq (printf "%v" (dig "roleRef" "name" "" $lrb)) $r.name) }}
+  {{- range $ls := (index $lrb "subjects" | default list) }}
+  {{- $lsKind := printf "%v" (index $ls "kind" | default "") }}
+  {{- $lsName := printf "%v" (index $ls "name" | default "") }}
+  {{- $lsNs := "" }}
+  {{- if eq $lsKind "ServiceAccount" }}
+  {{- $lsNs = printf "%v" (index $ls "namespace" | default $e.ns) }}
+  {{- else if and (eq $lsKind "User") (hasPrefix "system:serviceaccount:" $lsName) (eq (len (splitList ":" $lsName)) 4) }}
+  {{- $lsNs = index (splitList ":" $lsName) 2 }}
+  {{- $lsName = index (splitList ":" $lsName) 3 }}
+  {{- end }}
+  {{- if $lsNs }}
+  {{- if not (hasKey $tokCache $lsNs) }}
+  {{- $holders := dict }}
+  {{- range $sec := (lookup "v1" "Secret" $lsNs "" "autoshift.io/managed-by=namespace-rbac").items | default list }}
+  {{- if eq (printf "%v" (dig "type" "" $sec)) "kubernetes.io/service-account-token" }}{{- $_ := set $holders (printf "%v" (index (dig "metadata" "annotations" dict $sec) "kubernetes.io/service-account.name" | default "")) true }}{{- end }}
+  {{- end }}
+  {{- $_ := set $tokCache $lsNs $holders }}
+  {{- end }}
+  {{- if hasKey (index $tokCache $lsNs) $lsName }}
+  {{- $roleHolders = append $roleHolders (printf "%s/%s (RoleBinding %s)" $lsNs $lsName (dig "metadata" "name" "" $lrb)) }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- $nsTokens := list }}
+  {{- if $r.workload }}
+  {{- if not (hasKey $tokCache $e.ns) }}
+  {{- $holders := dict }}
+  {{- range $sec := (lookup "v1" "Secret" $e.ns "" "autoshift.io/managed-by=namespace-rbac").items | default list }}
+  {{- if eq (printf "%v" (dig "type" "" $sec)) "kubernetes.io/service-account-token" }}{{- $_ := set $holders (printf "%v" (index (dig "metadata" "annotations" dict $sec) "kubernetes.io/service-account.name" | default "")) true }}{{- end }}
+  {{- end }}
+  {{- $_ := set $tokCache $e.ns $holders }}
+  {{- end }}
+  {{- $nsTokens = keys (index $tokCache $e.ns) | sortAlpha }}
+  {{- end }}
+  {{- if and $live (ne (printf "%v" (index (dig "metadata" "labels" dict $live) "autoshift.io/managed-by" | default "")) "namespace-rbac") }}
+  {{- $_ := set $heldRoles $r.name true }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "Role %s/%s already exists and is not managed by namespace-rbac, so it is not changed" $e.ns $r.name)) }}
+  {{- else if $nsTokens }}
+  {{- $_ := set $heldRoles $r.name true }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "Role %s/%s is not created or changed: it creates or changes workloads in a namespace that holds long-lived token Secrets of %s managed by namespace-rbac" $e.ns $r.name (join ", " $nsTokens))) }}
+  {{- else if $roleHolders }}
+  {{- $_ := set $heldRoles $r.name true }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "Role %s/%s is not created or changed: it is not minter-only, and it is bound to %s, which has a long-lived token Secret managed by namespace-rbac" $e.ns $r.name (join ", " (uniq $roleHolders)))) }}
+  {{- else if $tokenSecrets }}
+  {{- $_ := set $heldRoles $r.name true }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "Role %s/%s is not created or changed: secrets resourceNames %s name ServiceAccount token or dockercfg Secrets" $e.ns $r.name (join ", " $tokenSecrets))) }}
+  {{- else if $foreignSAs }}
+  {{- $_ := set $heldRoles $r.name true }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "Role %s/%s is not created or changed: serviceaccounts/token resourceNames %s name ServiceAccounts that are not managed by namespace-rbac" $e.ns $r.name (join ", " $foreignSAs))) }}
+  {{- else }}
+  {{- if $r.minter }}{{- $_ := set $renderedMinters (printf "%s|%s" $e.ns $r.name) true }}{{- end }}
+  {{hub- if eq $want "enforce" hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: {{ $r.name | toJson }}
+        namespace: {{ $e.ns | toJson }}
+        labels:
+          autoshift.io/managed-by: namespace-rbac
+      rules: {{ $r.rules | toJson }}
+  {{hub- end hub}}
+  {{- end }}
+  {{- end }}
+  {{- range $b := $e.bindings }}
+  {{- $live := lookup "rbac.authorization.k8s.io/v1" "RoleBinding" $e.ns $b.name }}
+  {{- $kept := list }}
+  {{- range $s := $b.subjects }}
+  {{- if lookup "v1" "Namespace" "" $s.namespace }}
+  {{- $kept = append $kept $s }}
+  {{- else }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s: subject %s/%s is left out, because namespace %s does not exist" $e.ns $b.name $s.namespace $s.name $s.namespace)) }}
+  {{- end }}
+  {{- end }}
+  {{- $tokenHolders := list }}
+  {{- if not $b.minter }}
+  {{- range $s := $kept }}
+  {{- if not (hasKey $tokCache $s.namespace) }}
+  {{- $holders := dict }}
+  {{- range $sec := (lookup "v1" "Secret" $s.namespace "" "autoshift.io/managed-by=namespace-rbac").items | default list }}
+  {{- if eq (printf "%v" (dig "type" "" $sec)) "kubernetes.io/service-account-token" }}{{- $_ := set $holders (printf "%v" (index (dig "metadata" "annotations" dict $sec) "kubernetes.io/service-account.name" | default "")) true }}{{- end }}
+  {{- end }}
+  {{- $_ := set $tokCache $s.namespace $holders }}
+  {{- end }}
+  {{- if hasKey (index $tokCache $s.namespace) $s.name }}
+  {{- $tokenHolders = append $tokenHolders (printf "%s/%s" $s.namespace $s.name) }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- $editTokens := list }}
+  {{- if and (eq $b.kind "ClusterRole") (eq $b.role "edit") }}
+  {{- if not (hasKey $tokCache $e.ns) }}
+  {{- $holders := dict }}
+  {{- range $sec := (lookup "v1" "Secret" $e.ns "" "autoshift.io/managed-by=namespace-rbac").items | default list }}
+  {{- if eq (printf "%v" (dig "type" "" $sec)) "kubernetes.io/service-account-token" }}{{- $_ := set $holders (printf "%v" (index (dig "metadata" "annotations" dict $sec) "kubernetes.io/service-account.name" | default "")) true }}{{- end }}
+  {{- end }}
+  {{- $_ := set $tokCache $e.ns $holders }}
+  {{- end }}
+  {{- $editTokens = keys (index $tokCache $e.ns) | sortAlpha }}
+  {{- end }}
+  {{- $reached := list }}
+  {{- if and (eq $b.kind "ClusterRole") (or $liveGrew $hub.reachGrew) }}
+  {{- $reached = list "every subject, because token reachability did not converge within 6 rounds (fail closed)" }}
+  {{- else if eq $b.kind "ClusterRole" }}
+  {{- range $s := $kept }}
+  {{- $by := concat (index $liveReach (printf "%s/%s" $s.namespace $s.name) | default list) (index $liveReach (printf "%s/*" $s.namespace) | default list) (index $liveReach "*" | default list) }}
+  {{- if $by }}{{- $reached = append $reached (printf "%s/%s (by %s)" $s.namespace $s.name (join ", " (uniq $by))) }}{{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if and (eq $b.kind "Role") (hasKey $heldRoles $b.role) }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s is not changed: its Role %s is held" $e.ns $b.name $b.role)) }}
+  {{- else if $tokenHolders }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s is not created or changed: subject %s has a long-lived token Secret managed by namespace-rbac, and %s %s is not minter-only" $e.ns $b.name (join ", " (uniq $tokenHolders)) $b.kind $b.role)) }}
+  {{- else if $reached }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s is not created or changed: it binds ClusterRole %s to %s, which whoever holds a long-lived token Secret managed by namespace-rbac can act as" $e.ns $b.name $b.role (join ", " $reached))) }}
+  {{- else if $editTokens }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s is not created or changed: it binds ClusterRole edit in a namespace that holds long-lived token Secrets of %s managed by namespace-rbac" $e.ns $b.name (join ", " $editTokens))) }}
+  {{- else if not $kept }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s is not created or changed: no subject namespace exists" $e.ns $b.name)) }}
+  {{- else if and $live (ne (printf "%v" (index (dig "metadata" "labels" dict $live) "autoshift.io/managed-by" | default "")) "namespace-rbac") }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s already exists and is not managed by namespace-rbac, so it is not changed" $e.ns $b.name)) }}
+  {{- else }}
+  {{hub- if eq $want "enforce" hub}}
+  - complianceType: mustonlyhave
+    recreateOption: IfRequired
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: {{ $b.name | toJson }}
+        namespace: {{ $e.ns | toJson }}
+        labels:
+          autoshift.io/managed-by: namespace-rbac
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: {{ $b.kind | toJson }}
+        name: {{ $b.role | toJson }}
+      subjects:
+        {{- range $s := $kept }}
+        - kind: ServiceAccount
+          name: {{ $s.name | toJson }}
+          namespace: {{ $s.namespace | toJson }}
+        {{- end }}
+  {{hub- end hub}}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if and $pending (not $liveRBs) (not $liveCRBs) }}
+  {{- $liveRBs = (lookup "rbac.authorization.k8s.io/v1" "RoleBinding" "" "").items | default list }}
+  {{- $liveCRBs = (lookup "rbac.authorization.k8s.io/v1" "ClusterRoleBinding" "" "").items | default list }}
+  {{- end }}
+  {{- range $tk := $pending }}
+  {{- $wide := list }}
+  {{- $uName := printf "system:serviceaccount:%s:%s" $tk.ns $tk.sa }}
+  {{- $tkRef := printf "%s/%s" $tk.ns $tk.sa }}
+  {{- if $liveGrew }}
+  {{- $wide = append $wide "token reachability did not converge within 6 rounds (fail closed)" }}
+  {{- end }}
+  {{- range $cb := $crBinds }}
+  {{- range $sub := $cb.subs }}
+  {{- $by := list }}
+  {{- if $sub.gall }}{{- range $k, $v := $liveReach }}{{- $by = concat $by $v }}{{- end }}
+  {{- else if $sub.gns }}{{- range $k, $v := $liveReach }}{{- if or (eq $k "*") (hasPrefix (printf "%s/" $sub.gns) $k) }}{{- $by = concat $by $v }}{{- end }}{{- end }}
+  {{- else }}{{- $by = concat $by (index $liveReach $sub.ref | default list) (index $liveReach (printf "%s/*" (first (splitList "/" $sub.ref))) | default list) (index $liveReach "*" | default list) }}
+  {{- end }}
+  {{- if and (has $tkRef $by) (ne $sub.ref $tkRef) }}
+  {{- $wide = append $wide (printf "%s binds ClusterRole %s to %s, which the ServiceAccount can act as" $cb.name $cb.role $sub.label) }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- range $lrb := $liveRBs }}
+  {{- $rbNs := printf "%v" (dig "metadata" "namespace" "" $lrb) }}
+  {{- if and (eq $rbNs $tk.ns) (eq (printf "%v" (dig "roleRef" "kind" "" $lrb)) "ClusterRole") (eq (printf "%v" (dig "roleRef" "name" "" $lrb)) "edit") (eq (printf "%v" (index (dig "metadata" "labels" dict $lrb) "autoshift.io/managed-by" | default "")) "namespace-rbac") }}
+  {{- $wide = append $wide (printf "RoleBinding %s/%v binds ClusterRole edit in the namespace of the Secret" $rbNs (dig "metadata" "name" "" $lrb)) }}
+  {{- end }}
+  {{- range $ls := (index $lrb "subjects" | default list) }}
+  {{- $sk := printf "%v" (index $ls "kind" | default "") }}
+  {{- $sn := printf "%v" (index $ls "name" | default "") }}
+  {{- if or (and (eq $sk "ServiceAccount") (eq $sn $tk.sa) (eq (printf "%v" (index $ls "namespace" | default $rbNs)) $tk.ns)) (and (eq $sk "User") (eq $sn $uName)) }}
+  {{- if not (and (eq (printf "%v" (dig "roleRef" "kind" "" $lrb)) "Role") (hasKey $renderedMinters (printf "%s|%v" $rbNs (dig "roleRef" "name" "" $lrb)))) }}
+  {{- $wide = append $wide (printf "RoleBinding %s/%v (%v %v)" $rbNs (dig "metadata" "name" "" $lrb) (dig "roleRef" "kind" "" $lrb) (dig "roleRef" "name" "" $lrb)) }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- range $crb := $liveCRBs }}
+  {{- range $ls := (index $crb "subjects" | default list) }}
+  {{- $sk := printf "%v" (index $ls "kind" | default "") }}
+  {{- $sn := printf "%v" (index $ls "name" | default "") }}
+  {{- if or (and (eq $sk "ServiceAccount") (eq $sn $tk.sa) (eq (printf "%v" (index $ls "namespace" | default "")) $tk.ns)) (and (eq $sk "User") (eq $sn $uName)) }}
+  {{- $wide = append $wide (printf "ClusterRoleBinding %v (ClusterRole %v)" (dig "metadata" "name" "" $crb) (dig "roleRef" "name" "" $crb)) }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- range $lr := (lookup "rbac.authorization.k8s.io/v1" "Role" $tk.ns "").items | default list }}
+  {{- range $rule := (index $lr "rules" | default list) }}
+  {{- $rr := list }}{{- range $x := (index $rule "resources" | default list) }}{{- $rr = append $rr (lower (printf "%v" $x)) }}{{- end }}
+  {{- $rv := list }}{{- range $x := (index $rule "verbs" | default list) }}{{- $rv = append $rv (lower (printf "%v" $x)) }}{{- end }}
+  {{- $rnn := list }}{{- range $x := (index $rule "resourceNames" | default list) }}{{- $rnn = append $rnn (printf "%v" $x) }}{{- end }}
+  {{- $wv := false }}{{- range $x := $rv }}{{- if has $x (list "create" "update" "patch" "*") }}{{- $wv = true }}{{- end }}{{- end }}
+  {{- range $x := $rr }}
+  {{- if and $wv (or (has $x $hub.workloads) (contains "*" $x)) }}{{- $wide = append $wide (printf "Role %s/%v creates or changes %s" $tk.ns (dig "metadata" "name" "" $lr) $x) }}{{- end }}
+  {{- if and (or (eq $x "secrets") (eq $x "*")) (or (not $rnn) (has $tk.secret $rnn)) }}{{- $wide = append $wide (printf "Role %s/%v can read Secret %s" $tk.ns (dig "metadata" "name" "" $lr) $tk.secret) }}{{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if $wide }}
+  {{- $_ := set $status $tk.key (append (index $status $tk.key | default list) (printf "token Secret %s/%s is not created or changed: live objects widen ServiceAccount %s beyond a minter-only Role that namespace-rbac renders: %s" $tk.ns $tk.secret $tk.sa (join ", " (uniq $wide)))) }}
+  {{- else }}
+  {{- $exceptions = append $exceptions (printf "Secret %s/%s holds a long-lived token of the minter-only ServiceAccount %s" $tk.ns $tk.secret $tk.sa) }}
+  {{hub- if eq $want "enforce" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      type: kubernetes.io/service-account-token
+      metadata:
+        name: {{ $tk.secret | toJson }}
+        namespace: {{ $tk.ns | toJson }}
+        labels:
+          autoshift.io/managed-by: namespace-rbac
+        annotations:
+          kubernetes.io/service-account.name: {{ $tk.sa | toJson }}
+  {{hub- end hub}}
+  {{- end }}
+  {{- end }}
+  {{hub- if eq $want "inform" hub}}
+  {{- if $hub.sweep }}
+  {{- range $kind := list (dict "apiVersion" "v1" "kind" "ServiceAccount") (dict "apiVersion" "v1" "kind" "Secret") (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "Role") (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "RoleBinding") }}
+  {{- range $obj := (lookup $kind.apiVersion $kind.kind "" "" "autoshift.io/managed-by=namespace-rbac").items | default list }}
+  {{- $objNs := printf "%v" (dig "metadata" "namespace" "" $obj) }}
+  {{- $objName := printf "%v" (dig "metadata" "name" "" $obj) }}
+  {{- if not (or (hasKey $hub.held $objNs) (hasKey $hub.declared (printf "%s|%s|%s" $kind.kind $objNs $objName))) }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: {{ $kind.apiVersion | toJson }}
+      kind: {{ $kind.kind | toJson }}
+      metadata:
+        name: {{ $objName | toJson }}
+        namespace: {{ $objNs | toJson }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- if eq $want "enforce" hub}}
+  {{- if or $status $exceptions }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: namespace-rbac-status
+        namespace: open-cluster-management-agent-addon
+        labels:
+          autoshift.io/managed-by: namespace-rbac
+      data:
+        {{- range $k, $msgs := $status }}
+        {{ $k | toJson }}: {{ join "; " $msgs | toJson }}
+        {{- end }}
+        {{- if $exceptions }}
+        {{ $hub.exKey | toJson }}: {{ printf "approved exception, informational: %s" (join "; " $exceptions) | toJson }}
+        {{- end }}
+  {{- else }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: namespace-rbac-status
+        namespace: open-cluster-management-agent-addon
+  {{- end }}
+  {{hub- else hub}}
+  {{- if or $status (not $exceptions) }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: namespace-rbac-status
+        namespace: open-cluster-management-agent-addon
+  {{- else }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: namespace-rbac-status
+        namespace: open-cluster-management-agent-addon
+  {{- end }}
+  {{hub- end hub}}
