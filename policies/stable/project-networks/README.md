@@ -18,7 +18,7 @@ NodeNetworkConfigurationPolicy `spec.desiredState.ovn.bridge-mappings` entry wit
 | `policy-project-networks` | `${REMEDIATION}`: enforce, or inform under `autoshift.dryRun` | Applies each declared ClusterUserDefinedNetwork from `manifests/project-networks.yaml` that is absent, or owned with an unchanged `spec.network` |
 | `policy-project-networks-test` | Always inform | From `test/project-networks.yaml`: reports held entries, a missing CRD, and owned networks that are no longer declared. It never changes anything |
 
-Both files are the same template and differ only in the `$want` line, which a test enforces. The
+Both files are the same template and differ only in the `$want` line. The
 inform-only checks are a policy of their own, as the [developer
 guide](../../../docs/developer-guide.md#gating-on-cluster-state) requires: a `remediationAction` on
 the root of one Policy overrides all of its children, so a check bundled into the enforcing Policy

@@ -795,7 +795,7 @@ same template, and all sixteen use the same Placement and one PlacementBinding,
 | `policy-project-onboarding-<shard>` | `policy-project-onboarding-<shard>-enforce` | `${REMEDIATION}`: enforce, or inform under `autoshift.dryRun` | `manifests/projects.yaml`: the projects of the shard in effective mode `enforce`, the prune sweep with pruning on, namespace deletion, the status ConfigMap |
 | `policy-project-onboarding-<shard>-test` | `policy-project-onboarding-<shard>-test` | Always inform | `test/projects.yaml`: the projects of the shard in effective mode `inform`, stale objects and dropped labels with pruning off, and the assertion that the status ConfigMap is absent. It never changes anything |
 
-The two `projects.yaml` files differ only in the `$want` line, and a test checks that. Each renders
+The two `projects.yaml` files differ only in the `$want` line; keep them in sync. Each renders
 the projects of its shard whose effective mode matches. Throughout this README, the enforce
 ConfigurationPolicy of a shard is the one in `policy-project-onboarding-<shard>`, and the inform
 ConfigurationPolicy is the one in `policy-project-onboarding-<shard>-test`.
@@ -835,9 +835,9 @@ python3 -c 'import sys, zlib; print(zlib.adler32(sys.argv[1].encode()) % 8)' pay
 All sixteen Policies render the same template. Each one reads its shard number from its own name
 (`.PolicyMetadata.name`). A Policy rendering `manifests/` whose name is not
 `policy-project-onboarding-0` to `-7`, or one rendering `test/` whose name is not
-`policy-project-onboarding-0-test` to `-7-test`, fails hub template resolution. A test checks that
-`policy-generator-config.yaml` lists exactly the sixteen Policies with the same manifests, and that
-the template agrees on the shard count.
+`policy-project-onboarding-0-test` to `-7-test`, fails hub template resolution. So
+`policy-generator-config.yaml` must list exactly the sixteen Policies with the same manifests, and
+the template must agree on the shard count.
 
 Every shard reads the whole configuration, so the checks across projects see every project: an
 egress IP or a namespace that two projects in different shards declare is reported on each of
