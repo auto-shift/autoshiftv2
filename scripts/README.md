@@ -395,6 +395,7 @@ This script automatically:
 - Resolves operator dependencies recursively (e.g., `odf-operator` → `odf-dependencies` → sub-operators)
 - Checks every requested package and channel against the Red Hat, certified and community catalogs, and fails on one that does not exist
 - Adds `defaultChannel` for each operator package (required by oc-mirror)
+- Mirrors the CSVs that values files pin, not only the channel head (see [Version pins](#version-pins))
 - Deduplicates cross-catalog dependencies (e.g., certified operators won't be added to the redhat catalog)
 - Generates a complete `ImageSetConfiguration` with `apiVersion: mirror.openshift.io/v2alpha1`
 
@@ -439,10 +440,44 @@ This script automatically:
 
 - **Pull Secret Auto-Detection**: Automatically finds `pull-secret.json` or `pull-secret.txt` in the repo root. Can also be set via the `REGISTRY_AUTH_FILE` environment variable.
 
+### Version pins
+
+Without a version range, oc-mirror copies only the head of each channel. A cluster that pins an
+operator to an older CSV then has nothing to install from the mirror. The generator reads the same
+pins the operator policies install:
+
+- `config.<operator>.versions`, the allowed CSVs, together with `config.<operator>.startingCSV`
+- otherwise the `<operator>-version` label
+
+`<operator>` is the label base, as in `<operator>-subscription-name`. As in the policies, a
+`config.<operator>.versions` list overrides the label in the same clusterset or cluster entry.
+
+Each pinned channel gets `minVersion`, the lowest version pinned in that channel across every values
+file given, read from the bundle in the catalog. No `maxVersion` is set, so oc-mirror copies every
+bundle from that version to the channel head: the pinned CSVs, the upgrades between them, and the head
+that clusters tracking the channel install. A channel nothing pins is unchanged.
+
+```yaml
+    - name: quay-operator
+      defaultChannel: stable-3.18
+      channels:
+      - name: stable-3.18
+        minVersion: 3.18.0  # pinned: quay-operator.v3.18.0, quay-operator.v3.18.1; the channel head is kept
+```
+
+A pinned CSV that the requested channels do not carry fails generation, because no Subscription could
+install it. With `--all-operators` it is a warning and the pin is left out, as a package missing from
+the catalog is: the pins in the `_example*.yaml` files are examples and must not block a release. The
+release imageset still honors the ones that resolve, so the example values install as written.
+
+When the catalog is not cached, as with `--dependencies-file`, the version is read from the CSV name
+and applied to every requested channel, with a warning that it was not checked.
+
 ### Requirements
 
 - `oc` CLI installed (for catalog extraction)
 - `jq` installed (for JSON parsing)
+- `yq` v4, the Go implementation (for reading version pins)
 - Pull secret in the repo root (`pull-secret.json` or `pull-secret.txt`) or `REGISTRY_AUTH_FILE` env var
 - Operators must have `{operator}-subscription-name` labels in values files
 
