@@ -3,14 +3,48 @@ object-templates-raw: |
   {{- $machineset_role := "infra" }}
   {{- $zones_from_labels := list {{hub range $label, $labelvalue := .ManagedClusterLabels hub}}{{hub if $label | hasPrefix "autoshift.io/infra-nodes-zone" hub}}"{{hub $labelvalue hub}}"{{hub end hub}}{{hub end hub}} }}
   {{- $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName }}
-  {{- $worker_ms := dict }}
+  {{- /* Collect the zone of EVERY worker MachineSet, not just the last one.
+         create-infra-nodes-vmware.yaml clones one infra MachineSet per worker
+         MachineSet (one per vSphere failure domain), so removing only the last
+         worker's zone would strand the others. Zones from the infra-nodes-zone-N
+         labels are added too: the AWS create path uses them in place of the
+         worker zone. A mustnothave for a MachineSet that was never created is
+         already Compliant, so the union is safe on every provider.
+
+         Zone resolution per MachineSet works on every provider.
+         AWS nests the zone under providerSpec.value.placement.availabilityZone.
+         IBM Cloud and the other flat provider specs carry it as `zone`. vSphere
+         has no zone field at all - it encodes placement through workspace and
+         network - so the MachineSet name suffix is the only handle.
+
+         This file is shared across providers: its placement has no -provider
+         predicate, so it lands on every cluster regardless of platform. Reading
+         .placement.availabilityZone directly is therefore a nil dereference
+         anywhere that is not AWS, and the ConfigurationPolicy fails with a
+         template error rather than rendering nothing. dig throughout is what
+         turns that into an empty string.
+
+         CI does not currently catch this: every worker MachineSet in tools/testdata
+         is a hybrid carrying AWS and vSphere fields on the same object, so the
+         AWS path always resolves there. */ -}}
+  {{- $worker_zones := list }}
   {{- range (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items }}
     {{- if hasPrefix (printf "%s-worker" $infrastructure_id) .metadata.name }}
-      {{- $worker_ms = . }}
+      {{- $pv := (dig "spec" "template" "spec" "providerSpec" "value" (dict) .) }}
+      {{- $worker_zone := "" }}
+      {{- if (dig "zone" "" $pv) }}
+        {{- $worker_zone = (dig "zone" "" $pv) }}
+      {{- else if (dig "placement" "availabilityZone" "" $pv) }}
+        {{- $worker_zone = (dig "placement" "availabilityZone" "" $pv) }}
+      {{- else }}
+        {{- $worker_zone = trimPrefix (printf "%s-worker-" $infrastructure_id) .metadata.name }}
+      {{- end }}
+      {{- if ne $worker_zone "" }}
+        {{- $worker_zones = append $worker_zones $worker_zone }}
+      {{- end }}
     {{- end }}
   {{- end }}
-  {{- /* Generate the MachineSet for each zone as specified or default to worker az */ -}}
-  {{- range $zone := ternary (list $worker_ms.spec.template.spec.providerSpec.value.placement.availabilityZone ) $zones_from_labels (eq 0 (len $zones_from_labels)) }}
+  {{- range $zone := uniq (concat $zones_from_labels $worker_zones) }}
   - complianceType: mustnothave
     objectDefinition:
       apiVersion: machine.openshift.io/v1beta1
