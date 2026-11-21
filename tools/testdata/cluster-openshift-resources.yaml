@@ -372,3 +372,39 @@ metadata:
 spec:
   bucketName: stub-bucket
   storageClassName: openshift-storage.noobaa.io
+---
+# A GPU MachineSet that a MachineAutoscaler already manages: the controller marks it with the
+# autoscaling.openshift.io/machineautoscaler annotation, and its replicas (2) differ from the
+# autoshift.io/gpu-nodes label. Lets the gpu-nodes policies render their autoscaled path: the
+# MachineSet template leaves spec.replicas out, and the readiness check expects the MachineSet's
+# own replica count rather than the label's.
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineSet
+metadata:
+  name: test-cluster-abc12-gpu-us-east-2a
+  namespace: openshift-machine-api
+  annotations:
+    autoscaling.openshift.io/machineautoscaler: openshift-machine-api/test-cluster-abc12-gpu-us-east-2a
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-cluster: test-cluster-abc12
+      machine.openshift.io/cluster-api-machineset: test-cluster-abc12-gpu-us-east-2a
+  template:
+    metadata:
+      labels:
+        machine.openshift.io/cluster-api-cluster: test-cluster-abc12
+        machine.openshift.io/cluster-api-machineset: test-cluster-abc12-gpu-us-east-2a
+    spec:
+      providerSpec:
+        value:
+          apiVersion: machine.openshift.io/v1beta1
+          kind: AWSMachineProviderConfig
+          instanceType: g6.xlarge
+          placement:
+            availabilityZone: us-east-2a
+            region: us-east-2
+status:
+  replicas: 2
+  readyReplicas: 2
