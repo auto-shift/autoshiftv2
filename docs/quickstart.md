@@ -67,7 +67,8 @@ If your clone of AutoShiftv2 requires credentials or you want to add credentials
 > `multicluster-operators-hub-subscription`, which came up sooner; if you are following older notes, that is the change.
 
 > [!NOTE]
-> Both bootstrap charts run a short-lived Job that waits for CRDs. The charts resolve its CLI image
+> Both bootstrap charts run a short-lived Job that waits for CRDs; the ACM one also waits for the
+> operator's validating webhook to serve before it creates the MultiClusterHub. The charts resolve its CLI image
 > from the cluster's own `openshift/cli` ImageStream at install time. That entry is a digest against
 > the release payload, so an ImageDigestMirrorSet rewrites it in a disconnected deployment and it
 > needs no internal image registry. This matters on bare metal and wherever the registry
@@ -77,7 +78,7 @@ If your clone of AutoShiftv2 requires credentials or you want to add credentials
 > GitOps step):
 > ```console
 > helm upgrade --install advanced-cluster-management advanced-cluster-management \
->   --set image=<registry>/openshift4/ose-cli:latest
+>   --set image=<registry>/openshift4/ose-cli:latest --timeout 20m
 > helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml \
 >   --set image=<registry>/openshift4/ose-cli:latest
 > ```
@@ -85,8 +86,12 @@ If your clone of AutoShiftv2 requires credentials or you want to add credentials
 Using helm, install OpenShift Red Hat Advanced Cluster Management on the hub cluster:
 
 ```console
-helm upgrade --install advanced-cluster-management advanced-cluster-management
+helm upgrade --install advanced-cluster-management advanced-cluster-management --timeout 20m
 ```
+
+The 20-minute timeout leaves room for the hook that runs after the chart installs, which waits up to 15 minutes for
+the ACM operator's webhook before the MultiClusterHub is created. Helm's default of 5 minutes can fail
+the release before the hub exists.
 
 Test if Red Hat Advanced Cluster Management has installed correctly, this may take some time:
 
@@ -355,7 +360,7 @@ helm upgrade --install advanced-cluster-management ${OCI_REPO}/bootstrap/advance
     ${VERSION:+--version ${VERSION}} \
     --create-namespace \
     --wait \
-    --timeout 15m
+    --timeout 20m
 ```
 
 Wait for Red Hat Advanced Cluster Management to be ready:

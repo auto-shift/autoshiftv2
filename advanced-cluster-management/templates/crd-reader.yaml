@@ -33,4 +33,42 @@ subjects:
 - kind: ServiceAccount
   name: default
   namespace: {{ .Values.acm.namespace }}
+---
+# The CRD-wait Pod also reads the webhook Service's EndpointSlices, to wait until the webhook is
+# serving before the MultiClusterHub is created. Namespaced, and list only: that is all the
+# readiness check needs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: acm-webhook-endpoint-reader
+  namespace: {{ .Values.acm.namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: acm-webhook-endpoint-reader-binding
+  namespace: {{ .Values.acm.namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: acm-webhook-endpoint-reader
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: {{ .Values.acm.namespace }}
 {{- end }}
