@@ -2,36 +2,43 @@
 # gateway in openshift-devspaces. Without it the operator is installed but nobody can open a
 # workspace.
 #
-# The spec is a small base with config.dev-spaces.checluster from the cluster's rendered-config
-# merged over it (maps merge key by key and config wins; lists are replaced whole). Any CheCluster
-# spec field is accepted, for example devEnvironments.secondsOfInactivityBeforeIdling or
-# devEnvironments.maxNumberOfWorkspacesPerUser.
+# Read-modify-write, so that a list in config replaces the live list instead of being merged into
+# it (musthave would keep an old toleration next to a changed one and still report Compliant):
+#   1. start from the live CheCluster spec, which already holds the operator's defaults, or from a
+#      small base when the CheCluster does not exist yet;
+#   2. merge config.dev-spaces.checluster over it (maps merge key by key, config wins, lists are
+#      replaced whole);
+#   3. enforce the result with mustonlyhave.
+# The operator's defaults survive because they are already in the live spec. A key removed from
+# config is not removed from the cluster; remove it by hand.
 #
-# musthave, not mustonlyhave: the Dev Spaces operator fills in defaults across the CheCluster spec,
-# and owning the whole spec would fight them. A key removed from config therefore stays on the
-# cluster until it is removed by hand.
-#
-# fromConfigMap fails the policy when rendered-config is missing, rather than applying the base alone.
+# The live CheCluster is read on the managed cluster (plain template); the config comes from the
+# hub's rendered-config. fromConfigMap fails the policy when rendered-config is missing, rather than
+# applying the base alone.
 object-templates-raw: |
-  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" | fromYaml | default dict) hub}}
-  {{hub- $spec := (`
+  {{- $cfg := fromJson `{{hub (dig "dev-spaces" "checluster" (dict) (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" | fromYaml | default dict)) | toJson hub}}` }}
+  {{- $live := (lookup "org.eclipse.che/v2" "CheCluster" "openshift-devspaces" "devspaces") }}
+  {{- $spec := (dig "spec" (dict) $live) }}
+  {{- if not $spec }}
+  {{- $spec = (fromYaml `
   components:
     cheServer:
       debug: false
   devEnvironments:
-    startTimeoutSeconds: 300` | fromYaml) hub}}
-  {{hub- $spec = (mergeOverwrite $spec (dig "dev-spaces" "checluster" (dict) $cfg)) hub}}
+    startTimeoutSeconds: 300`) }}
+  {{- end }}
+  {{- $spec = (mergeOverwrite $spec $cfg) }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
       kind: Namespace
       metadata:
         name: openshift-devspaces
-  - complianceType: musthave
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: org.eclipse.che/v2
       kind: CheCluster
       metadata:
         name: devspaces
         namespace: openshift-devspaces
-      spec: {{hub $spec | toJson hub}}
+      spec: {{ $spec | toJson }}
