@@ -19,7 +19,6 @@ other project still applies. See [Status](#status).
 |---|---|---|
 | `autoshift.io/project-onboarding` | `'false'` | Set `'true'` to onboard the projects in `config.projectOnboarding.projects` |
 | `autoshift.io/project-onboarding-prune` | `'false'` | Set `'true'` to delete owned objects and remove catalog labels that are no longer declared. Any other value only reports them. See [Pruning](#pruning) |
-| `autoshift.io/project-onboarding-delete-namespaces` | `'false'` | Set `'true'`, together with the prune label, to delete the namespace of a removed project that onboarding created and that set `deleteOnRemoval: true`. Irreversible. See [Namespace deletion](#namespace-deletion) |
 
 Set them in a clusterset or cluster values file, without the `autoshift.io/` prefix. Never put them
 on a ManagedCluster by hand.
@@ -122,7 +121,6 @@ Project keys:
 | `network.rules.<rule>`, `network.defaultDeny` | Overrides the profile's rules by name and its default deny, or adds rules |
 | `egressIP` | Optional list of IPv4 or IPv6 addresses for the project's egress traffic. See [EgressIP](#egressip) |
 | `adopt` | `true` lets the project take over an existing namespace that no project owns. `true`, `false`, `'true'`, and `'false'` are accepted; any other value is reported and counts as `false` |
-| `deleteOnRemoval` | `true` lets onboarding delete the namespace once the project is removed, if onboarding created it. `true`, `false`, `'true'`, and `'false'` are accepted; any other value is reported and counts as `false`. Ignored, with a status note, with `adopt: true`. See [Namespace deletion](#namespace-deletion) |
 | `mode` | `enforce` or `inform`. Any other value, including `false` or `0` (YAML reads `mode: off` as `false`), is reported and treated as `inform` |
 | any other key | A placeholder value for templates, for example `team` or `costCenter` |
 
@@ -133,8 +131,7 @@ A lower level can therefore override one entry without restating the others.
 
 Every key of `config.projectOnboarding.defaults`. A `projectOnboarding.defaults` value of the wrong type stops every
 project, because it affects them all: the hub template fails and the live objects stay as they are.
-`adminNetworkPolicies`, `maxNamespaceDeletes`, and `namespaceDeleteGracePeriod` are the exceptions:
-the errors of the first stop only the admin tier, and those of the other two only namespace deletion.
+`adminNetworkPolicies` is the exception: its errors stop only the admin tier.
 
 | Key | Type | Default | Example | Invalid input |
 |---|---|---|---|---|
@@ -146,8 +143,6 @@ the errors of the first stop only the admin tier, and those of the other two onl
 | `sizes.<size>` | map of size name to `{quota, limitRange}` | `{}` | `small: {quota: {pods: '50'}}` | See [Quotas](#quotas) |
 | `networkProfiles.<profile>` | map of profile name to `{defaultDeny, rules}` | `{}` | `strict: {defaultDeny: {ingress: true, egress: true}}` | See [Network rules](#network-rules): the projects that select it are skipped |
 | `adminNetworkPolicies.<entry>` | map of entry name to `{appliesTo, direction, action, to or from}` | `{}`, no admin tier | see [Admin network policies](#admin-network-policies) | Reported under `projectOnboarding.defaults.adminNetworkPolicies` in the status of shard 0; the whole tier stops |
-| `maxNamespaceDeletes` | integer from 0 to 999,999,999 | no limit | `2` | Reported, and treated as `0`: no namespace is deleted. See [Circuit breaker](#circuit-breaker) |
-| `namespaceDeleteGracePeriod` | duration in hours, minutes, and seconds, at least `1h` | `24h` | `1h30m` | Shorter than `1h`: reported, `24h` is used. Any other value: reported, nothing is marked or deleted. See [Two phases](#two-phases) |
 
 Every key of `config.projectOnboarding.projects.<project>`. An invalid project is skipped and reported by name in the
 [status](#status), and every other project still applies.
@@ -167,7 +162,6 @@ Every key of `config.projectOnboarding.projects.<project>`. An invalid project i
 | `network.rules.<rule>` | map of rule name to a rule | the profile's rules | see [Network rules](#network-rules) | Project skipped and reported |
 | `egressIP` | list of IPv4 or IPv6 addresses | no EgressIP | `['198.51.100.50']` | See [EgressIP](#egressip): project skipped |
 | `adopt` | `true` or `false` | `false` | `true` | Any other value: reported, counts as `false` |
-| `deleteOnRemoval` | `true` or `false` | `false` | `true` | Any other value: reported, counts as `false`. With `adopt: true`: ignored, with a note. See [Namespace deletion](#namespace-deletion) |
 | `mode` | `enforce` or `inform` | `enforce`, or `inform` with `adopt: true` | `inform` | Any other value: reported, treated as `inform` |
 | any other key | string | not set | `team: payments` | A list, a map, or a blank value leaves the placeholder unresolved |
 
@@ -667,8 +661,7 @@ exactly one of these:
 
 `allProjects` and `labels` match on the `autoshift.io/project` label, not on the declared projects.
 They therefore also apply to the namespaces of `mode: inform` projects, and to the namespaces of
-removed projects that still carry the label, since such a Namespace is kept unless
-[Namespace deletion](#namespace-deletion) removes it.
+removed projects that still carry the label, since such a Namespace is kept.
 
 > [!WARNING]
 > `namespaceSelector: {}` selects every namespace on the cluster, including `openshift-*` and the
@@ -815,7 +808,7 @@ same template, and all sixteen use the same Placement and one PlacementBinding,
 
 | Policy | ConfigurationPolicy | Remediation | Renders |
 |---|---|---|---|
-| `policy-project-onboarding-<shard>` | `policy-project-onboarding-<shard>-enforce` | `${REMEDIATION}`: enforce, or inform under `autoshift.dryRun` | `manifests/projects.yaml`: the projects of the shard in effective mode `enforce`, the prune sweep with pruning on, namespace deletion, the status ConfigMap |
+| `policy-project-onboarding-<shard>` | `policy-project-onboarding-<shard>-enforce` | `${REMEDIATION}`: enforce, or inform under `autoshift.dryRun` | `manifests/projects.yaml`: the projects of the shard in effective mode `enforce`, the prune sweep with pruning on, the status ConfigMap |
 | `policy-project-onboarding-<shard>-test` | `policy-project-onboarding-<shard>-test` | Always inform | `test/projects.yaml`: every project of the shard, in either mode, asserted with the objects the shard Policy applies, the admin network policies (shard 0), dropped labels with pruning off, and the errors and stale objects of its own evaluation in `project-onboarding-test-report-<shard>`. It never deletes anything |
 
 The two `projects.yaml` files differ only in the `$want` line; keep them in sync. The enforce
@@ -922,8 +915,7 @@ follows it, and the inform ConfigurationPolicy is always inform, so every projec
 
 Deletion is opt-in. Set `project-onboarding-prune: 'true'` in a clusterset or cluster values file to
 let onboarding delete what it owns but no longer declares, and to remove dropped catalog labels. Any
-other value, including the default `'false'`, only reports them. Pruning never deletes a Namespace;
-only [Namespace deletion](#namespace-deletion), a separate opt-in, does.
+other value, including the default `'false'`, only reports them. Pruning never deletes a Namespace.
 
 Everything onboarding creates carries `autoshift.io/managed-by: project-onboarding`. On each
 evaluation the managed cluster lists the owned objects of the kinds in the sweep list (RoleBinding,
@@ -1001,435 +993,7 @@ the release without changing anything. The Namespace itself is never deleted, an
 that a current project declares is left alone.
 
 Removing a project leaves its namespace and workloads in place. With pruning on, only its owned
-objects are removed, unless [Namespace deletion](#namespace-deletion) applies to the namespace.
-
-## Namespace deletion
-
-> [!WARNING]
-> Deleting a namespace is irreversible. Every workload, Secret, ConfigMap, PersistentVolumeClaim,
-> and other object in it is deleted with it, including objects that project onboarding never
-> managed. Volumes whose reclaim policy is `Delete` lose their data. Keep the cluster label off
-> unless you need this, and back up anything you want to keep first.
-
-Onboarding deletes the namespace of a removed project only when all of these guards hold, and
-only in [two phases](#two-phases), never in the evaluation that first sees the project gone:
-
-1. The cluster opted in: `autoshift.io/project-onboarding-delete-namespaces: 'true'`. The default
-   is `'false'`.
-2. The project set `deleteOnRemoval: true` while it was still declared. The configuration is gone
-   once the project is removed, so onboarding records the setting on the namespace in the
-   annotation `autoshift.io/delete-on-removal` on every evaluation, and reads it from there.
-3. The namespace holds no storage. A namespace with any of these is kept, and the kinds and counts
-   are reported in the status as `namespace holds storage: <kind> <count>, ...`:
-   - PersistentVolumeClaims, in any phase, including `Pending` and terminating ones.
-   - VolumeSnapshots, which can outlive their claims and whose `deletionPolicy: Delete` removes the
-     snapshot data with them.
-   - ObjectBucketClaims, whose deletion deletes the bucket.
-   - DataVolumes, which exist before their claim does.
-   - VirtualMachines.
-
-   A kind other than PersistentVolumeClaim is looked up only when its CRD exists on the managed
-   cluster, so a cluster without OpenShift Data Foundation or OpenShift Virtualization is not
-   affected. A CRD that exists but does not serve the version onboarding reads
-   (`snapshot.storage.k8s.io/v1`, `objectbucket.io/v1alpha1`, `cdi.kubevirt.io/v1beta1`,
-   `kubevirt.io/v1`) keeps the namespace, reported as `<kind> (cannot list: ...)`. A lookup that
-   fails, for example because it is forbidden, fails the managed-cluster template, so nothing of the
-   shard is applied and nothing is deleted.
-4. Pruning is on: `autoshift.io/project-onboarding-prune: 'true'`.
-5. `config.projectOnboarding.projects` is a map with at least one project. An empty or missing `projects` never
-   deletes or marks a namespace, see [Two phases](#two-phases).
-6. The project has been undeclared for the whole grace period,
-   `config.projectOnboarding.defaults.namespaceDeleteGracePeriod`.
-7. The namespace has a creation record in the ConfigMap `project-onboarding-records-<shard>` that
-   agrees with its labels: the same project, the same `metadata.uid`, and `deleteOnRemoval`
-   `'true'`, see [Who can forge a record](#who-can-forge-a-record). The recorded mode must be
-   `enforce` on both.
-
-Only a namespace that onboarding created itself can be deleted. When onboarding creates a namespace,
-because it did not exist and the project does not set `adopt: true`, it stamps a creation record:
-
-| Key | Kind | Value |
-|---|---|---|
-| `autoshift.io/onboarding-created` | label | `'true'` |
-| `autoshift.io/onboarding-created-by` | annotation | the project name |
-| `autoshift.io/delete-on-removal` | annotation | the project's `deleteOnRemoval`, `'true'` or `'false'` |
-| `autoshift.io/onboarding-mode` | annotation | the project's mode, `enforce` or `inform` |
-| `autoshift.io/onboarding-created-at` | annotation | the time onboarding created it, in UTC, for example `2026-11-18T12:00:00Z` |
-| `autoshift.io/onboarding-created-uid` | annotation | its `metadata.uid`, stamped on a later evaluation, see below |
-
-The record is written only when the namespace is created. It is never added to a namespace that
-already existed, including every namespace onboarded before this feature, and never to an adopted
-one. While a project is declared, the record on its namespace is kept only if the label is `'true'`,
-`onboarding-created-by` names this project, and the project does not set `adopt: true`; otherwise
-every key of the record is removed. That holds whatever the project renders: the project's own
-Namespace object removes it in `mode: enforce`, and the enforce ConfigurationPolicy removes it in a
-write of the live labels and annotations for a project in `mode: inform`, an adopted project, and
-a project that is invalid, blocked, or not rendered because of the size limit. Under a dry run
-nothing is written, so a forged record stays until the dry run ends. No catalog label or
-annotation can set these keys, the pending mark, or `autoshift.io/project` and
-`autoshift.io/managed-by`: such an entry is reported and skipped.
-
-The record is bound to the namespace instance, so that it cannot outlive it:
-
-- The evaluation after the creation stamps `autoshift.io/onboarding-created-uid` with the live
-  `metadata.uid`, but only when the live `metadata.creationTimestamp` lies between 30 seconds
-  before and 10 minutes after `autoshift.io/onboarding-created-at`. The 30 seconds allow for a
-  small clock difference between the API server and the managed cluster's policy controller.
-- A stamp is never replaced.
-- The namespace can be deleted only while the stamp equals its live `metadata.uid`.
-
-A restore or migration that brings the namespace back, for example with OADP, Velero, or the
-Migration Toolkit for Containers, or by applying a saved copy of its YAML, restores its labels and
-annotations verbatim, but the API server gives it a new uid and a new creation time. Its stamp then
-does not match, or it is never stamped because it was created long after the recorded time, so it
-is never deleted. Once its project is removed it is reported as `it is not deleted: its creation
-record is not bound to this namespace (...)`. Delete such a namespace by hand if it should go, or
-remove its `autoshift.io/onboarding-created` label to keep it silently.
-
-### Who can forge a record
-
-The labels and annotations of a namespace are not proof of anything: anyone who can patch a
-Namespace can write them, and its uid is readable. The authoritative record is therefore kept
-outside the namespace. The enforce ConfigurationPolicy of each shard writes the ConfigMap
-`project-onboarding-records-<shard>` in `open-cluster-management-agent-addon`, a namespace that only
-cluster administrators can write. It holds one entry per namespace that onboarding created for a
-project of that shard, keyed by the namespace name, with the project, the namespace's `uid`, its
-creation time, `deleteOnRemoval`, and the mode. A namespace is deleted only while its labels and
-annotations and this entry agree, the uid included, so writing a complete set of labels onto a
-namespace, or copying its uid, no longer makes it deletable. Such a namespace is kept and reported
-as `it is not deleted: its creation record in the ConfigMap ... is missing or does not agree with
-its labels`.
-
-An entry is written by onboarding itself:
-
-- When onboarding creates a namespace, the same evaluation adds a pending entry without a uid,
-  with the time of the request.
-- A later evaluation binds it to the namespace's `metadata.uid` when the namespace carries the
-  creation labels of that project and its `metadata.creationTimestamp` lies between 30 seconds
-  before and 10 minutes after the request. Otherwise the entry is dropped and the namespace can
-  never be deleted.
-- While the project is declared, the entry follows `deleteOnRemoval` and `mode` like the
-  annotations do, and an evaluation with errors only lowers them. Adopting the namespace drops the
-  entry. The entry is dropped once the namespace is gone or has been replaced by one with another
-  uid.
-
-No entry ever comes from labels. The ConfigMap of a shard is written on every evaluation, even when
-it has no entries, and a namespace gets an entry only through onboarding's own pending entry. A lost
-records ConfigMap or the end of a dry run imports nothing. A namespace with the creation labels but
-no entry is never deleted. It is reported as kept, with the reason.
-
-A missing records ConfigMap, or one that has lost its label
-`autoshift.io/project-onboarding-records`, blocks every deletion in its shard. Each candidate is
-reported with that reason until the enforce ConfigurationPolicy writes the ConfigMap again, on its
-next evaluation. A namespace that a project releases, because the project now declares another
-namespace, loses its entry and its record annotations together with its ownership labels, so it
-can never become deletable again.
-
-Project administrators could not forge the labels before either: the `admin`, `edit`, and `view`
-roles cannot update namespaces.
-
-### Creation race
-
-One case is narrowed but not closed. The managed cluster decides that a namespace does not exist
-from its cached `lookup`, and the controller then creates it with `musthave`. If someone else
-creates a namespace of that name between the lookup and the create, the `musthave` merges the
-ownership labels and the creation record into that namespace instead of failing, and the next
-evaluation binds the pending entry of the records ConfigMap to its uid, so it counts as created by
-onboarding.
-
-- The window is the time between the lookup and the apply, plus the age of the controller's cache.
-- The binding window narrows the second part: a namespace created more than 30 seconds before the
-  request recorded in the pending entry, for example one the cache had not shown yet, is never
-  bound.
-  A namespace created inside the window itself, usually a fraction of a second, still is.
-- The other guards still apply: the project must set `deleteOnRemoval: true`, be removed, stay
-  removed for the whole grace period while the namespace is listed in the status as marked, and the
-  namespace must hold no storage.
-
-Nothing on the namespace tells the two creators apart: `metadata.managedFields` records which
-managers last wrote which fields, not which one created the object. To rule the case out, do not
-let anything other than onboarding create the namespaces of projects with `deleteOnRemoval: true`.
-
-After the project is removed from `config.projectOnboarding.projects`, the [shard](#shards) of its name, the
-`autoshift.io/project` label of the namespace, deletes the namespace with `mustnothave` when:
-
-- The namespace carries `autoshift.io/managed-by: project-onboarding`, the label
-  `autoshift.io/onboarding-created: 'true'`, and `autoshift.io/onboarding-created-by` equal to its
-  `autoshift.io/project` label.
-- `autoshift.io/delete-on-removal` is `'true'`.
-- Its entry in `project-onboarding-records-<shard>` names the same project and uid and records
-  `deleteOnRemoval` `'true'`.
-- No current project has that name, and no current project in any shard declares the namespace.
-  Every shard reads the whole configuration, so a project renamed with the same namespace, or
-  another project that names the namespace, keeps it.
-- It is not a platform namespace (see [Configuration](#configuration)), not the namespace of the
-  onboarding Policies on the hub, such as `policies-autoshift`, and not named after a
-  ManagedCluster, such as `local-cluster` or the name of a spoke. A hub uses a namespace of each
-  ManagedCluster's name for that cluster.
-- The guards above hold.
-
-### Two phases
-
-A namespace whose project is no longer declared is first marked, and deleted only by a later
-evaluation:
-
-1. Mark: the enforce ConfigurationPolicy of the project's shard sets the annotation
-   `autoshift.io/onboarding-pending-deletion-since` to the current time, in UTC, for example
-   `2026-11-18T12:00:00Z`. Nothing is deleted. The status lists the namespace with the time it
-   becomes deletable.
-2. Delete: on an evaluation at least `namespaceDeleteGracePeriod` after that time, if the project is
-   still undeclared and every guard still holds, the namespace is deleted.
-
-While a namespace is pending, from the evaluation that marks it until it is deleted, the enforce
-ConfigurationPolicy also holds the ResourceQuota `autoshift-deletion-freeze` in it, labeled
-`autoshift.io/deletion-freeze: 'true'`. Its `spec.hard` sets `persistentvolumeclaims` and
-`requests.storage` to `"0"`, and the object count of each other storage kind whose CRD serves the
-version onboarding reads, for example `count/volumesnapshots.snapshot.storage.k8s.io`,
-`count/objectbucketclaims.objectbucket.io`, `count/datavolumes.cdi.kubevirt.io` and
-`count/virtualmachines.kubevirt.io`, to `"0"`. Quota admission then refuses new storage during the
-grace period, so a claim cannot slip in between the last storage check and the deletion. Storage
-that already exists is not affected, and the storage check runs again on the evaluation that would
-delete. The quota is removed as soon as the namespace is no longer pending: when the project is
-declared again, a guard blocks the deletion, or storage keeps the namespace. Under a dry run no
-quota is written. A quota left from before a switch to dry run cannot be removed then, because a
-dry run writes nothing. The removal is reported instead, as a NonCompliant `mustnothave` of the
-enforcing policy. That is safe: the quota only refuses new storage in a namespace that was pending
-deletion, and it is removed on the first evaluation after the dry run ends. A quota also stays
-while a pending namespace is held only by `maxNamespaceDeletes` (`0`, or the breaker tripped), since
-the namespace is still pending; it goes away with the namespace or once the project is declared
-again. The prune sweep never treats the quota as a stale object.
-
-| `projectOnboarding.defaults.namespaceDeleteGracePeriod` | Effect |
-|---|---|
-| Not set, or `null` | `24h` |
-| A string of hours, minutes, and seconds, in that order and each optional, of at least `1h`, such as `24h`, `90m`, `1h30m`, or `2h0m0s` | That grace period |
-| Such a string shorter than `1h`, such as `30m`, `1s`, or `0s` | Reported under the status key `projectOnboarding.defaults.namespaceDeleteGracePeriod` in shard 0, and the default `24h` is used |
-| Anything else, such as `1d`, `1.5h`, `500ms`, an empty string, a number, or a string with spaces | Reported under the status key `projectOnboarding.defaults.namespaceDeleteGracePeriod` in shard 0. No namespace is marked or deleted |
-
-The grace period is compared with every mark at each evaluation, so a change applies to the
-namespaces marked already: shortening `48h` to `24h` makes every namespace marked more than 24
-hours ago deletable on the next evaluation. The `1h` minimum keeps a short test value from making
-the deletion one-phase again.
-
-The grace period protects every case in which a project only seems to be gone:
-
-- Declaring the project again removes the mark, which cancels the deletion. The enforce
-  ConfigurationPolicy removes it whatever the project renders: in its own Namespace object for a
-  project in `mode: enforce`, and otherwise in a write of the live labels and annotations without
-  the mark, so an inform, invalid, or blocked project cancels it too.
-- A configuration that is missing part of its projects for a while, for example while a clusterset
-  ConfigMap is recreated during a sync, or while a cluster changes clusterset, only marks the
-  namespaces of the missing projects. They are canceled when the configuration is whole again.
-- An empty or missing `projects`, including `projects: {}` and `projects: null`, marks nothing and
-  deletes nothing, even for a namespace whose grace period is over. Each candidate is reported as
-  `it is not deleted: config.projectOnboarding.projects is empty or missing, which never deletes a namespace`. To
-  remove every project and delete their namespaces, keep one placeholder project declared.
-
-A mark is read only when it is a timestamp in exactly that form, not in the future, and later than
-`1970-01-01T00:00:00Z`. Any other value, including a date that does not exist such as `2026-02-30T00:00:00Z`, is
-treated as no mark: the namespace is marked again with the current time, so a damaged mark can only
-restart the grace period, never shorten it. A recorded mode of `inform` is never marked, and a
-dry run marks nothing.
-
-Outside a dry run, a guard of the whole cluster that blocks the deletion also removes every mark:
-`project-onboarding-delete-namespaces` or `project-onboarding-prune` not `'true'`, an empty or
-missing `projects`, or an invalid `namespaceDeleteGracePeriod`. The enforce ConfigurationPolicy
-writes the namespace from its live labels and annotations without the mark. Setting
-`project-onboarding-delete-namespaces` to `'false'` therefore works as a kill switch and a reset: when it is
-`'true'` again, every candidate is marked anew and gets a full grace period, and no mark that
-expired meanwhile deletes anything at once. The status keeps the times of the removed mark,
-`it is pending deletion since <time>, and can be deleted from <time>; it is not deleted: <guard>;
-its mark is removed, so a new grace period starts once that is resolved`. A guard of the namespace
-itself, such as storage in it, keeps the mark.
-
-> [!IMPORTANT]
-> The deletion happens on the first evaluation after the grace period, not at the moment it ends.
-> With the default `evaluationInterval` of `watch`, a ConfigurationPolicy is evaluated only when an
-> object it reads changes, so on a quiet cluster the deletion can wait well past the time in the
-> status. That delay only ever keeps a namespace longer. To bound it, set
-> `autoshift.evaluationInterval.compliant` to a duration, such as `1h`, on clusters with namespace
-> deletion on. The marked time is the managed cluster's clock, so a large clock step on that cluster
-> moves the deletion by the same amount.
-
-### Renaming a project
-
-> [!WARNING]
-> Renaming a project key without setting `namespace:` removes the old project and declares a new
-> one. The old namespace keeps the old name, so no current project declares it any more. With
-> namespace deletion on, and `deleteOnRemoval: true` recorded on it, it is marked, and after the
-> grace period it is deleted with every workload and volume in it. The renamed project gets a new,
-> empty namespace named after its new key.
-
-To rename a project and keep its namespace, set `namespace:` to the old name in the same change:
-
-```yaml
-projectOnboarding:
-  projects:
-    payments-api:          # the new project key, was payments
-      namespace: payments  # the existing namespace keeps its name
-      groups:
-        admin: PAYMENTS_ADMINS
-      deleteOnRemoval: true
-```
-
-The namespace is then declared by a current project, so it is never marked or deleted, whatever its
-labels say. It still carries `autoshift.io/project: payments`, so the renamed project is blocked as
-`namespace payments is owned by project payments` until you move the ownership label, see
-[Mode and adoption](#mode-and-adoption):
-
-```bash
-oc label namespace payments autoshift.io/project=payments-api --overwrite
-```
-
-On the next evaluation the renamed project renders. The creation record still names the old
-project, so it is removed: onboarding no longer counts the namespace as one it created, and never
-deletes it, even with `deleteOnRemoval: true`. To have it deletable again, re-create the namespace
-through onboarding.
-
-Two related cases:
-
-- A project that moved to another namespace with pruning off keeps its old namespace labeled with
-  the project. When the project is removed later, the old namespace is a candidate too, with the
-  `deleteOnRemoval` it recorded last. With pruning on, the old namespace is released when the new
-  one is live, and is no longer a candidate.
-- The circuit breaker limits each evaluation, not a period of time. Two evaluations can each delete
-  up to `maxNamespaceDeletes` namespaces.
-
-### Circuit breaker
-
-`config.projectOnboarding.defaults.maxNamespaceDeletes` caps how many namespaces one evaluation may delete. It
-is off by default. It counts only the namespaces whose grace period is over and that would be
-deleted in this evaluation. Marking a namespace is not counted, because it deletes nothing and
-declaring the project again undoes it.
-
-| Value | Effect |
-|---|---|
-| Not set, or `null` | No limit |
-| `0` | Nothing is deleted. Each namespace whose grace period is over is reported in the status |
-| A positive integer N | When more than N namespaces pass every guard and their grace period is over, none of them is deleted. Each is listed in the status as `blocked by maxNamespaceDeletes (<K> candidates > <N>)`, and the `-test` Policy of its shard is NonCompliant |
-| Anything else, such as a negative number, a string, a fraction, a number over 999,999,999, or a map | Reported under the status key `projectOnboarding.defaults.maxNamespaceDeletes` in shard 0, and treated as `0` |
-
-A positive integer is accepted up to 999,999,999, in either form the rendered configuration can
-hold it: as an integer, or as a floating point number with no fraction. The rendered configuration
-passes through YAML, which writes 1,000,000 and above in exponent form such as `1e+06`.
-
-The count is global: every shard reads the whole configuration and lists the same live
-namespaces, so all eight shard Policies count the same candidates and reach the same decision. Each
-shard compares the marks with its own evaluation time, so a namespace whose grace period ends
-between two shards' evaluations can be counted by one and not the other; the decision of each
-evaluation still never deletes more than N. A namespace that is kept by another guard, such as one
-with PersistentVolumeClaims, that is only marked, or that is only reported because its recorded
-mode is `inform`, is not counted and keeps its own status message.
-
-> [!WARNING]
-> A values change that drops most projects by mistake, or a clusterset ConfigMap that stays
-> unresolved, for example after a `clusterSetSuffix` or `versionTag` roll or a clusterset label
-> change that leaves `cluster-set-config.<set><suffix>` missing, marks every recorded namespace with
-> `deleteOnRemoval` of those projects, and deletes them all once the grace period is over. Fix the
-> values within the grace period, and set `maxNamespaceDeletes` to a small number, for example `1`
-> or `2`, on any cluster with namespace deletion on, so that a mass removal that outlives the grace
-> period still deletes nothing and is reported instead.
-
-The deletion follows the last recorded mode. With `enforce`, the enforce ConfigurationPolicy deletes
-the namespace. With `inform`, or any other value, the status reports that the namespace would be
-deleted and nothing changes. Only the enforce ConfigurationPolicy ever carries the `mustnothave` of
-a Namespace, and only when the deployment is not a dry run:
-
-- The inform ConfigurationPolicy never carries a `mustnothave` of any object. Setting the root of a `-test` Policy to `enforce` by hand, for example with the
-  Enforce action in the Governance console, overrides its inform child, which then still deletes
-  nothing: stale objects and errors are data of a report that can never be created. Such a click
-  can still create or label objects, because the assertions of the `-test` Policy are `musthave`:
-  it would create the Namespace of an inform-mode project, without a creation record, so that
-  namespace can never be deleted by onboarding, and apply the drop of retired catalog labels. Do not
-  enforce a `-test` Policy.
-- The hub reads the dry run from the Policy annotation `autoshift.io/remediation`, which
-  PolicyGenerator sets to the deployment `REMEDIATION`. Any value other than exactly `enforce`,
-  including a missing annotation, counts as a dry run, so the enforce ConfigurationPolicy carries
-  no `mustnothave` of a Namespace either, whatever the root Policy says. The status reports
-  `it would be deleted, but the deployment runs as a dry run, so it is only reported`.
-
-### Keeping the record current
-
-While a project is declared, the record on its namespace follows its configuration. A project that
-renders in `mode: enforce` without errors writes its own Namespace object, so `delete-on-removal`
-and `onboarding-mode` follow `deleteOnRemoval` and `mode` in both directions. A project that renders
-with errors, such as an invalid catalog label that only skips that label, still writes its
-Namespace, but these two only go down: `delete-on-removal` stays `'false'` and `onboarding-mode`
-stays `inform` unless the namespace already records `'true'` and `enforce`. An edit that sets
-`deleteOnRemoval: true` together with a mistake therefore never arms the deletion; the first clean
-evaluation records it.
-
-For every other declared project, the enforce ConfigurationPolicy writes the namespace from its live
-labels and annotations with only the changes that make a deletion less likely: `delete-on-removal`
-`'true'` becomes `'false'` when the project does not set `deleteOnRemoval: true`, and
-`onboarding-mode` `enforce` becomes `inform` when the project's mode is `inform`. That covers a
-project in `mode: inform`, an invalid one, one without a resolvable admin group, one blocked on the
-managed cluster such as by a missing EgressFirewall CRD, and one not rendered because of the size
-limit. Nothing else of the namespace changes. Such a project never raises its record: to record
-`deleteOnRemoval: true` or `mode: enforce`, the project has to render cleanly in `mode: enforce`.
-
-A project switched to `deleteOnRemoval: false` or `mode: inform` and removed in the same change is
-gone in the evaluation that would record the switch, so the namespace keeps its earlier record and
-is marked for deletion. Put the project back within the grace period, let one evaluation record
-the switch, and remove it again.
-
-### Dry run
-
-Under a dry run, `REMEDIATION` set to `inform`, nothing is written: no record changes, no mark, and
-no deletion. A dry run never marks a namespace, so the grace period of a namespace whose project
-was removed during a dry run starts only on the first evaluation after the dry run ends. Until it is
-over, the namespace is listed in the status as pending, with the time it becomes deletable.
-
-Its record still holds what was recorded before the dry run. A `deleteOnRemoval` or `mode` change
-made during the dry run is not recorded, and onboarding cannot tell such a namespace apart from one
-whose project was removed after the dry run ended: a dry run writes nothing, so it leaves nothing
-on the cluster to tell them apart by. A mark set before the dry run also survives it, even when its
-project was declared again during the dry run, because the removal of the mark is a write too. To
-end a dry run on a cluster with namespace deletion on:
-
-1. Set `project-onboarding-delete-namespaces` to `'false'`.
-2. End the dry run, and let one evaluation run with the label still `'false'`. It removes every
-   mark, including those set before the dry run.
-3. Check the status for namespaces reported under removed projects, and put back any project
-   whose namespace you want to keep, or remove the namespace's `autoshift.io/onboarding-created`
-   label to keep it for good.
-4. Set `project-onboarding-delete-namespaces` back to `'true'`. Every remaining namespace is marked
-   only now and gets a full grace period.
-
-Never deleted, whatever the labels:
-
-- A namespace that a current project declares, in any shard.
-- A namespace that existed before onboarding rendered it, or that a project with `adopt: true`
-  owns. Neither has a creation record, and one that was forged is removed while the project is
-  declared, whatever the project renders, except under a dry run.
-- A namespace whose creation record is not bound to it, such as a restored or migrated one.
-- A platform namespace, the namespace of the onboarding Policies, and a namespace named after a
-  ManagedCluster. The ManagedCluster names are read on the managed cluster, by name and only for a
-  namespace that passes the other checks, when the ManagedCluster CRD exists there, which is on a
-  hub, including a managed hub of a hub of hubs. A hub template cannot read them for this, because
-  hub templates can look up cluster-scoped objects only through an allowlist of the policy
-  propagator. A managed cluster that is not a hub has no ManagedCluster CRD and no such namespaces.
-  None of these is reported in the status.
-- A namespace whose `autoshift.io/delete-on-removal` is not `'true'`. It is kept without a status
-  entry, as before this feature.
-
-Each namespace that passes the record checks is listed in the [status](#status) under the removed
-project's name, with what happened to it: marked with the time it becomes deletable, pending with
-that time, deleted, only reported because the recorded mode is `inform` or the deployment runs as a
-dry run, or kept with the guard that blocked it. The entry keeps the `-test` Policy of the shard
-NonCompliant until the
-namespace is gone or the guard is resolved. To keep such a namespace for good, remove its
-`autoshift.io/onboarding-created` label by hand.
-
-To recover:
-
-- Before the deletion: put the project back in `config.projectOnboarding.projects`, or set
-  `project-onboarding-delete-namespaces` to `'false'`. Either removes the mark, outside a dry run.
-  Either stops it on the next evaluation. The status lists each marked namespace with the time it
-  becomes deletable.
-- After the deletion: the namespace and everything in it are gone. Put the project back in
-  `config.projectOnboarding.projects` to create an empty namespace with its RoleBindings and other onboarding
-  objects, then restore the workloads from Git and their data from backups.
+objects are removed.
 
 ## Status
 
@@ -1461,8 +1025,6 @@ data:
 | `namespace "" is not a valid DNS-1123 label, so the project key <name> is used` | hub | Note only: the project key is the namespace |
 | `mode <mode> is not enforce or inform` | hub | Project rendered as `inform` |
 | `adopt <value> is not true or false, so it counts as false` | hub | Project rendered without adoption |
-| `deleteOnRemoval <value> is not true or false, so it counts as false` | hub | Project rendered, its namespace records `deleteOnRemoval` as `false` |
-| `deleteOnRemoval is ignored with adopt: true: an adopted namespace is never deleted` | hub | Note only |
 | `labels is not a map`, `annotations is not a map`, `groups is not a map` | hub | That value ignored |
 | `labels entry <entry> is not a map`, `annotations entry <entry> is not a map`, `labels entry <entry>: enabled is not true or false` (or `annotations entry`) | hub | Entry skipped |
 | `annotation key <key> is not a valid qualified name` | hub | Annotation skipped |
@@ -1509,13 +1071,6 @@ data:
 | `no resolvable admin group` | hub | Project skipped |
 | `label <key>=<value> is not a valid Kubernetes label` | hub | Label skipped |
 | `label <key> is reserved for project ownership`, `annotation <key> is reserved for project ownership` | hub | Label or annotation skipped |
-| `namespace <ns> was created for project <project>, which is no longer declared, and has deleteOnRemoval; it is marked for deletion now, and can be deleted from <time>`, under the removed project's name | managed cluster | Namespace marked, see [Two phases](#two-phases) |
-| `...; it is pending deletion since <time>, and can be deleted from <time>` | managed cluster | Namespace kept until the grace period is over |
-| `...; it has been pending deletion since <time>; it is eligible for deletion, so this policy deletes it with everything in it; the ConfigurationPolicy reports whether the deletion succeeded` | managed cluster | Namespace eligible and deleted by this evaluation; the ConfigurationPolicy status shows the result, see [Namespace deletion](#namespace-deletion) |
-| `...; it would be deleted, but its last recorded mode is inform, so it is only reported`, `...; it would be deleted, but the deployment runs as a dry run, so it is only reported`, `...; it would be marked for deletion, but the deployment runs as a dry run, so it is only reported` | managed cluster | Reported only, nothing marked or deleted |
-| `...; it is not deleted: the cluster label project-onboarding-delete-namespaces is not 'true'`, `...: the cluster label project-onboarding-prune is not 'true'`, `...: namespace holds storage: <kind> <count>, ...`, `...: maxNamespaceDeletes is 0`, `...: maxNamespaceDeletes is invalid, which counts as 0`, `...: blocked by maxNamespaceDeletes (<K> candidates > <N>)`, `...: config.projectOnboarding.projects is empty or missing, which never deletes a namespace`, `...: namespaceDeleteGracePeriod is invalid, which never deletes a namespace`, `...: its creation record is not bound to this namespace (...); delete it by hand if it should go` | managed cluster | Namespace kept |
-| `maxNamespaceDeletes is not a non-negative integer, so it counts as 0 and no namespace is deleted`, under the key `projectOnboarding.defaults.maxNamespaceDeletes` in shard 0 | hub | No namespace deleted |
-| `namespaceDeleteGracePeriod is not a positive duration in hours, minutes and seconds, such as 24h or 1h30m, so no namespace is marked for deletion or deleted`, under the key `projectOnboarding.defaults.namespaceDeleteGracePeriod` in shard 0 | hub | No namespace marked or deleted |
 | `label <key> is reserved for the platform; list it in projectOnboarding.defaults.allowedPlatformKeys to set it`, `annotation <key> is reserved ...` | hub | Label or annotation skipped |
 | `namespace <ns> already declared by <project>` | hub | Project skipped |
 | `namespace <ns> is owned by project <owner>` | managed cluster | Nothing rendered for the project |
@@ -1548,11 +1103,7 @@ key, `rendered-config`, for example `rendered-config: cannot read cluster1.rende
 status is written rather than deleted, so every `-test` Policy stays NonCompliant while nothing can
 be checked. A
 readable configuration without a `projects` key has no projects, so it has nothing to report and
-the status is deleted, unless a namespace onboarding created with `deleteOnRemoval` is left, which
-is reported under its project's name, see [Two phases](#two-phases).
-
-A removed project whose namespace onboarding created with `deleteOnRemoval` is listed under the
-project's name as well, see [Namespace deletion](#namespace-deletion).
+the status is deleted.
 
 The hub resolves the configuration errors and passes them to the managed cluster, which adds the
 ownership checks that only it can make, then builds the status from both. The ConfigMap exists only
@@ -1625,18 +1176,14 @@ about:
 
 | Project shape | Name length | Pruning on | Pruning off |
 |---|---|---|---|
-| Groups only (three RoleBindings), the shape of most adopted projects | 6 characters | 720 | 550 |
-| Groups only | 63 characters | 468 | 394 |
-| Every feature: size, a strict network profile, four rules including an AdminNetworkPolicy deny and EgressFirewall entries, and an egress IP | 6 characters | 270 | 235 |
-| Every feature | 63 characters | 188 | 179 |
+| Groups only (three RoleBindings), the shape of most adopted projects | 6 characters | 730 | 567 |
+| Groups only | 63 characters | 486 | 406 |
+| Every feature: size, a strict network profile, four rules including an AdminNetworkPolicy deny and EgressFirewall entries, and an egress IP | 6 characters | 278 | 244 |
+| Every feature | 63 characters | 200 | 180 |
 
-One shard holds about 90 groups-only or 36 fully featured projects with short names, so a set of
+One shard holds about 90 groups-only or 35 fully featured projects with short names, so a set of
 names that happens to fall unevenly into the shards reaches the limit earlier. To see the spread,
 count the shard of each project name, see [Shards](#shards).
-
-With `project-onboarding-delete-namespaces` and pruning both on, every shard carries about 3.7 KB
-more of fixed text, the namespace deletion checks, so each holds a few projects fewer than the
-table shows.
 
 Large rule lists count as well. One project fits about 2,000 ingress or egress CIDRs, 3,000
 EgressFirewall DNS names, or 2,000 ports on a rule, and not 8,000 CIDRs.
@@ -1712,17 +1259,6 @@ These follow from what a ConfigurationPolicy can express, and are documented rat
   good and has to be added again. The next evaluation reads the new state, so only a key added
   inside that window is affected. A ConfigurationPolicy has no patch of individual keys that also
   removes retired ones, so the exact write is what lets onboarding drop the catalog keys it retired.
-- **A namespace is deleted by name, without a uid precondition.** The `mustnothave` that deletes a
-  namespace names it only: Red Hat Advanced Cluster Management sends a DELETE without
-  `DeleteOptions` preconditions, and a ConfigurationPolicy cannot request one. Every guard,
-  including the creation record and its uid, is checked against the cached `lookup` of the old
-  namespace. If that namespace is deleted and a new one of the same name is created between that
-  read and the controller's DELETE, the new namespace is deleted although it never passed a guard.
-  It needs no labels for that. The window is the time from the lookup to the DELETE plus the age of
-  the controller's cache, as described under [Creation race](#creation-race). The namespace must
-  first have been pending for the whole grace period and listed in the status as deletable. To rule
-  this out, do not let anything other than onboarding delete and re-create the namespace of a
-  removed project with `deleteOnRemoval: true` while it is pending.
 
 ## Limitations to check on a live cluster
 
@@ -1760,11 +1296,6 @@ cluster after the first rollout, with a throwaway project in `mode: inform`:
 - The admin AdminNetworkPolicy `autoshift-admin-deny-metadata` reports itself as ready and stays
   Compliant, a pod in a project cannot reach `169.254.169.254`, and a project `allow` to it does not
   get through.
-- [Namespace deletion](#namespace-deletion): a new namespace carries the creation record and gets a
-  bound entry in `project-onboarding-records-<shard>`, a removed project's namespace is deleted
-  only with every guard in place, the ResourceQuota `autoshift-deletion-freeze` refuses a new
-  PersistentVolumeClaim while the namespace is pending, and the `mustnothave` of the Namespace does
-  not leave the ConfigurationPolicy stuck while the namespace terminates.
 - A reordered EgressFirewall or AdminNetworkPolicy is rewritten in the declared order, see
   [Rule order](#rule-order).
 - The EgressIP `autoshift-<project>` stays Compliant, its `status.items` names an egress-assignable

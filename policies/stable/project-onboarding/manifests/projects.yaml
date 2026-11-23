@@ -52,111 +52,7 @@
 #
 # Deletion is opt-in: only the cluster label autoshift.io/project-onboarding-prune: 'true' turns it
 # on. Off (the default), nothing owned is deleted and no label is stripped; both are reported by the
-# inform ConfigurationPolicy instead. A Namespace is deleted only under Namespace deletion below.
-#
-# Namespace deletion: a Namespace this policy created (it did not exist, the project is not adopt)
-# gets the label autoshift.io/onboarding-created: 'true' and the annotations
-# autoshift.io/onboarding-created-by (the project), autoshift.io/delete-on-removal (the project's
-# deleteOnRemoval, true or false) and autoshift.io/onboarding-mode, in $applied. An evaluation in
-# which the project has errors only lowers these two: delete-on-removal stays 'false' and
-# onboarding-mode stays inform unless the live Namespace already records 'true' and enforce (a new
-# Namespace with errors is created with 'false' and inform), so an edit that enables deletion
-# together with an error never arms it; the next clean evaluation records the new intent. These keys and the
-# pending mark below ($recordKeys) are reserved: no catalog entry sets them. They are kept on an
-# existing Namespace only while it carries the marker and created-by names this project and the
-# project is not adopt ($own); otherwise they are removed (an adopted or pre-existing Namespace
-# never gets them, so it can never be deleted). The record is bound to the Namespace instance: a new
-# Namespace records autoshift.io/onboarding-created-at ($nowTs), and the first evaluation that finds
-# it labeled with the marker, without a stamp, and with a creationTimestamp from 30 s before to
-# 600 s after that time stamps autoshift.io/onboarding-created-uid with its metadata.uid ($nsAdd,
-# applied in the project's own Namespace object). A stamp is never replaced, and a Namespace is
-# deleted only while the stamp equals its live uid, so a restored or migrated copy (new uid, new
-# creationTimestamp) never is. Residual race: a Namespace someone else creates between the $existing
-# lookup (cached) and the apply gets the record merged in by the musthave and is then stamped; the
-# 30 s lower bound only excludes one the cache had not shown for longer (see Creation race in the
-# README). After the project is removed, the shard of its name
-# (the project label) handles the Namespace when: the marker, managed-by, created-by equal to the
-# label, delete-on-removal 'true', no current project of that name ($projOwners), no current project
-# declaring the Namespace in any shard ($nsOwners, $otherNs), not a platform namespace, not this
-# Policy's namespace ($policyNs), and not named after a ManagedCluster (looked up by name on the
-# managed cluster when its CRD exists, so on a hub; a hub template cannot list cluster-scoped kinds
-# outside the policy namespace). It is then
-# kept, with the reason in the status, unless the cluster label
-# autoshift.io/project-onboarding-delete-namespaces is 'true' ($nsDelOn), prune is on, config.projectOnboarding.projects
-# has a project ($projEmpty: an empty or missing map never marks or deletes),
-# projectOnboarding.defaults.namespaceDeleteGracePeriod is valid, and it holds no storage ($storeKinds): no
-# PersistentVolumeClaim in any phase, and no VolumeSnapshot, ObjectBucketClaim, DataVolume or
-# VirtualMachine, each listed only when its CRD exists. A CRD that exists without serving the
-# version listed blocks the deletion, and a lookup that fails (Forbidden) fails the template, so
-# nothing is applied.
-# Creation records ($records): the labels are writable by anyone who can patch a Namespace, so the
-# authoritative record is the ConfigMap project-onboarding-records-<shard> in
-# open-cluster-management-agent-addon, which the enforce ConfigurationPolicy of each shard writes on
-# every evaluation (mustonlyhave, _format plus one JSON entry per namespace: project, uid,
-# createdAt, deleteOnRemoval, mode). A namespace this shard creates ($creating) gets a pending entry
-# (uid "") in the same evaluation; a later one binds it to metadata.uid when the namespace carries
-# that project's creation labels and its creationTimestamp is 30 s before to 600 s after the request,
-# and drops it otherwise (an unbound entry also lapses after 600 s). A bound entry follows the
-# project like the annotations (an evaluation with errors only lowers it), is dropped on adopt, and
-# is dropped once the namespace is gone, has another uid, or is released (its project declares
-# another namespace). Entries are never imported from labels, so a lost ConfigMap or the end of a
-# dry run never makes a labeled namespace deletable again. A candidate is deleted only
-# while its shard's records ConfigMap exists with its label and its entry agrees with its labels
-# (project, uid, deleteOnRemoval 'true'); its mode counts as enforce only when both record enforce.
-# A missing ConfigMap blocks every candidate of the shard, with the reason in the status.
-#
-# Deletion freeze: while a candidate is pending (no guard blocks it, recorded mode enforce, marked
-# now or earlier), the enforce ConfigurationPolicy holds the ResourceQuota autoshift-deletion-freeze
-# in it (persistentvolumeclaims and requests.storage 0, and count/<plural>.<group> 0 for each served
-# storage kind), so admission refuses new storage during the grace period; storage is still checked
-# before the deletion. A live freeze quota of this shard whose namespace is not pending is removed;
-# under dry run that removal is rendered too, and since the enforce ConfigurationPolicy is inform
-# then, it is reported instead (a quota only refuses new storage in a namespace that was pending).
-# The sweep never prunes it. No freeze is set under dry run. A release removes the record keys from
-# the Namespace together with the ownership labels.
-#
-# Deletion is two-phase. The first evaluation that finds it so marks it: the annotation
-# autoshift.io/onboarding-pending-deletion-since ($pendingKey) set to the managed cluster's now, UTC.
-# A later evaluation deletes it with mustnothave once now is at least the grace period ($graceSec,
-# default 24h) past the mark. A mark that is not a timestamp of that exact form, a date that does
-# not exist (toDate gives the zero time, so the parsed value must be positive), or one in the future
-# counts as no mark and is set again, so it can only restart the grace period. Outside dry run, a
-# cluster-level guard that blocks the deletion (delete-namespaces label or prune off, empty
-# projects, invalid grace period: $clusterWhy) removes the mark, so resolving it always starts a
-# fresh grace period. A grace period below 1h is reported ($graceLow) and 24h is used. Declaring the project
-# again removes the mark: from its own Namespace object when it renders in the enforce
-# ConfigurationPolicy, otherwise from a record write of the enforce ConfigurationPolicy in the sweep.
-# Only the enforce ConfigurationPolicy marks or deletes, only for the recorded mode enforce, and
-# only when the Policy annotation autoshift.io/remediation (the deployment REMEDIATION, read on the
-# hub) is exactly enforce ($dryRun otherwise). The inform ConfigurationPolicy never carries a
-# Namespace mustnothave or mark, so an enforce set on the root of a -test Policy by hand cannot make
-# it delete;
-# a recorded mode inform or a dry run is only reported in the status. Each such Namespace is listed
-# in the status under the project's name: marked or pending with the time it becomes deletable,
-# deleted, reported, or kept with the guard that blocked it. A Namespace whose delete-on-removal is
-# not 'true' is kept and not reported.
-#
-# Record write: in the enforce ConfigurationPolicy, a labeled Namespace that this shard is involved
-# with (its project is declared here, or a project here declares it) and that no other object of
-# this ConfigurationPolicy writes (its project's own Namespace object in mode enforce, a release) is
-# written from its live labels and annotations (metadataComplianceType mustonlyhave) when they need
-# a change: the pending mark removed; on the project's own namespace, a record that is not $own
-# removed, onboarding-mode enforce lowered to inform for a project in mode inform, and
-# delete-on-removal 'true' lowered to 'false' for a project without deleteOnRemoval. It runs whether
-# or not the project renders (invalid, blocked by a missing CRD, no admin group, size-skipped), so
-# the last declared intent is recorded before a later removal. It only lowers, never raises: a
-# project must render cleanly in mode enforce to record deleteOnRemoval true or mode enforce. It
-# never adds anything, so writes from two shards converge. Under dry run the enforce
-# ConfigurationPolicy is inform, so nothing is recorded (see Dry run in the README).
-#
-# Circuit breaker: projectOnboarding.defaults.maxNamespaceDeletes, validated on the hub against ^[0-9]{1,9}$
-# (not a string), or a float64 holding such an integer (the rendered config passes through YAML,
-# which writes 1000000 as 1e+06). Unset or null: no limit. 0: nothing is deleted, only reported. Any
-# other value is reported under the status key projectOnboarding.defaults.maxNamespaceDeletes (shard 0) and
-# counts as 0. A positive N, with both cluster labels on, passes every shard the declared project
-# names ($allNames, label-value names only), so each shard counts the same global set of Namespaces
-# that pass every guard with recorded mode enforce and whose grace period is over ($nsDelCount);
-# above N, none is deleted, in any shard. Marking is not counted.
+# inform ConfigurationPolicy instead. A Namespace is never deleted.
 #
 # Labels: an existing Namespace is rendered with metadataComplianceType mustonlyhave, so its labels
 # and annotations are exact. The managed cluster therefore renders the full live set (labels and
@@ -293,8 +189,7 @@
 # projects whose names map to one status key are concatenated.
 #
 # Size, per shard Policy: a base for the static template text ($sizeBase, measured on an empty shard:
-# 36887 bytes at most with namespace deletion off, 40453 with it and the breaker on, plus shard 0's
-# status lines for an invalid maxNamespaceDeletes or grace period), then the hub estimates each
+# 11688 bytes at most), then the hub estimates each
 # project's share of the resolved Policy ($est, kept at or above the measured size for every
 # feature; invalid projects pay their status $overhead) and keeps the total below $sizeLimit (1 MiB, well under the 1.5 MiB etcd
 # request limit). Status messages are cut to 400 characters. The total is published as a comment.
@@ -464,32 +359,8 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- $otherNs = $otherNs | uniq hub}}
   {{hub- $pruneOn := eq (index .ManagedClusterLabels "autoshift.io/project-onboarding-prune" | default "false") "true" hub}}
-  {{hub- $nsDelOn := eq (index .ManagedClusterLabels "autoshift.io/project-onboarding-delete-namespaces" | default "false") "true" hub}}
-  {{hub- $dryRun := ne (printf "%v" (index (.PolicyMetadata.annotations | default dict) "autoshift.io/remediation")) "enforce" hub}}
-  {{hub- $reservedKey := "^autoshift\\.io/(project|managed-by|onboarding-created|onboarding-created-by|onboarding-created-at|onboarding-created-uid|delete-on-removal|onboarding-mode|onboarding-pending-deletion-since)$" hub}}
+  {{hub- $reservedKey := "^autoshift\\.io/(project|managed-by)$" hub}}
   {{hub- $labelValue := "^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$" hub}}
-  {{hub- $maxDelRaw := index $defaultsRaw "maxNamespaceDeletes" hub}}
-  {{hub- $maxDel := -1 hub}}
-  {{hub- $maxDelBad := false hub}}
-  {{hub- if not (kindIs "invalid" $maxDelRaw) hub}}
-  {{hub- if and (not (kindIs "string" $maxDelRaw)) (regexMatch "^[0-9]{1,9}$" (printf "%v" $maxDelRaw)) hub}}{{hub- $maxDel = atoi (printf "%v" $maxDelRaw) hub}}
-  {{hub- else if and (kindIs "float64" $maxDelRaw) (ge $maxDelRaw 0.0) (le $maxDelRaw 999999999.0) (eq (float64 (int64 $maxDelRaw)) $maxDelRaw) hub}}{{hub- $maxDel = int64 $maxDelRaw hub}}
-  {{hub- else hub}}{{hub- $maxDel = 0 hub}}{{hub- $maxDelBad = true hub}}{{hub- end hub}}
-  {{hub- end hub}}
-  {{hub- $graceRaw := index $defaultsRaw "namespaceDeleteGracePeriod" hub}}
-  {{hub- $graceSec := 86400 hub}}
-  {{hub- $graceBad := false hub}}
-  {{hub- $graceLow := false hub}}
-  {{hub- if kindIs "invalid" $graceRaw hub}}
-  {{hub- else if and (kindIs "string" $graceRaw) (ne $graceRaw "") (regexMatch "^([0-9]{1,5}h)?([0-9]{1,7}m)?([0-9]{1,9}s)?$" (printf "%v" $graceRaw)) hub}}
-  {{hub- $graceSec = add (mul 3600 (atoi (regexReplaceAll "^(?:([0-9]+)h)?.*$" $graceRaw "${1}"))) (mul 60 (atoi (regexReplaceAll "^(?:[0-9]+h)?(?:([0-9]+)m)?.*$" $graceRaw "${1}"))) (atoi (regexReplaceAll "^(?:[0-9]+h)?(?:[0-9]+m)?(?:([0-9]+)s)?$" $graceRaw "${1}")) hub}}
-  {{hub- if lt $graceSec 3600 hub}}{{hub- $graceLow = true hub}}{{hub- $graceSec = 86400 hub}}{{hub- end hub}}
-  {{hub- else hub}}{{hub- $graceBad = true hub}}
-  {{hub- end hub}}
-  {{hub- $projEmpty := eq (len $projects) 0 hub}}
-  {{hub- $breaker := and $nsDelOn $pruneOn (gt $maxDel 0) hub}}
-  {{hub- $allNames := list hub}}
-  {{hub- if $breaker hub}}{{hub- range $n, $pv := $projects hub}}{{hub- if and (le (len $n) 63) (regexMatch $labelValue $n) hub}}{{hub- $allNames = append $allNames $n hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
   {{hub- $adminErrs := list hub}}
   {{hub- $adminANPs := list hub}}
   {{hub- $adminRaw := index $defaultsRaw "adminNetworkPolicies" hub}}
@@ -783,10 +654,8 @@ object-templates-raw: |
   {{hub- $adminMsgs := list hub}}
   {{hub- range $m := $adminErrs hub}}{{hub- $adminMsgs = append $adminMsgs (ternary (printf "%s..." (trunc 400 $m)) $m (gt (len $m) 400)) hub}}{{hub- end hub}}
   {{hub- $sizeLimit := 1048576 hub}}
-  {{hub- $sizeBase := 37150 hub}}
-  {{hub- if and $nsDelOn $pruneOn hub}}{{hub- $sizeBase = add $sizeBase 3700 hub}}{{hub- end hub}}
-  {{hub- if eq $shard 0 hub}}{{hub- $sizeBase = add $sizeBase (ternary 600 0 $maxDelBad) (ternary 600 0 (or $graceBad $graceLow)) hub}}{{hub- end hub}}
-  {{hub- $sizeTotal := add $sizeBase (mul 2 (len (toJson $adminANPs))) (mul 4 (len (toJson $adminMsgs))) (mul 2 (len (join "," $otherNs))) (mul 2 (len (join "," $allNames))) hub}}
+  {{hub- $sizeBase := 11950 hub}}
+  {{hub- $sizeTotal := add $sizeBase (mul 2 (len (toJson $adminANPs))) (mul 4 (len (toJson $adminMsgs))) (mul 2 (len (join "," $otherNs))) hub}}
   {{hub- $sizeAll := $sizeTotal hub}}
   {{hub- $sizeSkipped := list hub}}
   {{hub- $sizeHard := 1415577 hub}}
@@ -797,38 +666,7 @@ object-templates-raw: |
   {{- $live := dict }}
   {{- $status := dict }}
   {{- $stale := dict }}
-  {{- $pendingKey := "autoshift.io/onboarding-pending-deletion-since" }}
-  {{- $recordKeys := list "autoshift.io/onboarding-created" "autoshift.io/onboarding-created-by" "autoshift.io/onboarding-created-at" "autoshift.io/onboarding-created-uid" "autoshift.io/delete-on-removal" "autoshift.io/onboarding-mode" $pendingKey }}
-  {{- $tsRe := "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" }}
-  {{- $now := now | unixEpoch | atoi }}
-  {{- $nowTs := dateInZone "2006-01-02T15:04:05Z" $now "UTC" }}
-  {{- $nsWritten := dict }}
   {{- $labeledNs := (lookup "v1" "Namespace" "" "" "autoshift.io/project").items | default list }}
-  {{- $records := dict }}
-  {{- range $cm := (lookup "v1" "ConfigMap" "open-cluster-management-agent-addon" "" "autoshift.io/project-onboarding-records=true").items | default list }}
-  {{- $cmName := printf "%v" (dig "metadata" "name" "" $cm) }}
-  {{- if hasPrefix "project-onboarding-records-" $cmName }}
-  {{- $sh := replace "project-onboarding-records-" "" $cmName }}
-  {{- $m := dict }}
-  {{- range $k, $v := (index $cm "data" | default dict) }}{{- $rv := fromJson (printf "%v" $v) }}{{- if and (ne $k "_format") (kindIs "map" $rv) }}{{- $_ := set $m $k $rv }}{{- end }}{{- end }}
-  {{- $_ := set $records $sh $m }}
-  {{- end }}
-  {{- end }}
-  {{- $creating := dict }}
-  {{- $nsAdd := dict }}
-  {{- range $ns := $labeledNs }}
-  {{- $a := dig "metadata" "annotations" dict $ns }}
-  {{- $ca := printf "%v" (index $a "autoshift.io/onboarding-created-at" | default "") }}
-  {{- $ct := printf "%v" (dig "metadata" "creationTimestamp" "" $ns) }}
-  {{- $uid := printf "%v" (dig "metadata" "uid" "" $ns) }}
-  {{- if and $uid (not (index $a "autoshift.io/onboarding-created-uid")) (eq (printf "%v" (index (dig "metadata" "labels" dict $ns) "autoshift.io/onboarding-created")) "true") (regexMatch $tsRe $ca) (regexMatch $tsRe $ct) }}
-  {{- $caS := toDate "2006-01-02T15:04:05Z07:00" $ca | unixEpoch | atoi }}
-  {{- $ctS := toDate "2006-01-02T15:04:05Z07:00" $ct | unixEpoch | atoi }}
-  {{- if and (gt $caS 0) (gt $ctS 0) (ge (sub $ctS $caS) -30) (le (sub $ctS $caS) 600) }}
-  {{- $_ := set $nsAdd (printf "%v" (dig "metadata" "name" "" $ns)) (dict "autoshift.io/onboarding-created-uid" $uid) }}
-  {{- end }}
-  {{- end }}
-  {{- end }}
   {{- $podCidrs := list }}
   {{- $svcCidrs := list }}
   {{- if lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "networks.config.openshift.io" }}
@@ -884,15 +722,6 @@ object-templates-raw: |
   {{hub- if $cfgErr hub}}
   {{- $_ := set $status "rendered-config" (list ({{hub $cfgErr | toJson | base64enc | quote hub}} | base64dec | fromJson)) }}
   {{hub- end hub}}
-  {{hub- if and $maxDelBad (eq $shard 0) hub}}
-  {{- $_ := set $status "projectOnboarding.defaults.maxNamespaceDeletes" (list "maxNamespaceDeletes is not a non-negative integer, so it counts as 0 and no namespace is deleted") }}
-  {{hub- end hub}}
-  {{hub- if and $graceLow (eq $shard 0) hub}}
-  {{- $_ := set $status "projectOnboarding.defaults.namespaceDeleteGracePeriod" (list "namespaceDeleteGracePeriod is shorter than the minimum of 1h, so the default 24h is used") }}
-  {{hub- end hub}}
-  {{hub- if and $graceBad (eq $shard 0) hub}}
-  {{- $_ := set $status "projectOnboarding.defaults.namespaceDeleteGracePeriod" (list "namespaceDeleteGracePeriod is not a positive duration in hours, minutes and seconds, such as 24h or 1h30m, so no namespace is marked for deletion or deleted") }}
-  {{hub- end hub}}
   {{hub- if $adminErrs hub}}
   {{- $_ := set $status "projectOnboarding.defaults.adminNetworkPolicies" ({{hub $adminMsgs | toJson | base64enc | quote hub}} | base64dec | fromJson) }}
   {{hub- else if $adminANPs hub}}
@@ -929,14 +758,6 @@ object-templates-raw: |
   {{hub- $errs = append $errs (printf "mode %s is not enforce or inform" $mode) hub}}
   {{hub- $mode = "inform" hub}}
   {{hub- end hub}}
-  {{hub- $dorRaw := index $fields "deleteOnRemoval" hub}}
-  {{hub- $dor := false hub}}
-  {{hub- if has (printf "%v" $dorRaw) (list "true" "false") hub}}
-  {{hub- $dor = eq (printf "%v" $dorRaw) "true" hub}}
-  {{hub- else if not (kindIs "invalid" $dorRaw) hub}}
-  {{hub- $errs = append $errs (printf "deleteOnRemoval %v is not true or false, so it counts as false" $dorRaw) hub}}
-  {{hub- end hub}}
-  {{hub- if and $dor $adopt hub}}{{hub- $notes = append $notes "deleteOnRemoval is ignored with adopt: true: an adopted namespace is never deleted" hub}}{{hub- end hub}}
   {{hub- $nsRaw := index $fields "namespace" hub}}
   {{hub- $namespace := $name hub}}
   {{hub- if and (kindIs "string" $nsRaw) (ne $nsRaw "") hub}}{{hub- $namespace = $nsRaw hub}}{{hub- end hub}}
@@ -1050,12 +871,6 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- $_ := set $applied.annotations "autoshift.io/project-labels" (join "," (sortAlpha $appliedKeys)) hub}}
-  {{hub- if not $adopt hub}}
-  {{hub- $_ := set $applied.labels "autoshift.io/onboarding-created" "true" hub}}
-  {{hub- $_ := set $applied.annotations "autoshift.io/onboarding-created-by" $name hub}}
-  {{hub- $_ := set $applied.annotations "autoshift.io/delete-on-removal" (printf "%v" $dor) hub}}
-  {{hub- $_ := set $applied.annotations "autoshift.io/onboarding-mode" $mode hub}}
-  {{hub- end hub}}
   {{hub- $ownGroups := dig "groups" dict $fields | default dict hub}}
   {{hub- if not (kindIs "map" $ownGroups) hub}}{{hub- $errs = append $errs "groups is not a map" hub}}{{hub- $ownGroups = dict hub}}{{hub- end hub}}
   {{hub- $roles := mergeOverwrite (dict "admin" "admin" "write" "edit" "read" "view") (deepCopy $defaults.roles) hub}}
@@ -1589,7 +1404,7 @@ object-templates-raw: |
   {{- $_ := set $status {{hub $statusKey | toJson hub}} (concat (index $status {{hub $statusKey | toJson hub}} | default list) ({{hub $msgs | toJson | base64enc | quote hub}} | base64dec | fromJson)) }}
   {{hub- end hub}}
   {{hub- $owner := dict "mode" $mode "ok" (and (eq (len $errs) 0) (not $sizeSkip)) "namespace" $namespace hub}}
-  {{hub- $_ := set $projOwners $name (merge (dict "a" $adopt "d" $dor) $owner) hub}}
+  {{hub- $_ := set $projOwners $name $owner hub}}
   {{hub- if gt (len (index $nsClaims $namespace | default list)) 1 hub}}{{hub- $owner = dict "mode" $mode "ok" false "namespace" $namespace hub}}{{hub- end hub}}
   {{hub- $_ := set $nsOwners $namespace $owner hub}}
   {{hub- if not $sizeSkip hub}}
@@ -1736,17 +1551,6 @@ object-templates-raw: |
   {{hub- if or (eq $mode $want) (eq $want "inform") hub}}
   {{- $appliedLabels := {{hub $applied.labels | toJson | base64enc | quote hub}} | base64dec | fromJson }}
   {{- $appliedAnnotations := {{hub $applied.annotations | toJson | base64enc | quote hub}} | base64dec | fromJson }}
-  {{hub- if not $adopt hub}}
-  {{- if not $existing }}{{- $_ := set $appliedAnnotations "autoshift.io/onboarding-created-at" $nowTs }}{{- end }}
-  {{hub- if $errs hub}}
-  {{- $liveAnn := dig "metadata" "annotations" dict (default dict $existing) }}
-  {{- if ne (printf "%v" (index $liveAnn "autoshift.io/delete-on-removal")) "true" }}{{- $_ := set $appliedAnnotations "autoshift.io/delete-on-removal" "false" }}{{- end }}
-  {{- if ne (printf "%v" (index $liveAnn "autoshift.io/onboarding-mode")) "enforce" }}{{- $_ := set $appliedAnnotations "autoshift.io/onboarding-mode" "inform" }}{{- end }}
-  {{hub- end hub}}
-  {{hub- if eq $mode "enforce" hub}}
-  {{- if not $existing }}{{- $_ := set $creating {{hub $namespace | toJson hub}} (dict "project" {{hub $name | toJson hub}} "deleteOnRemoval" (index $appliedAnnotations "autoshift.io/delete-on-removal") "mode" (index $appliedAnnotations "autoshift.io/onboarding-mode")) }}{{- end }}
-  {{hub- end hub}}
-  {{hub- end hub}}
   {{- $kept := dict "labels" $appliedLabels "annotations" $appliedAnnotations }}
   {{- $stripped := dict }}
   {{- $dropped := false }}
@@ -1766,11 +1570,6 @@ object-templates-raw: |
   {{- $strippedAnnotations := dict }}
   {{- range $k, $v := $liveAnnotations }}{{- $_ := set $strippedAnnotations $k $v }}{{- end }}
   {{- range $k, $v := $appliedAnnotations }}{{- $_ := set $strippedAnnotations $k $v }}{{- end }}
-  {{- $_ := unset $strippedAnnotations $pendingKey }}
-  {{- range $k, $v := index $nsAdd {{hub $namespace | toJson hub}} | default dict }}{{- $_ := set $strippedAnnotations $k $v }}{{- end }}
-  {{- if not (and (not {{hub $adopt hub}}) (eq (printf "%v" (index $liveLabels "autoshift.io/onboarding-created")) "true") (eq (printf "%v" (index $liveAnnotations "autoshift.io/onboarding-created-by")) {{hub $name | toJson hub}})) }}
-  {{- range $k := $recordKeys }}{{- $_ := unset $keptLabels $k }}{{- $_ := unset $strippedLabels $k }}{{- $_ := unset $strippedAnnotations $k }}{{- end }}
-  {{- end }}
   {{- $keptAnnotations := dict }}
   {{- range $k, $v := $strippedAnnotations }}{{- $_ := set $keptAnnotations $k $v }}{{- end }}
   {{- $union := dict }}
@@ -2123,9 +1922,8 @@ object-templates-raw: |
   {{- if and $owner (not (hasKey $nsOwners $nsName)) (not (hasKey $otherNs $nsName)) (not (regexMatch {{hub $platformNs | toJson hub}} $nsName)) (eq (printf "%v" $owner.ok) "true") (hasKey $live (printf "%v" $owner.namespace)) }}
   {{- $target := ternary (printf "%v" $owner.mode) "inform" {{hub $pruneOn hub}} }}
   {{- if eq $target "{{hub $want hub}}" }}
-  {{- $_ := set $nsWritten $nsName true }}
   {{- $releasedLabels := dict }}
-  {{- range $k, $v := (dig "metadata" "labels" dict $ns) }}{{- if not (has $k (list "autoshift.io/project" "autoshift.io/managed-by" "autoshift.io/onboarding-created")) }}{{- $_ := set $releasedLabels $k $v }}{{- end }}{{- end }}
+  {{- range $k, $v := (dig "metadata" "labels" dict $ns) }}{{- if not (has $k (list "autoshift.io/project" "autoshift.io/managed-by")) }}{{- $_ := set $releasedLabels $k $v }}{{- end }}{{- end }}
   - complianceType: musthave
     metadataComplianceType: mustonlyhave
     objectDefinition:
@@ -2139,301 +1937,9 @@ object-templates-raw: |
           {{- end }}
         annotations:
           {{- range $k, $v := (dig "metadata" "annotations" dict $ns) }}
-          {{- if not (has $k $recordKeys) }}
-          {{ $k | toJson }}: {{ $v | toJson }}
-          {{- end }}
-          {{- end }}
-  {{- end }}
-  {{- end }}
-  {{- end }}
-  {{hub- if eq $want "enforce" hub}}
-  {{- range $ns := $labeledNs }}
-  {{- $nsName := printf "%v" (dig "metadata" "name" "" $ns) }}
-  {{- $nsLbl := dig "metadata" "labels" dict $ns }}
-  {{- $nsAnn := dig "metadata" "annotations" dict $ns }}
-  {{- $nsProject := printf "%v" (index $nsLbl "autoshift.io/project") }}
-  {{- $po := index $projOwners $nsProject | default dict }}
-  {{- $own := and $po (eq (printf "%v" $po.namespace) $nsName) }}
-  {{- if and (or $own (hasKey $nsOwners $nsName) (and $po (not (hasKey $otherNs $nsName)))) (not (hasKey $nsWritten $nsName)) (not (and $own (hasKey $rendered $nsName) (eq (printf "%v" $po.mode) "enforce"))) }}
-  {{- $lbl := dict }}
-  {{- range $k, $v := $nsLbl }}{{- $_ := set $lbl $k $v }}{{- end }}
-  {{- $ann := dict }}
-  {{- range $k, $v := $nsAnn }}{{- $_ := set $ann $k $v }}{{- end }}
-  {{- $_ := unset $ann $pendingKey }}
-  {{- if not $own }}
-  {{- else if or (eq (printf "%v" $po.a) "true") (ne (printf "%v" (index $lbl "autoshift.io/onboarding-created")) "true") (ne (printf "%v" (index $ann "autoshift.io/onboarding-created-by")) $nsProject) }}
-  {{- range $k := $recordKeys }}{{- $_ := unset $lbl $k }}{{- $_ := unset $ann $k }}{{- end }}
-  {{- else }}
-  {{- if and (eq (printf "%v" $po.mode) "inform") (eq (printf "%v" (index $ann "autoshift.io/onboarding-mode")) "enforce") }}{{- $_ := set $ann "autoshift.io/onboarding-mode" "inform" }}{{- end }}
-  {{- if and (ne (printf "%v" $po.d) "true") (eq (printf "%v" (index $ann "autoshift.io/delete-on-removal")) "true") }}{{- $_ := set $ann "autoshift.io/delete-on-removal" "false" }}{{- end }}
-  {{- end }}
-  {{- if or (ne (toJson $lbl) (toJson $nsLbl)) (ne (toJson $ann) (toJson $nsAnn)) }}
-  {{- $_ := set $nsWritten $nsName true }}
-  - complianceType: musthave
-    metadataComplianceType: mustonlyhave
-    objectDefinition:
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: {{ $nsName | toJson }}
-        labels:
-          {{- range $k, $v := $lbl }}
-          {{ $k | toJson }}: {{ $v | toJson }}
-          {{- end }}
-        annotations:
-          {{- range $k, $v := $ann }}
           {{ $k | toJson }}: {{ $v | toJson }}
           {{- end }}
   {{- end }}
-  {{- end }}
-  {{- end }}
-  {{- $nsByName := dict }}{{- range $ns := $labeledNs }}{{- $_ := set $nsByName (printf "%v" (dig "metadata" "name" "" $ns)) $ns }}{{- end }}
-  {{- $next := dict }}
-  {{- range $k, $r := index $records (printf "%d" $shard) | default dict }}
-  {{- $ns := index $nsByName $k | default dict }}
-  {{- $nsUid := printf "%v" (dig "metadata" "uid" "" $ns) }}
-  {{- $ct := printf "%v" (dig "metadata" "creationTimestamp" "" $ns) }}
-  {{- $ca := printf "%v" (index $r "createdAt") }}
-  {{- $rp := printf "%v" (index $r "project") }}
-  {{- if not (index $r "uid") }}
-  {{- if and $ns $nsUid (regexMatch $tsRe $ct) (regexMatch $tsRe $ca) (eq (printf "%v" (index (dig "metadata" "labels" dict $ns) "autoshift.io/onboarding-created")) "true") (eq (printf "%v" (index (dig "metadata" "labels" dict $ns) "autoshift.io/project")) $rp) (eq (printf "%v" (index (dig "metadata" "annotations" dict $ns) "autoshift.io/onboarding-created-by")) $rp) }}
-  {{- $d := sub (toDate "2006-01-02T15:04:05Z07:00" $ct | unixEpoch | atoi) (toDate "2006-01-02T15:04:05Z07:00" $ca | unixEpoch | atoi) }}
-  {{- if and (ge $d -30) (le $d 600) }}{{- $_ := set $next $k (dict "project" $rp "uid" $nsUid "createdAt" $ct "deleteOnRemoval" (index $r "deleteOnRemoval") "mode" (index $r "mode")) }}{{- end }}
-  {{- else if and (not $ns) (regexMatch $tsRe $ca) (lt (sub $now (toDate "2006-01-02T15:04:05Z07:00" $ca | unixEpoch | atoi)) 600) }}
-  {{- $_ := set $next $k $r }}
-  {{- end }}
-  {{- else if and $ns (eq $nsUid (printf "%v" (index $r "uid"))) }}
-  {{- $po := index $projOwners $rp | default dict }}
-  {{- if not $po }}
-  {{- $_ := set $next $k $r }}
-  {{- else if ne (printf "%v" $po.namespace) $k }}
-  {{- else if ne (printf "%v" $po.a) "true" }}
-  {{- $clean := and (eq (printf "%v" $po.ok) "true") (hasKey $rendered $k) (eq (printf "%v" $po.mode) "enforce") }}
-  {{- $dor := ternary (printf "%v" $po.d) (ternary "true" "false" (and (eq (printf "%v" (index $r "deleteOnRemoval")) "true") (eq (printf "%v" $po.d) "true"))) $clean }}
-  {{- $mode := ternary "enforce" (ternary "enforce" "inform" (and (eq (printf "%v" (index $r "mode")) "enforce") (eq (printf "%v" $po.mode) "enforce"))) $clean }}
-  {{- $_ := set $next $k (dict "project" $rp "uid" $nsUid "createdAt" $ca "deleteOnRemoval" $dor "mode" $mode) }}
-  {{- end }}
-  {{- end }}
-  {{- end }}
-  {{- range $k, $c := $creating }}{{- $_ := set $next $k (dict "project" $c.project "uid" "" "createdAt" $nowTs "deleteOnRemoval" $c.deleteOnRemoval "mode" $c.mode) }}{{- end }}
-  - complianceType: mustonlyhave
-    objectDefinition:
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: 'project-onboarding-records-{{hub $shard hub}}'
-        namespace: open-cluster-management-agent-addon
-        labels:
-          autoshift.io/project-onboarding-records: "true"
-      data:
-        _format: "1"
-        {{- range $k, $r := $next }}
-        {{ $k | toJson }}: {{ $r | toJson | toJson }}
-        {{- end }}
-  {{hub- end hub}}
-  {{hub- end hub}}
-  {{- $nsCands := list }}
-  {{- $nsDelCount := 0 }}
-  {{- $storeKinds := list (dict "k" "PersistentVolumeClaim" "v" "v1" "ok" true) }}
-  {{- $policyNs := {{hub .PolicyMetadata.namespace | printf "%v" | toJson | base64enc | quote hub}} | base64dec | fromJson }}
-  {{- $mcCrd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "managedclusters.cluster.open-cluster-management.io" }}
-  {{hub- if and $nsDelOn $pruneOn hub}}
-  {{- range $sk := list (dict "k" "VolumeSnapshot" "v" "snapshot.storage.k8s.io/v1" "crd" "volumesnapshots.snapshot.storage.k8s.io") (dict "k" "ObjectBucketClaim" "v" "objectbucket.io/v1alpha1" "crd" "objectbucketclaims.objectbucket.io") (dict "k" "DataVolume" "v" "cdi.kubevirt.io/v1beta1" "crd" "datavolumes.cdi.kubevirt.io") (dict "k" "VirtualMachine" "v" "kubevirt.io/v1" "crd" "virtualmachines.kubevirt.io") }}
-  {{- $crd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" $sk.crd }}
-  {{- if $crd }}
-  {{- $served := false }}
-  {{- range $ver := dig "spec" "versions" list $crd }}{{- if and (eq (printf "%v" (dig "name" "" $ver)) (last (splitList "/" $sk.v))) (eq (printf "%v" (dig "served" false $ver)) "true") }}{{- $served = true }}{{- end }}{{- end }}
-  {{- $storeKinds = append $storeKinds (dict "k" $sk.k "v" $sk.v "ok" $served "count" (printf "count/%s" $sk.crd)) }}
-  {{- end }}
-  {{- end }}
-  {{hub- end hub}}
-  {{hub- if $breaker hub}}
-  {{- $allNames := dict }}
-  {{- range $n := splitList "," {{hub join "," $allNames | toJson hub}} }}{{- $_ := set $allNames $n true }}{{- end }}
-  {{hub- end hub}}
-  {{- range $ns := $labeledNs }}
-  {{- $nsName := printf "%v" (dig "metadata" "name" "" $ns) }}
-  {{- $nsProject := printf "%v" (dig "metadata" "labels" "autoshift.io/project" "" $ns) }}
-  {{- $nsLbl := dig "metadata" "labels" dict $ns }}
-  {{- $nsAnn := dig "metadata" "annotations" dict $ns }}
-  {{- if and $nsProject (eq (printf "%v" (index $nsLbl "autoshift.io/managed-by")) "project-onboarding") (eq (printf "%v" (index $nsLbl "autoshift.io/onboarding-created")) "true") (eq (printf "%v" (index $nsAnn "autoshift.io/onboarding-created-by")) $nsProject) (eq (printf "%v" (index $nsAnn "autoshift.io/delete-on-removal")) "true") (not (hasKey $nsOwners $nsName)) (not (hasKey $otherNs $nsName)) (not (regexMatch {{hub $platformNs | toJson hub}} $nsName)) (ne $nsName $policyNs) }}
-  {{- $isCluster := false }}
-  {{- if $mcCrd }}{{- if lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" $nsName }}{{- $isCluster = true }}{{- end }}{{- end }}
-  {{- if not $isCluster }}
-  {{- $nsShard := mod (atoi (adler32sum $nsProject)) {{hub $shards hub}} }}
-  {{- $declared := true }}
-  {{- if eq $nsShard $shard }}{{- $declared = hasKey $projOwners $nsProject }}
-  {{hub- if $breaker hub}}
-  {{- else }}{{- $declared = hasKey $allNames $nsProject }}
-  {{hub- end hub}}
-  {{- end }}
-  {{- if not $declared }}
-  {{- $why := "" }}
-  {{- $uid := printf "%v" (dig "metadata" "uid" "" $ns) }}
-  {{- $rec := index (index $records (printf "%d" $nsShard) | default dict) $nsName | default dict }}
-  {{- if or (not $uid) (ne (printf "%v" (index $nsAnn "autoshift.io/onboarding-created-uid")) $uid) }}
-  {{- $why = "its creation record is not bound to this namespace (autoshift.io/onboarding-created-uid is missing or is not its uid, as after a restore or migration); delete it by hand if it should go" }}
-  {{- else if not (hasKey $records (printf "%d" $nsShard)) }}
-  {{- $why = printf "the ConfigMap open-cluster-management-agent-addon/project-onboarding-records-%d is missing or has lost its label autoshift.io/project-onboarding-records, so no namespace of shard %d is deleted until the enforce policy writes it again; labels alone never make a namespace deletable" $nsShard $nsShard }}
-  {{- else if not (and (eq (printf "%v" (index $rec "uid")) $uid) (eq (printf "%v" (index $rec "project")) $nsProject) (eq (printf "%v" (index $rec "deleteOnRemoval")) "true")) }}
-  {{- $why = printf "its creation record in the ConfigMap open-cluster-management-agent-addon/project-onboarding-records-%d is missing or does not agree with its labels (project, uid and deleteOnRemoval), so it cannot be shown that onboarding created it; delete it by hand if it should go" $nsShard }}
-  {{- end }}
-  {{hub- if and $nsDelOn $pruneOn hub}}
-  {{- if not $why }}
-  {{- $held := list }}
-  {{- range $sk := $storeKinds }}
-  {{- if not $sk.ok }}{{- $held = append $held (printf "%s (cannot list: its CRD does not serve %s)" $sk.k $sk.v) }}
-  {{- else }}{{- $n := len ((lookup $sk.v $sk.k $nsName "").items | default list) }}{{- if $n }}{{- $held = append $held (printf "%s %d" $sk.k $n) }}{{- end }}
-  {{- end }}
-  {{- end }}
-  {{- if $held }}{{- $why = printf "namespace holds storage: %s" (join ", " $held) }}{{- end }}
-  {{- end }}
-  {{hub- end hub}}
-  {{- $nsMode := ternary "enforce" "inform" (and (eq (printf "%v" (index $nsAnn "autoshift.io/onboarding-mode")) "enforce") (eq (printf "%v" (index $rec "mode")) "enforce")) }}
-  {{- $since := 0 }}
-  {{- $sinceRaw := printf "%v" (index $nsAnn $pendingKey | default "") }}
-  {{- if regexMatch $tsRe $sinceRaw }}
-  {{- $s := toDate "2006-01-02T15:04:05Z07:00" $sinceRaw | unixEpoch | atoi }}
-  {{- if and (gt $s 0) (le $s $now) }}{{- $since = $s }}{{- end }}
-  {{- end }}
-  {{- $expired := and (gt $since 0) (ge (sub $now $since) {{hub $graceSec hub}}) }}
-  {{- if and (not $why) (eq $nsMode "enforce") $expired }}{{- $nsDelCount = add $nsDelCount 1 }}{{- end }}
-  {{- if eq $nsShard $shard }}{{- $nsCands = append $nsCands (dict "ns" $nsName "p" $nsProject "mode" $nsMode "why" $why "since" $since "expired" $expired "marked" (hasKey $nsAnn $pendingKey) "lbl" $nsLbl "ann" $nsAnn) }}{{- end }}
-  {{- end }}
-  {{- end }}
-  {{- end }}
-  {{- end }}
-  {{- $frozen := dict }}
-  {{- range $c := $nsCands }}
-  {{- $nsName := $c.ns }}
-  {{- $clusterWhy := "" }}
-  {{hub- if not $nsDelOn hub}}
-  {{- $clusterWhy = "the cluster label project-onboarding-delete-namespaces is not 'true'" }}
-  {{hub- else if not $pruneOn hub}}
-  {{- $clusterWhy = "the cluster label project-onboarding-prune is not 'true'" }}
-  {{hub- else if $projEmpty hub}}
-  {{- $clusterWhy = "config.projectOnboarding.projects is empty or missing, which never deletes a namespace" }}
-  {{hub- else if $graceBad hub}}
-  {{- $clusterWhy = "namespaceDeleteGracePeriod is invalid, which never deletes a namespace" }}
-  {{hub- end hub}}
-  {{- $why := $clusterWhy | default $c.why }}
-  {{- $msg := printf "namespace %s was created for project %s, which is no longer declared, and has deleteOnRemoval" $nsName $c.p }}
-  {{- $act := "" }}
-  {{- if $why }}
-  {{- if $c.since }}{{- $msg = printf "%s; it is pending deletion since %s, and can be deleted from %s" $msg (dateInZone "2006-01-02T15:04:05Z" $c.since "UTC") (dateInZone "2006-01-02T15:04:05Z" (add $c.since {{hub $graceSec hub}}) "UTC") }}{{- end }}
-  {{- $msg = printf "%s; it is not deleted: %s" $msg $why }}
-  {{hub- if not $dryRun hub}}
-  {{- if and $clusterWhy $c.marked }}
-  {{- $act = "unmark" }}
-  {{- $msg = printf "%s; its mark is removed, so a new grace period starts once that is resolved" $msg }}
-  {{- end }}
-  {{hub- end hub}}
-  {{- else if ne $c.mode "enforce" }}
-  {{- $msg = printf "%s; it would be deleted, but its last recorded mode is inform, so it is only reported" $msg }}
-  {{- else if not $c.since }}
-  {{hub- if $dryRun hub}}
-  {{- $msg = printf "%s; it would be marked for deletion, but the deployment runs as a dry run, so it is only reported" $msg }}
-  {{hub- else hub}}
-  {{- $act = "mark" }}
-  {{- $msg = printf "%s; it is marked for deletion now, and can be deleted from %s" $msg (dateInZone "2006-01-02T15:04:05Z" (add $now {{hub $graceSec hub}}) "UTC") }}
-  {{hub- end hub}}
-  {{- else if not $c.expired }}
-  {{- $msg = printf "%s; it is pending deletion since %s, and can be deleted from %s" $msg (dateInZone "2006-01-02T15:04:05Z" $c.since "UTC") (dateInZone "2006-01-02T15:04:05Z" (add $c.since {{hub $graceSec hub}}) "UTC") }}
-  {{- else }}
-  {{- $msg = printf "%s; it has been pending deletion since %s" $msg (dateInZone "2006-01-02T15:04:05Z" $c.since "UTC") }}
-  {{hub- if $maxDelBad hub}}
-  {{- $msg = printf "%s; it is not deleted: maxNamespaceDeletes is invalid, which counts as 0" $msg }}
-  {{hub- else if eq $maxDel 0 hub}}
-  {{- $msg = printf "%s; it is not deleted: maxNamespaceDeletes is 0" $msg }}
-  {{hub- else hub}}
-  {{hub- if $breaker hub}}
-  {{- if gt $nsDelCount {{hub $maxDel hub}} }}
-  {{- $msg = printf "%s; it is not deleted: blocked by maxNamespaceDeletes (%d candidates > %d)" $msg $nsDelCount {{hub $maxDel hub}} }}
-  {{- else }}{{- $act = "delete" }}{{- end }}
-  {{hub- else hub}}
-  {{- $act = "delete" }}
-  {{hub- end hub}}
-  {{hub- end hub}}
-  {{- if eq $act "delete" }}
-  {{hub- if $dryRun hub}}
-  {{- $msg = printf "%s; it would be deleted, but the deployment runs as a dry run, so it is only reported" $msg }}
-  {{hub- else hub}}
-  {{- $msg = printf "%s; it is eligible for deletion, so this policy deletes it with everything in it; the ConfigurationPolicy reports whether the deletion succeeded" $msg }}
-  {{hub- end hub}}
-  {{- end }}
-  {{- end }}
-  {{- $_ := set $status $c.p (append (index $status $c.p | default list) $msg) }}
-  {{hub- if and (eq $want "enforce") (not $dryRun) hub}}
-  {{- if and (not $why) (eq $c.mode "enforce") (or (eq $act "mark") $c.since) }}
-  {{- $_ := set $frozen $nsName true }}
-  - complianceType: mustonlyhave
-    objectDefinition:
-      apiVersion: v1
-      kind: ResourceQuota
-      metadata:
-        name: autoshift-deletion-freeze
-        namespace: {{ $nsName | toJson }}
-        labels:
-          autoshift.io/managed-by: project-onboarding
-          autoshift.io/project: {{ $c.p | toJson }}
-          autoshift.io/deletion-freeze: "true"
-      spec:
-        hard:
-          persistentvolumeclaims: "0"
-          requests.storage: "0"
-          {{- range $sk := $storeKinds }}{{- if and $sk.ok $sk.count }}
-          {{ $sk.count | toJson }}: "0"
-          {{- end }}{{- end }}
-  {{- end }}
-  {{- if eq $act "mark" }}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: {{ $nsName | toJson }}
-        annotations:
-          {{ $pendingKey | toJson }}: {{ $nowTs | toJson }}
-  {{- else if eq $act "unmark" }}
-  - complianceType: musthave
-    metadataComplianceType: mustonlyhave
-    objectDefinition:
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: {{ $nsName | toJson }}
-        labels:
-          {{- range $k, $v := $c.lbl }}
-          {{ $k | toJson }}: {{ $v | toJson }}
-          {{- end }}
-        annotations:
-          {{- range $k, $v := $c.ann }}
-          {{- if ne $k $pendingKey }}
-          {{ $k | toJson }}: {{ $v | toJson }}
-          {{- end }}
-          {{- end }}
-  {{- else if eq $act "delete" }}
-  - complianceType: mustnothave
-    objectDefinition:
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: {{ $nsName | toJson }}
-  {{- end }}
-  {{hub- end hub}}
-  {{- end }}
-  {{hub- if eq $want "enforce" hub}}
-  {{- range $q := (lookup "v1" "ResourceQuota" "" "" "autoshift.io/deletion-freeze=true").items | default list }}
-  {{- $qNs := printf "%v" (dig "metadata" "namespace" "" $q) }}
-  {{- $qP := printf "%v" (dig "metadata" "labels" "autoshift.io/project" "" $q) }}
-  {{- if and (eq (printf "%v" (dig "metadata" "name" "" $q)) "autoshift-deletion-freeze") (eq (printf "%v" (index (dig "metadata" "labels" dict $q) "autoshift.io/managed-by")) "project-onboarding") $qP (eq (mod (atoi (adler32sum $qP)) {{hub $shards hub}}) $shard) (not (hasKey $frozen $qNs)) }}
-  - complianceType: mustnothave
-    objectDefinition:
-      apiVersion: v1
-      kind: ResourceQuota
-      metadata:
-        name: autoshift-deletion-freeze
-        namespace: {{ $qNs | toJson }}
   {{- end }}
   {{- end }}
   {{hub- end hub}}
@@ -2475,7 +1981,6 @@ object-templates-raw: |
   {{hub- if $adminErrs hub}}
   {{- if and (eq $kind.kind "AdminNetworkPolicy") (hasPrefix "autoshift-admin-" $objName) }}{{- $eligible = false }}{{- end }}
   {{hub- end hub}}
-  {{- if and (eq $kind.kind "ResourceQuota") (eq $objName "autoshift-deletion-freeze") }}{{- $eligible = false }}{{- end }}
   {{- if and $eligible (eq $target "{{hub $want hub}}") (ne $kind.kind "Namespace") (not (hasKey $declaredKeys (printf "%s|%s|%s" $kind.kind $objNs $objName))) }}
   {{hub- if eq $want "enforce" hub}}
   - complianceType: mustnothave

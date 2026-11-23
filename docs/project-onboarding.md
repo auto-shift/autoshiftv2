@@ -61,9 +61,7 @@ The policies follow the same rules, so what you learn from one applies to the ot
 - **Exact objects.** RBAC objects, quotas, network objects, and SCCs are enforced with
   `mustonlyhave`, so a value removed from the configuration is removed from the cluster.
 - **No silent deletion.** An object that is no longer declared is reported, never deleted. Only
-  project-onboarding can delete: owned objects with its prune label, see [Pruning](#pruning), and
-  the namespaces it created with a second label as well, see
-  [Namespace deletion](#namespace-deletion).
+  project-onboarding can delete: owned objects with its prune label, see [Pruning](#pruning).
 - **Values are data.** No configuration value is evaluated as a template. A value that would break
   a template, such as `{{`, is refused or rendered literally.
 - **An enforcing Policy and a -test Policy.** Each policy directory renders an enforcing Policy
@@ -339,10 +337,9 @@ To move a set of namespaces that were managed by hand or by another tool:
 
 1. Write a project entry for each namespace, with `adopt: true` and the groups it already binds.
    With `adopt: true` and no `mode`, each starts as `inform`.
-2. Keep `project-onboarding-prune` and `project-onboarding-delete-namespaces` at `'false'`.
-   Objects that the old tools created are not owned by project onboarding, so they are never
-   pruned, and an adopted namespace is never deleted, but leaving both off also means a mistake in
-   the new entries is reported rather than acted on.
+2. Keep `project-onboarding-prune` at `'false'`. Objects that the old tools created are not owned
+   by project onboarding, so they are never pruned, but leaving it off also means a mistake in the
+   new entries is reported rather than acted on.
 3. Compare the reported drift with what you expect, then set `mode: enforce` project by project.
 4. Remove the old RoleBindings, quotas, and NetworkPolicies by hand once the managed ones are in
    place. project-onboarding names its objects `autoshift-*`, so they sit next to the old ones
@@ -361,7 +358,7 @@ and every owned object of a project removed from `config.projectOnboarding.proje
 default, they are reported by the -test Policies and left in place.
 
 Pruning never deletes a namespace. Removing a project leaves its namespace and its workloads in
-place, unless [namespace deletion](#namespace-deletion) is on as well.
+place.
 
 Pruning holds back while the configuration is in doubt. Nothing of a project that has errors is
 deleted while the error stands, and no sweep runs when the rendered configuration cannot be read or
@@ -371,82 +368,6 @@ object. The full rules are in the
 
 The other policies of the set never delete. namespace-rbac, custom-sccs, project-networks, and
 egressip-nodes report an object that is no longer declared, and you delete it by hand. Each README has the commands.
-
-## Namespace deletion
-
-> [!WARNING]
-> Deleting a namespace is irreversible. Every workload, Secret, and other object in it goes with
-> it, including objects that project onboarding never managed. Leave this off unless you need it.
-
-Project onboarding can delete the namespace of a removed project, but only one that it created
-itself. A namespace that already existed, or that a project adopted with `adopt: true`, is never
-deleted. Three settings must all allow it: both cluster labels, and `deleteOnRemoval: true` on the
-project while it is still declared.
-
-In a clusterset values file, for example `autoshift/values/clustersets/managed.yaml`:
-
-```yaml
-managedClusterSets:
-  managed:
-    labels:
-      project-onboarding: 'true'
-      project-onboarding-prune: 'true'
-      project-onboarding-delete-namespaces: 'true'
-    config:
-      projectOnboarding:
-        defaults:
-          maxNamespaceDeletes: 2            # circuit breaker, recommended
-          namespaceDeleteGracePeriod: 24h   # the default, at least 1h
-        projects:
-          payments-sandbox:
-            team: payments
-            environment: DEV
-            deleteOnRemoval: true
-```
-
-When onboarding creates a namespace, it writes a creation record on it: the label
-`autoshift.io/onboarding-created`, the project name, the project's `deleteOnRemoval` and mode, and
-the creation time. On a later evaluation it stamps the namespace's `metadata.uid` into the record.
-A namespace restored from a backup, or applied again from a saved copy, gets a new uid, so its
-record no longer matches and it is never deleted.
-
-Labels alone are not trusted, because anyone who can patch a namespace can write them. The
-authoritative record is the ConfigMap `project-onboarding-records-<shard>` in
-`open-cluster-management-agent-addon`, which only cluster administrators can write. A namespace is
-deleted only while its labels and its entry there agree, the uid included. A missing records
-ConfigMap blocks every deletion of its shard, and no entry is ever imported from labels.
-
-Deletion is two-phase. The first evaluation that finds the project gone only marks the namespace
-with `autoshift.io/onboarding-pending-deletion-since`. A later evaluation deletes it once the
-project has stayed undeclared for the whole `namespaceDeleteGracePeriod`. Declaring the project
-again within that time removes the mark and cancels the deletion. While a namespace is pending,
-the ResourceQuota `autoshift-deletion-freeze` in it sets PersistentVolumeClaims, storage requests,
-and every served storage kind to zero, so no new storage is admitted during the grace period.
-
-Before it deletes, onboarding checks every guard again:
-
-- the namespace holds no storage: no PersistentVolumeClaims, VolumeSnapshots, ObjectBucketClaims,
-  DataVolumes, or VirtualMachines;
-- no current project, in any shard, declares the namespace, so renaming a project that keeps its
-  namespace deletes nothing;
-- `config.projectOnboarding.projects` has at least one project, because an empty or missing map is read as a broken
-  configuration, not as a removal;
-- the namespace is not a platform namespace, the namespace of the onboarding Policies, or one named
-  after a ManagedCluster;
-- the project's last recorded mode is `enforce`, and the deployment is not a dry run. The -test
-  Policies never carry a deletion;
-- an evaluation in which the project had errors never raised `deleteOnRemoval` or the mode: errors
-  only lower the record.
-
-`maxNamespaceDeletes` caps how many namespaces one evaluation may delete, counted across all eight
-shards. When more would go, none is deleted and each is reported, so a values change that drops
-many projects by mistake is reported rather than acted on. Setting
-`project-onboarding-delete-namespaces` back to `'false'` stops every deletion and removes every
-mark. Each namespace that is marked, kept, or blocked is listed in the status ConfigMap of its
-shard with the reason.
-
-The full rules, including who can forge a record and how to end a dry run safely, are in the
-[project-onboarding README](../policies/stable/project-onboarding/README.md#namespace-deletion).
 
 ## Sharding and size limits
 
