@@ -244,8 +244,7 @@ template text that looks like a `toInt`, `toBool`, or `autoindent` call, even in
 string, and base64 contains none of the characters those patterns need. A group name such as
 `{{ fail "x" }}` is an unresolved placeholder. A value such as `x{{y` renders literally. Neither
 can break or run code in the policy. Only constants, numbers, and values the hub has checked
-against a strict pattern, such as DNS-1123 names and CIDRs, are written directly. A test lists them
-and fails on any new one.
+against a strict pattern, such as DNS-1123 names and CIDRs, are written directly.
 
 ### Labels and annotations
 
@@ -557,6 +556,27 @@ needs an EgressFirewall and the managed cluster lacks the CRD, the project is re
 of it renders, rather than leaving its external egress open. The prune sweep skips the kind on such
 a cluster.
 
+### Rule order
+
+OVN-Kubernetes evaluates the rules of an EgressFirewall and of an AdminNetworkPolicy in order, so a
+broad `Allow` ahead of a narrower `Deny` changes what the policy does. Red Hat Advanced Cluster
+Management compares lists without regard to order, even with `mustonlyhave`, so a live object with
+the right rules in the wrong order would otherwise stay Compliant.
+
+The project EgressFirewall and the project AdminNetworkPolicy therefore carry the annotation
+`autoshift.io/rules-order`: the Adler-32 sum of the desired rule order. For an EgressFirewall each
+rule counts with every field that makes it distinct, its type, destination, and ports with their
+protocols, so two rules that differ only in ports are told apart. For an AdminNetworkPolicy a rule
+counts with its direction, name, action, and peers. The annotation is added with
+`metadataComplianceType: musthave`, so labels and annotations other tools set on these objects are
+kept. The managed cluster reads the live object. When it holds the same rules in
+a different order, the annotation becomes that sum followed by the live `resourceVersion`, a value
+the stored annotation can never equal, so the object mismatches and is rewritten with the desired
+list, in order; the next evaluation sets the plain sum again. Under `inform` the mismatch is
+reported instead. Rules that differ in content are a mismatch already and need nothing extra. The
+admin network policies have at most two rules each, with the same action, so their order carries no
+meaning and they have no annotation.
+
 ### AdminNetworkPolicy
 
 A NetworkPolicy can only allow, so in-cluster `deny` rules are rendered as one AdminNetworkPolicy
@@ -796,10 +816,14 @@ same template, and all sixteen use the same Placement and one PlacementBinding,
 | Policy | ConfigurationPolicy | Remediation | Renders |
 |---|---|---|---|
 | `policy-project-onboarding-<shard>` | `policy-project-onboarding-<shard>-enforce` | `${REMEDIATION}`: enforce, or inform under `autoshift.dryRun` | `manifests/projects.yaml`: the projects of the shard in effective mode `enforce`, the prune sweep with pruning on, namespace deletion, the status ConfigMap |
-| `policy-project-onboarding-<shard>-test` | `policy-project-onboarding-<shard>-test` | Always inform | `test/projects.yaml`: the projects of the shard in effective mode `inform`, stale objects and dropped labels with pruning off, and the assertion that the status ConfigMap is absent. It never changes anything |
+| `policy-project-onboarding-<shard>-test` | `policy-project-onboarding-<shard>-test` | Always inform | `test/projects.yaml`: every project of the shard, in either mode, asserted with the objects the shard Policy applies, the admin network policies (shard 0), dropped labels with pruning off, and the errors and stale objects of its own evaluation in `project-onboarding-test-report-<shard>`. It never deletes anything |
 
-The two `projects.yaml` files differ only in the `$want` line; keep them in sync. Each renders
-the projects of its shard whose effective mode matches. Throughout this README, the enforce
+The two `projects.yaml` files differ only in the `$want` line; keep them in sync. The enforce
+ConfigurationPolicy applies the projects of its shard in effective mode `enforce`. The inform one
+asserts every project of its shard: for a project in mode `inform` that is the preview, and for a
+project in mode `enforce` it is the readiness check, the same objects the enforce ConfigurationPolicy
+applies. A project gets one Namespace check: with pruning off and a catalog label to drop, it is the
+check with the label dropped, which also reports the drop. Throughout this README, the enforce
 ConfigurationPolicy of a shard is the one in `policy-project-onboarding-<shard>`, and the inform
 ConfigurationPolicy is the one in `policy-project-onboarding-<shard>-test`.
 
@@ -810,10 +834,19 @@ bundled into the enforcing Policy would start deleting what it should only repor
 Policies set `remediationAction` to the deployment `REMEDIATION`, and the `-test` Policies set
 `inform`.
 
-`policy-project-onboarding-<shard>-test` is Compliant only when every project of the shard is
-applied without errors and, with pruning off, nothing would be deleted or stripped, so depend on
-the `-test` Policies, not on the shard Policies, when another policy needs the projects to be in
-place. A shard Policy reports Compliant once its objects and its status ConfigMap are written, even
+`policy-project-onboarding-<shard>-test` is Compliant only when every project of the shard exists
+as declared, its Namespace and every object, without errors and, with pruning off, nothing would be
+deleted or stripped, so depend on the `-test` Policies, not on the shard Policies, when another
+policy needs the projects to be in place. It checks the objects themselves, so it is NonCompliant
+while an enforce-mode Namespace is still missing.
+
+It does not read the status ConfigMap either: under dry run nothing writes that ConfigMap. The
+`-test` Policy reports what its own evaluation finds, its status entries under the same keys and each
+stale object under `stale.<Kind>.<namespace>.<name>`, as the data of the ConfigMap
+`project-onboarding-test-report-<shard>` in `open-cluster-management-agent-addon`. That ConfigMap
+can never exist, because its key `_unsatisfiable` is in both `data` and `binaryData`, which the API
+server refuses, so the assertion stays NonCompliant until the entries clear and its message names
+the ConfigMap. A shard Policy reports Compliant once its objects and its status ConfigMap are written, even
 when the status lists errors.
 
 Neither Policy of a shard depends on the other:
@@ -904,8 +937,8 @@ disabled admin entry, or every owned object of a project removed from `config.pr
 
 With pruning off, the default:
 
-- Each stale object gets a `mustnothave` in the inform ConfigurationPolicy, which shows NonCompliant
-  without deleting anything. The object stays in place.
+- Each stale object is listed in the `-test` report under `stale.<Kind>.<namespace>.<name>`, which
+  shows NonCompliant without deleting anything. The object stays in place.
 - A dropped label stays on the Namespace, and `autoshift.io/project-labels` lists the earlier keys
   and this run's keys together. The inform ConfigurationPolicy reports the drop with a second check
   of the Namespace that has the label removed. That check is inform and changes nothing.
@@ -1007,6 +1040,10 @@ only in [two phases](#two-phases), never in the evaluation that first sees the p
    deletes or marks a namespace, see [Two phases](#two-phases).
 6. The project has been undeclared for the whole grace period,
    `config.projectOnboarding.defaults.namespaceDeleteGracePeriod`.
+7. The namespace has a creation record in the ConfigMap `project-onboarding-records-<shard>` that
+   agrees with its labels: the same project, the same `metadata.uid`, and `deleteOnRemoval`
+   `'true'`, see [Who can forge a record](#who-can-forge-a-record). The recorded mode must be
+   `enforce` on both.
 
 Only a namespace that onboarding created itself can be deleted. When onboarding creates a namespace,
 because it did not exist and the project does not set `adopt: true`, it stamps a creation record:
@@ -1051,15 +1088,45 @@ remove its `autoshift.io/onboarding-created` label to keep it silently.
 
 ### Who can forge a record
 
-The record and the mark are plain labels and annotations, and the namespace's uid is readable. On a
-cluster with namespace deletion on, anyone who can patch a Namespace but not delete it, such as a
-labeling operator, Argo CD `managedNamespaceMetadata`, or a custom role, can write a complete record
-naming an undeclared project onto any namespace that is not refused, and onboarding then deletes it,
-after the grace period, or at once with a mark set in the past. On such a cluster, the right to
-patch namespaces amounts to the right to delete them. Project administrators cannot do this: the
-`admin`, `edit`, and `view` roles cannot update namespaces. Grant namespace patch rights on such a
-cluster only to principals you would let delete namespaces. A ledger of created uids that only the
-enforce ConfigurationPolicy writes would close this, and is a possible follow-up.
+The labels and annotations of a namespace are not proof of anything: anyone who can patch a
+Namespace can write them, and its uid is readable. The authoritative record is therefore kept
+outside the namespace. The enforce ConfigurationPolicy of each shard writes the ConfigMap
+`project-onboarding-records-<shard>` in `open-cluster-management-agent-addon`, a namespace that only
+cluster administrators can write. It holds one entry per namespace that onboarding created for a
+project of that shard, keyed by the namespace name, with the project, the namespace's `uid`, its
+creation time, `deleteOnRemoval`, and the mode. A namespace is deleted only while its labels and
+annotations and this entry agree, the uid included, so writing a complete set of labels onto a
+namespace, or copying its uid, no longer makes it deletable. Such a namespace is kept and reported
+as `it is not deleted: its creation record in the ConfigMap ... is missing or does not agree with
+its labels`.
+
+An entry is written by onboarding itself:
+
+- When onboarding creates a namespace, the same evaluation adds a pending entry without a uid,
+  with the time of the request.
+- A later evaluation binds it to the namespace's `metadata.uid` when the namespace carries the
+  creation labels of that project and its `metadata.creationTimestamp` lies between 30 seconds
+  before and 10 minutes after the request. Otherwise the entry is dropped and the namespace can
+  never be deleted.
+- While the project is declared, the entry follows `deleteOnRemoval` and `mode` like the
+  annotations do, and an evaluation with errors only lowers them. Adopting the namespace drops the
+  entry. The entry is dropped once the namespace is gone or has been replaced by one with another
+  uid.
+
+No entry ever comes from labels. The ConfigMap of a shard is written on every evaluation, even when
+it has no entries, and a namespace gets an entry only through onboarding's own pending entry. A lost
+records ConfigMap or the end of a dry run imports nothing. A namespace with the creation labels but
+no entry is never deleted. It is reported as kept, with the reason.
+
+A missing records ConfigMap, or one that has lost its label
+`autoshift.io/project-onboarding-records`, blocks every deletion in its shard. Each candidate is
+reported with that reason until the enforce ConfigurationPolicy writes the ConfigMap again, on its
+next evaluation. A namespace that a project releases, because the project now declares another
+namespace, loses its entry and its record annotations together with its ownership labels, so it
+can never become deletable again.
+
+Project administrators could not forge the labels before either: the `admin`, `edit`, and `view`
+roles cannot update namespaces.
 
 ### Creation race
 
@@ -1067,11 +1134,13 @@ One case is narrowed but not closed. The managed cluster decides that a namespac
 from its cached `lookup`, and the controller then creates it with `musthave`. If someone else
 creates a namespace of that name between the lookup and the create, the `musthave` merges the
 ownership labels and the creation record into that namespace instead of failing, and the next
-evaluation stamps its uid, so it counts as created by onboarding.
+evaluation binds the pending entry of the records ConfigMap to its uid, so it counts as created by
+onboarding.
 
 - The window is the time between the lookup and the apply, plus the age of the controller's cache.
-- The identity stamp narrows the second part: a namespace created more than 30 seconds before the
-  recorded `onboarding-created-at`, for example one the cache had not shown yet, is never stamped.
+- The binding window narrows the second part: a namespace created more than 30 seconds before the
+  request recorded in the pending entry, for example one the cache had not shown yet, is never
+  bound.
   A namespace created inside the window itself, usually a fraction of a second, still is.
 - The other guards still apply: the project must set `deleteOnRemoval: true`, be removed, stay
   removed for the whole grace period while the namespace is listed in the status as marked, and the
@@ -1088,6 +1157,8 @@ After the project is removed from `config.projectOnboarding.projects`, the [shar
   `autoshift.io/onboarding-created: 'true'`, and `autoshift.io/onboarding-created-by` equal to its
   `autoshift.io/project` label.
 - `autoshift.io/delete-on-removal` is `'true'`.
+- Its entry in `project-onboarding-records-<shard>` names the same project and uid and records
+  `deleteOnRemoval` `'true'`.
 - No current project has that name, and no current project in any shard declares the namespace.
   Every shard reads the whole configuration, so a project renamed with the same namespace, or
   another project that names the namespace, keeps it.
@@ -1108,6 +1179,25 @@ evaluation:
    becomes deletable.
 2. Delete: on an evaluation at least `namespaceDeleteGracePeriod` after that time, if the project is
    still undeclared and every guard still holds, the namespace is deleted.
+
+While a namespace is pending, from the evaluation that marks it until it is deleted, the enforce
+ConfigurationPolicy also holds the ResourceQuota `autoshift-deletion-freeze` in it, labeled
+`autoshift.io/deletion-freeze: 'true'`. Its `spec.hard` sets `persistentvolumeclaims` and
+`requests.storage` to `"0"`, and the object count of each other storage kind whose CRD serves the
+version onboarding reads, for example `count/volumesnapshots.snapshot.storage.k8s.io`,
+`count/objectbucketclaims.objectbucket.io`, `count/datavolumes.cdi.kubevirt.io` and
+`count/virtualmachines.kubevirt.io`, to `"0"`. Quota admission then refuses new storage during the
+grace period, so a claim cannot slip in between the last storage check and the deletion. Storage
+that already exists is not affected, and the storage check runs again on the evaluation that would
+delete. The quota is removed as soon as the namespace is no longer pending: when the project is
+declared again, a guard blocks the deletion, or storage keeps the namespace. Under a dry run no
+quota is written. A quota left from before a switch to dry run cannot be removed then, because a
+dry run writes nothing. The removal is reported instead, as a NonCompliant `mustnothave` of the
+enforcing policy. That is safe: the quota only refuses new storage in a namespace that was pending
+deletion, and it is removed on the first evaluation after the dry run ends. A quota also stays
+while a pending namespace is held only by `maxNamespaceDeletes` (`0`, or the breaker tripped), since
+the namespace is still pending; it goes away with the namespace or once the project is declared
+again. The prune sweep never treats the quota as a stale object.
 
 | `projectOnboarding.defaults.namespaceDeleteGracePeriod` | Effect |
 |---|---|
@@ -1144,8 +1234,8 @@ dry run marks nothing.
 Outside a dry run, a guard of the whole cluster that blocks the deletion also removes every mark:
 `project-onboarding-delete-namespaces` or `project-onboarding-prune` not `'true'`, an empty or
 missing `projects`, or an invalid `namespaceDeleteGracePeriod`. The enforce ConfigurationPolicy
-writes the namespace from its live labels and annotations without the mark. So setting
-`project-onboarding-delete-namespaces` to `'false'` works as a kill switch and a reset: when it is
+writes the namespace from its live labels and annotations without the mark. Setting
+`project-onboarding-delete-namespaces` to `'false'` therefore works as a kill switch and a reset: when it is
 `'true'` again, every candidate is marked anew and gets a full grace period, and no mark that
 expired meanwhile deletes anything at once. The status keeps the times of the removed mark,
 `it is pending deletion since <time>, and can be deleted from <time>; it is not deleted: <guard>;
@@ -1245,9 +1335,13 @@ the namespace. With `inform`, or any other value, the status reports that the na
 deleted and nothing changes. Only the enforce ConfigurationPolicy ever carries the `mustnothave` of
 a Namespace, and only when the deployment is not a dry run:
 
-- The inform ConfigurationPolicy never carries one. Setting the root of a `-test` Policy to
-  `enforce` by hand, for example with the Enforce action in the Governance console, overrides its
-  inform child, which still holds nothing that deletes a namespace.
+- The inform ConfigurationPolicy never carries a `mustnothave` of any object. Setting the root of a `-test` Policy to `enforce` by hand, for example with the
+  Enforce action in the Governance console, overrides its inform child, which then still deletes
+  nothing: stale objects and errors are data of a report that can never be created. Such a click
+  can still create or label objects, because the assertions of the `-test` Policy are `musthave`:
+  it would create the Namespace of an inform-mode project, without a creation record, so that
+  namespace can never be deleted by onboarding, and apply the drop of retired catalog labels. Do not
+  enforce a `-test` Policy.
 - The hub reads the dry run from the Policy annotation `autoshift.io/remediation`, which
   PolicyGenerator sets to the deployment `REMEDIATION`. Any value other than exactly `enforce`,
   including a missing annotation, counts as a dry run, so the enforce ConfigurationPolicy carries
@@ -1257,8 +1351,13 @@ a Namespace, and only when the deployment is not a dry run:
 ### Keeping the record current
 
 While a project is declared, the record on its namespace follows its configuration. A project that
-renders in `mode: enforce` writes its own Namespace object, so `delete-on-removal` and
-`onboarding-mode` follow `deleteOnRemoval` and `mode` in both directions.
+renders in `mode: enforce` without errors writes its own Namespace object, so `delete-on-removal`
+and `onboarding-mode` follow `deleteOnRemoval` and `mode` in both directions. A project that renders
+with errors, such as an invalid catalog label that only skips that label, still writes its
+Namespace, but these two only go down: `delete-on-removal` stays `'false'` and `onboarding-mode`
+stays `inform` unless the namespace already records `'true'` and `enforce`. An edit that sets
+`deleteOnRemoval: true` together with a mistake therefore never arms the deletion; the first clean
+evaluation records it.
 
 For every other declared project, the enforce ConfigurationPolicy writes the namespace from its live
 labels and annotations with only the changes that make a deletion less likely: `delete-on-removal`
@@ -1412,7 +1511,7 @@ data:
 | `label <key> is reserved for project ownership`, `annotation <key> is reserved for project ownership` | hub | Label or annotation skipped |
 | `namespace <ns> was created for project <project>, which is no longer declared, and has deleteOnRemoval; it is marked for deletion now, and can be deleted from <time>`, under the removed project's name | managed cluster | Namespace marked, see [Two phases](#two-phases) |
 | `...; it is pending deletion since <time>, and can be deleted from <time>` | managed cluster | Namespace kept until the grace period is over |
-| `...; it has been pending deletion since <time>; it is deleted with everything in it` | managed cluster | Namespace deleted, see [Namespace deletion](#namespace-deletion) |
+| `...; it has been pending deletion since <time>; it is eligible for deletion, so this policy deletes it with everything in it; the ConfigurationPolicy reports whether the deletion succeeded` | managed cluster | Namespace eligible and deleted by this evaluation; the ConfigurationPolicy status shows the result, see [Namespace deletion](#namespace-deletion) |
 | `...; it would be deleted, but its last recorded mode is inform, so it is only reported`, `...; it would be deleted, but the deployment runs as a dry run, so it is only reported`, `...; it would be marked for deletion, but the deployment runs as a dry run, so it is only reported` | managed cluster | Reported only, nothing marked or deleted |
 | `...; it is not deleted: the cluster label project-onboarding-delete-namespaces is not 'true'`, `...: the cluster label project-onboarding-prune is not 'true'`, `...: namespace holds storage: <kind> <count>, ...`, `...: maxNamespaceDeletes is 0`, `...: maxNamespaceDeletes is invalid, which counts as 0`, `...: blocked by maxNamespaceDeletes (<K> candidates > <N>)`, `...: config.projectOnboarding.projects is empty or missing, which never deletes a namespace`, `...: namespaceDeleteGracePeriod is invalid, which never deletes a namespace`, `...: its creation record is not bound to this namespace (...); delete it by hand if it should go` | managed cluster | Namespace kept |
 | `maxNamespaceDeletes is not a non-negative integer, so it counts as 0 and no namespace is deleted`, under the key `projectOnboarding.defaults.maxNamespaceDeletes` in shard 0 | hub | No namespace deleted |
@@ -1462,24 +1561,24 @@ not errors and are not listed.
 
 The status follows the pattern of `eso-secret-stores-status` in the External Secrets Operator
 policy. The enforce ConfigurationPolicy writes the ConfigMap with `mustonlyhave` while there are
-errors, and deletes it with `mustnothave` once there are none. The inform ConfigurationPolicy always
-asserts with `mustnothave` that the ConfigMap is absent. Errors therefore keep the `-test` Policy of
-the shard NonCompliant, and it returns to Compliant on the evaluation after they are fixed, unless
-something else keeps it NonCompliant: with pruning off, a stale object or a dropped label is
-reported by the inform ConfigurationPolicy as well, without any status ConfigMap. The `-test` Policy
+errors, and deletes it with `mustnothave` once there are none. The inform ConfigurationPolicy reports
+the same entries in its test report, which can never be satisfied. Errors therefore keep the `-test`
+Policy of the shard NonCompliant, and it returns to Compliant on the evaluation after they are
+fixed, unless something else keeps it NonCompliant: with pruning off, a stale object or a dropped
+label is reported by the inform ConfigurationPolicy as well. The `-test` Policy
 is NonCompliant while there are errors or while anything would be deleted or removed:
 
 | Situation | Enforce ConfigurationPolicy (shard Policy) | Inform ConfigurationPolicy (`-test` Policy) |
 |---|---|---|
-| Errors, `REMEDIATION` enforce | Writes the ConfigMap, Compliant for it | NonCompliant: the ConfigMap exists |
-| Errors, dry run (`REMEDIATION` inform) | NonCompliant: the ConfigMap is not found | Compliant for it |
+| Errors, `REMEDIATION` enforce | Writes the ConfigMap, Compliant for it | NonCompliant: its report lists the errors |
+| Errors, dry run (`REMEDIATION` inform) | NonCompliant: the ConfigMap is not found | NonCompliant: its report lists the errors |
 | No errors | Deletes the ConfigMap (dry run: reports it if one is left over) | Compliant for it |
 
 The project's own mode does not matter: an inform project's errors are written to the status as
 well, because the ConfigMap is a report in the add-on namespace and not part of the project. Under
 dry run nothing is written, so the shard Policy is NonCompliant and names the missing
-`project-onboarding-status-<shard>` ConfigMap, but the error text is not stored on the cluster. To
-read it, run with `REMEDIATION` set to `enforce`, or check the values against the error table.
+`project-onboarding-status-<shard>` ConfigMap. The error text is in the `-test` Policy's report
+assertion, in its compliance details, or check the values against the error table.
 
 Errors in `config.projectOnboarding.defaults` itself, which would affect every project, fail hub template
 resolution for the whole policy: `projectOnboarding.defaults`, or its `labels`, `annotations`, `groups`,
@@ -1601,6 +1700,26 @@ or keep projects small.
 - The namespace `open-cluster-management-agent-addon` exists on every managed cluster, including the
   hub, which Red Hat Advanced Cluster Management provides.
 
+## Known limitations
+
+These follow from what a ConfigurationPolicy can express, and are documented rather than fixed:
+
+- **Namespace metadata is written from a snapshot.** An existing Namespace is rendered with
+  `metadataComplianceType: mustonlyhave`, from the labels and annotations the managed cluster read
+  at the start of the evaluation. A label that another controller adds between that read and the
+  write can be removed by the write; the controller that owns it adds it back on its next
+  reconcile, and the next evaluation of this policy keeps it. A ConfigurationPolicy has no patch
+  of individual keys that also removes retired ones, so the exact write is what lets onboarding drop
+  the catalog keys it retired.
+- **A namespace is deleted by name, without a uid precondition.** The `mustnothave` that deletes a
+  namespace names it only: Red Hat Advanced Cluster Management sends a DELETE without
+  `DeleteOptions` preconditions, and a ConfigurationPolicy cannot request one. The guards, the
+  creation record and its uid, are checked in the same evaluation, just before the controller
+  acts. A namespace deleted and recreated under the same name inside that window would be deleted
+  without having passed them; it would need to be created by someone else, carry the creation
+  labels, and appear between the policy's read and its delete. Keep namespace creation of projects
+  with `deleteOnRemoval: true` to onboarding to rule this out.
+
 ## Limitations to check on a live cluster
 
 The validation suite checks rendering and template resolution, not enforcement. Check these on the
@@ -1608,9 +1727,9 @@ cluster after the first rollout, with a throwaway project in `mode: inform`:
 
 - `metadataComplianceType: mustonlyhave` on an existing Namespace removes exactly the dropped
   catalog keys and keeps the labels and annotations other tools own.
-- With pruning off, the inform ConfigurationPolicy carries two `musthave` checks for one Namespace
-  (the kept set and the stripped set). Confirm that the controller evaluates both and reports the
-  stripped one as NonCompliant without changing the Namespace.
+- With pruning off and a catalog label to drop, the inform ConfigurationPolicy carries one
+  `musthave` check for the Namespace, the stripped set. Confirm that the controller reports it as
+  NonCompliant without changing the Namespace.
 - The status ConfigMap of each shard is written, gated, and deleted as described in
   [Status](#status), and the compliance messages name `project-onboarding-status-<shard>`.
 - Each shard Policy resolves `.PolicyMetadata.name` to its own name on the hub, and the managed
@@ -1637,9 +1756,13 @@ cluster after the first rollout, with a throwaway project in `mode: inform`:
 - The admin AdminNetworkPolicy `autoshift-admin-deny-metadata` reports itself as ready and stays
   Compliant, a pod in a project cannot reach `169.254.169.254`, and a project `allow` to it does not
   get through.
-- [Namespace deletion](#namespace-deletion): a new namespace carries the creation record, a removed
-  project's namespace is deleted only with every guard in place, and the `mustnothave` of the
-  Namespace does not leave the ConfigurationPolicy stuck while the namespace terminates.
+- [Namespace deletion](#namespace-deletion): a new namespace carries the creation record and gets a
+  bound entry in `project-onboarding-records-<shard>`, a removed project's namespace is deleted
+  only with every guard in place, the ResourceQuota `autoshift-deletion-freeze` refuses a new
+  PersistentVolumeClaim while the namespace is pending, and the `mustnothave` of the Namespace does
+  not leave the ConfigurationPolicy stuck while the namespace terminates.
+- A reordered EgressFirewall or AdminNetworkPolicy is rewritten in the declared order, see
+  [Rule order](#rule-order).
 - The EgressIP `autoshift-<project>` stays Compliant, its `status.items` names an egress-assignable
   node for each address, and traffic from a pod in the project reaches an external host with that
   source address. After a changed `egressIP`, only the new address is assigned.
