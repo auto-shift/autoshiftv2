@@ -1,0 +1,52 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: olm-config
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# Each policy references a single bare manifest file (manifests/<policy>.yaml). Add another policy
+# by dropping manifests/<name>.yaml + a policies[] entry here (re-run generate-policy.sh --dir <this>).
+#
+# placementBindingDefaults.name is inert with one policy, but PolicyGenerator requires it as soon as
+# a second policies[] entry binds to the same placement.yaml.
+placementBindingDefaults:
+  name: binding-policy-olm-config
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: medium
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Default Placement (placement.yaml at the dir root); policies with a different predicate set
+  # their own placement.placementPath. PG includes it and generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  # OLMConfig with copied CSVs turned off.
+  - name: policy-olm-config
+    manifests:
+      - path: manifests/olm-config.yaml
+  # Readiness: OLM reports copied CSVs disabled.
+  - name: policy-olm-config-ready-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-olm-config
+    customMessage:
+      noncompliant: >-
+        OLM has not reported copied CSVs as disabled on OLMConfig cluster. Check
+        oc get olmconfig cluster -o yaml and the olm-operator logs in
+        openshift-operator-lifecycle-manager. Removing the existing copies can take a few minutes
+        on a cluster with many namespaces.
+    manifests:
+      - path: test/olm-config-ready.yaml
