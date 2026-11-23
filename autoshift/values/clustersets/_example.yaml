@@ -529,9 +529,32 @@ hubClusterSets:
       # NVIDIA card gets feature.node.kubernetes.io/pci-10de.present=true.
       #
       # workerConfig is nfd-worker.conf and replaces the default outright, so copy the default
-      # and extend it. nodeFeatureRules add custom labels, for example for AMD or Intel Gaudi
-      # accelerators. A label name without a prefix lands in feature.node.kubernetes.io/; any
-      # other prefix must be listed in extraLabelNs or nfd-master drops it.
+      # and extend it. Its lists (deviceClassWhitelist, deviceLabelFields) are replaced whole by a
+      # cluster that sets them, like every list in config.
+      #
+      # nodeFeatureRules adds hardware-specific labels. One fleet-wide set labels a mixed fleet
+      # node by node, because each rule matches the node's own hardware. Give it as a map keyed by
+      # the NodeFeatureRule name: maps merge by key from clusterset to cluster, so a cluster can add
+      # a rule, override one, or switch one off without restating the rest. The list form
+      # (- name: ..., rules: ...) is still accepted, but a cluster that sets it replaces the whole
+      # list. A label name without a prefix lands in feature.node.kubernetes.io/; any other prefix
+      # must be listed in extraLabelNs or nfd-master drops it.
+      #
+      # Per-cluster override, in clusters/<name>.yaml:
+      #   config:
+      #     nodeFeatureDiscovery:
+      #       nodeFeatureRules:
+      #         amd-gpu:
+      #           enabled: false            # no AMD nodes on this cluster
+      #         fpga-xilinx:                # one extra rule, the clusterset rules stay
+      #           rules:
+      #             - name: 'xilinx fpga present'
+      #               labels:
+      #                 xilinx-fpga: 'true'
+      #               matchFeatures:
+      #                 - feature: 'pci.device'
+      #                   matchExpressions:
+      #                     vendor: {op: 'In', value: ['10ee']}
       nodeFeatureDiscovery:
         workerConfig:
           core:
@@ -545,7 +568,10 @@ hubClusterSets:
               deviceLabelFields:
                 - 'vendor'
         nodeFeatureRules:
-          - name: 'nvidia-gpu'
+          # NVIDIA GPU, PCI vendor 10de. The NVIDIA GPU Operator itself selects on the vendor
+          # label (pci-10de.present) from workerConfig; this adds a plain nvidia-gpu label for
+          # workloads and placements.
+          nvidia-gpu:
             rules:
               - name: 'nvidia gpu present'
                 labels:
@@ -557,6 +583,46 @@ hubClusterSets:
                         op: 'In'
                         value:
                           - '10de'
+          # AMD GPU, PCI vendor 1002, limited to display (0300, 0302, 0380) and processing
+          # accelerator (1200) classes so other AMD devices do not match. Check the label against
+          # the node selector of the AMD GPU Operator release you install.
+          amd-gpu:
+            rules:
+              - name: 'amd gpu present'
+                labels:
+                  amd-gpu: 'true'
+                matchFeatures:
+                  - feature: 'pci.device'
+                    matchExpressions:
+                      vendor:
+                        op: 'In'
+                        value:
+                          - '1002'
+                      class:
+                        op: 'In'
+                        value:
+                          - '0300'
+                          - '0302'
+                          - '0380'
+                          - '1200'
+          # Intel Gaudi, PCI vendor 1da3 (Habana Labs), processing accelerator class 1200. Check
+          # the label against the node selector of the Intel Gaudi Base Operator you install.
+          intel-gaudi:
+            rules:
+              - name: 'intel gaudi present'
+                labels:
+                  intel-gaudi: 'true'
+                matchFeatures:
+                  - feature: 'pci.device'
+                    matchExpressions:
+                      vendor:
+                        op: 'In'
+                        value:
+                          - '1da3'
+                      class:
+                        op: 'In'
+                        value:
+                          - '1200'
         topologyUpdater: false
         enableTaints: false
         extraLabelNs: []
@@ -1177,10 +1243,16 @@ hubClusterSets:
       #   versions:
       #     - 'rhdh.vX.Y.Z'
       #   startingCSV: 'rhdh.vX.Y.Z'
-      # dev-spaces:
-      #   versions:
-      #     - 'devspaces.vX.Y.Z'
-      #   startingCSV: 'devspaces.vX.Y.Z'
+      # Dev Spaces CheCluster settings (policy-devspaces-instance), merged over the live spec.
+      # Any CheCluster field is accepted; maps merge, lists replace.
+      dev-spaces:
+        # versions:
+        #   - 'devspaces.vX.Y.Z'
+        # startingCSV: 'devspaces.vX.Y.Z'
+        checluster:
+          devEnvironments:
+            secondsOfInactivityBeforeIdling: 1800
+            maxNumberOfWorkspacesPerUser: 2
       # external-secrets-operator:
       #   versions:
       #     - 'openshift-external-secrets-operator.vX.Y.Z'
@@ -1349,6 +1421,21 @@ hubClusterSets:
       #       deviceInclusionSpec:
       #         deviceTypes: [disk]
       #         deviceMechanicalProperties: [NonRotational]
+      # =======================================================================
+      # NVIDIA GPU Operator. Requires the nvidia-gpu-operator label.
+      # =======================================================================
+      # Same key as the version pin (config.nvidia-gpu-operator.versions). clusterPolicy is merged
+      # over the policy's base ClusterPolicy spec: maps merge key by key and these values win,
+      # lists replace the default whole. Name only what you change. Every field must exist in the
+      # ClusterPolicy CRD of the installed channel; the API server rejects the whole object on
+      # the first unknown field.
+      nvidia-gpu-operator:
+        clusterPolicy:
+          mig:
+            strategy: single
+          dcgmExporter:
+            serviceMonitor:
+              enabled: true
       # =======================================================================
       # OpenShift Lightspeed. Requires the openshift-lightspeed label.
       # =======================================================================
@@ -2843,6 +2930,18 @@ hubClusterSets:
       openshift-lightspeed-source: redhat-operators
       openshift-lightspeed-source-namespace: openshift-marketplace
       openshift-lightspeed-version: ''
+
+      # =======================================================================
+      # NVIDIA GPU Operator (certified-operators; support is from NVIDIA)
+      # =======================================================================
+      # Selects GPU nodes on NFD's vendor label (feature.node.kubernetes.io/pci-10de.present), so
+      # enable node-feature-discovery as well. ClusterPolicy settings: config.nvidia-gpu-operator.
+      nvidia-gpu-operator: 'false'
+      nvidia-gpu-operator-subscription-name: gpu-operator-certified
+      nvidia-gpu-operator-channel: v25.3
+      nvidia-gpu-operator-source: certified-operators
+      nvidia-gpu-operator-source-namespace: openshift-marketplace
+      nvidia-gpu-operator-version: ''
 
       # =======================================================================
       # OpenShift Update Service: serves the update graph to a disconnected fleet.
