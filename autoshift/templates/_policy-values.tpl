@@ -34,6 +34,39 @@ ArgoCD all move together when a hub overrides the namespace.
 {{- (index $gitopsCfg "namespace") | default .Values.gitopsNamespace -}}
 {{- end -}}
 
+{{/*
+autoshift.policyStandard / autoshift.policyStandardHub = the effective ACM Governance standard names.
+policyStandardHub falls back to policyStandard, and both default to "NIST SP 800-53". Every consumer
+(the ApplicationSet plugin env, the valuesObject, both dedicated ConfigMap apps) must go through these,
+so the fallback is written once and the value is always validated.
+
+The name is a display string, but it is substituted into PolicyGenerator configs by sed in the CMP
+sidecar and pg-render.sh, and emitted into YAML in several places. Characters that would change sed or
+YAML structure are rejected here with a readable message: " ' \ | & { } and line breaks. Braces would
+otherwise be evaluated as a template by the ApplicationSet (goTemplate, missingkey=error). Everything
+else, including a colon (ISO/IEC 27001:2022), is fine because every emitted copy is quoted.
+*/}}
+{{- define "autoshift.validatePolicyStandard" -}}
+{{- if not (trim .value) -}}
+{{- fail (printf "%s must not be empty" .key) -}}
+{{- end -}}
+{{- if regexMatch "[\"'\\\\|&{}\\r\\n]" .value -}}
+{{- fail (printf "%s %q contains a character AutoShift cannot pass through safely (one of \" ' \\ | & { } or a line break)" .key .value) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "autoshift.policyStandard" -}}
+{{- $v := toString (((.Values.autoshift).policyStandard) | default "NIST SP 800-53") -}}
+{{- include "autoshift.validatePolicyStandard" (dict "key" "autoshift.policyStandard" "value" $v) -}}
+{{- $v -}}
+{{- end -}}
+
+{{- define "autoshift.policyStandardHub" -}}
+{{- $v := toString (((.Values.autoshift).policyStandardHub) | default (include "autoshift.policyStandard" .)) -}}
+{{- include "autoshift.validatePolicyStandard" (dict "key" "autoshift.policyStandardHub" "value" $v) -}}
+{{- $v -}}
+{{- end -}}
+
 {{- define "autoshift.policyValuesObject" -}}
 {{- $clusterSetSuffix := include "autoshift.clusterSetSuffix" . -}}
 gitopsNamespace: {{ include "autoshift.gitopsNamespace" . }}
@@ -41,6 +74,8 @@ policy_namespace: {{ printf "policies-%s" .Release.Name }}
 clusterSetSuffix: {{ $clusterSetSuffix }}
 autoshift:
   dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
+  policyStandard: {{ include "autoshift.policyStandard" . | quote }}
+  policyStandardHub: {{ include "autoshift.policyStandardHub" . | quote }}
   evaluationInterval:
     compliant: {{ (((.Values.autoshift).evaluationInterval).compliant) | default "watch" }}
     noncompliant: {{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "watch" }}
