@@ -21,7 +21,7 @@ other entry still applies. See [Status](#status).
 | Policy | Remediation | What it does |
 |---|---|---|
 | `policy-custom-sccs` | `${REMEDIATION}`: enforce, or inform under `autoshift.dryRun` | Creates and corrects the declared SCCs, their ClusterRoles and RoleBindings from `manifests/sccs.yaml`, and writes the `custom-sccs-status` ConfigMap while there are errors |
-| `policy-custom-sccs-test` | Always inform | From `test/sccs.yaml`: reports objects that are no longer declared and asserts that the status ConfigMap is absent. It never changes anything |
+| `policy-custom-sccs-test` | Always inform | From `test/sccs.yaml`: asserts every accepted SCC, ClusterRole and RoleBinding exactly as declared, reports objects that are no longer declared and the errors of its own evaluation in `custom-sccs-test-report`. It never deletes anything |
 
 Both files are the same template and differ only in the `$want` line. The
 inform-only checks are a policy of their own, as the [developer
@@ -29,8 +29,10 @@ guide](../../../docs/developer-guide.md#gating-on-cluster-state) requires: a `re
 the root of one Policy overrides all of its children, so a check bundled into the enforcing Policy
 would start changing what it should only report.
 
-`policy-custom-sccs-test` is Compliant only when every declared SCC is applied and nothing stale is
-left, so depend on it, not on `policy-custom-sccs`, when another policy needs that state.
+`policy-custom-sccs-test` is Compliant only when every declared SCC, ClusterRole and RoleBinding
+exists and matches, no entry has an error, and nothing stale is left, so depend on it, not on
+`policy-custom-sccs`, when another policy needs that state. It checks the objects themselves, so it
+does not report Compliant before the enforcing policy has applied them.
 `policy-custom-sccs` reports Compliant once its objects and its status ConfigMap are written, even
 when the status lists errors.
 
@@ -139,7 +141,13 @@ the SCC or ignore the setting:
 - a `runAsUser` `uid`, `uidRangeMin`, or `uidRangeMax` that is not an integer, such as `" 1000"`
 - a volume that differs from an SCC volume type only in case, such as `HostPath` or `Secret`.
   Volume types are case-sensitive.
-- `seLinuxContext.seLinuxOptions` that is not a map of `user`, `role`, `type`, and `level` strings
+- `seLinuxContext.seLinuxOptions` that is not a map of `user`, `role`, `type`, and `level` strings.
+  `seLinuxOptions: null` counts as unset.
+- `runAsUser.type: MustRunAs` without `uid`: SCC admission rejects it, because only
+  `MustRunAsRange` takes its range from the namespace
+- `fsGroup.ranges` or `supplementalGroups.ranges` that is not a list of `{min, max}` ID ranges, both
+  set, of non-negative integers with `min` at most `max`
+- `runAsUser.uidRangeMin` greater than `uidRangeMax`
 
 A `priority` makes this SCC win admission over the built-in SCCs, such as `restricted-v2`, for pods
 that validate against it and whose ServiceAccount, or the user who creates them, can use it.
@@ -195,7 +203,7 @@ The privileged capabilities are `*`, `ALL`, `SYS_ADMIN`, `SYS_MODULE`, `SYS_PTRA
 variable in both `sccs.yaml` templates.
 Other capabilities, such as `SETUID`, `SETGID`, and `SYS_CHROOT`, need no acknowledgment.
 
-An unset `uid` or `uidRangeMin` is not gated: SCC admission fills it from the
+An unset `uidRangeMin` of `MustRunAsRange` is not gated: SCC admission fills it from the
 `openshift.io/sa.scc.uid-range` annotation of the namespace, not with `0`. The SELinux types and
 seccomp profiles are the `$privSELinux` and `$privSeccomp` variables, and the volume types
 `$privVolumes`, in both templates.
@@ -213,6 +221,15 @@ as `-2` when two names produce the same key, so every key is a valid ConfigMap k
 exists only while there are errors, and `policy-custom-sccs-test` is NonCompliant while it exists.
 The same
 pattern is used by `project-onboarding`.
+
+`policy-custom-sccs-test` does not read that ConfigMap: under dry run nothing writes it. It reports
+what its own evaluation finds, the errors under the same keys and each stale object under
+`stale.<Kind>.<namespace>.<name>`, as the data of the ConfigMap `custom-sccs-test-report` in the
+same namespace. The report is a `musthave` on a ConfigMap that can never exist: its key `_unsatisfiable` is in both
+`data` and `binaryData`, which the API server refuses. The assertion therefore stays NonCompliant
+while there is anything to report, and its compliance message names the ConfigMap. The `-test`
+Policy has no `mustnothave` at all, so even Enforce clicked on it in the Governance console deletes
+nothing. With nothing to report the assertion is not rendered.
 
 An entry with an error renders none of its objects; objects that it created earlier stay in place.
 Errors include an invalid name or field, an unknown `spec` field, `users` or `groups` in `spec`, a
@@ -233,8 +250,9 @@ oc get configmap custom-sccs-status -n open-cluster-management-agent-addon -o ya
 ## Removal
 
 Removal is manual. When an entry is removed or disabled, or a namespace leaves `serviceAccounts`,
-its objects are not deleted. Each one is reported by `policy-custom-sccs-test` as a `mustnothave`
-violation, so it stays NonCompliant until the object is removed by hand:
+its objects are not deleted. Each one is reported by `policy-custom-sccs-test` under
+`stale.<Kind>.<namespace>.<name>` of `custom-sccs-test-report`, so it stays NonCompliant until the
+object is removed by hand:
 
 ```bash
 oc delete rolebinding autoshift-scc-<name> -n <namespace>

@@ -25,9 +25,17 @@
 # a RoleBinding owned elsewhere or a missing namespace skips only that RoleBinding. Every error is
 # reported in the ConfigMap custom-sccs-status (open-cluster-management-agent-addon), one data key
 # per entry, messages joined by "; ". The enforce ConfigurationPolicy writes it while there are
-# errors and deletes it when there are none; the inform one asserts it is absent, so
-# policy-custom-sccs-test is NonCompliant while any error stands. A hub `fail` is not used: it would block every valid entry on
+# errors and deletes it when there are none. The inform one never carries a mustnothave, so an
+# Enforce set on the -test Policy by hand can delete nothing: it reports the errors it computes
+# itself, and the stale objects of the sweep, as data of a musthave on the ConfigMap
+# custom-sccs-test-report, which can never exist (the key _unsatisfiable is in both data and
+# binaryData, which the API server refuses). policy-custom-sccs-test is therefore NonCompliant while
+# any error or stale object stands, under dry run too, where nothing writes the status ConfigMap. A hub `fail` is not used: it would block every valid entry on
 # the cluster because of one bad one.
+#
+# Readiness: the inform ConfigurationPolicy also asserts every accepted SCC, ClusterRole and
+# RoleBinding exactly as the enforce one applies them, so policy-custom-sccs-test is Compliant only
+# once each declared object exists and matches.
 #
 # Safety gate: allowPrivilegedContainer true, any allowHost* true, runAsUser or seLinuxContext
 # RunAsAny, runAsUser MustRunAs uid 0 or MustRunAsRange uidRangeMin 0 (negative values too), a
@@ -37,13 +45,16 @@
 # $privVolumes, a capability in $privCaps (allowed or default-added, with or without CAP_), or any
 # allowedUnsafeSysctls is an error unless the entry sets allowPrivileged: true, the deliberate
 # acknowledgment. SELinux types and levels, seccomp profiles and capabilities match in any case. An
-# unset uid or uidRangeMin is not gated: SCC admission fills it from the namespace's
+# unset uidRangeMin of MustRunAsRange is not gated: SCC admission fills it from the namespace's
 # openshift.io/sa.scc.uid-range annotation, not 0. Keep the lists in sync with the README.
 #
 # Validity (errors with or without allowPrivileged): priority fits int32, uid, uidRangeMin and
-# uidRangeMax are integers, defaultAllowPrivilegeEscalation true needs allowPrivilegeEscalation
-# true, no volume is a case variant of an SCC volume type in $fsTypes (HostPath for hostPath; the
-# types are case-sensitive), and seLinuxOptions is a map of user, role, type and level strings.
+# uidRangeMax are integers, runAsUser MustRunAs sets uid (admission rejects MustRunAs without one),
+# fsGroup and supplementalGroups ranges are lists of {min, max}, both set, with non-negative integers
+# and min at most max, uidRangeMin at most uidRangeMax, defaultAllowPrivilegeEscalation true needs allowPrivilegeEscalation true, no volume is a
+# case variant of an SCC volume type in $fsTypes (HostPath for hostPath; the types are
+# case-sensitive), and seLinuxOptions is a map of user, role, type and level strings. A null
+# seLinuxOptions counts as unset.
 #
 # serviceAccounts never grants use in a platform namespace ($platformNs: kube-*, openshift,
 # openshift-*, default, open-cluster-management*, multicluster-engine, hive), with no override.
@@ -53,8 +64,9 @@
 # key, so each is a valid ConfigMap key and one error never hides another.
 #
 # Removal is manual. An object labelled autoshift.io/managed-by: custom-sccs that this run does not
-# declare (its entry was removed or disabled, or a namespace left serviceAccounts) gets mustnothave in
-# the inform ConfigurationPolicy only, so it is reported and never deleted. Objects of an entry with
+# declare (its entry was removed or disabled, or a namespace left serviceAccounts) is reported in the
+# inform ConfigurationPolicy only, under the key stale.<Kind>.<namespace>.<name> of the report, and
+# never deleted. Objects of an entry with
 # errors are held: never reported, since the entry is still declared. No sweep runs when the rendered
 # config cannot be read or customSccs is not a map.
 #
@@ -150,6 +162,12 @@ object-templates-raw: |
   {{hub- else hub}}
   {{hub- $stOk := true hub}}
   {{hub- range $sk := keys $v | sortAlpha hub}}{{hub- if not (has $sk $st.keys) hub}}{{hub- $stOk = false hub}}{{hub- $bad = append $bad (printf "spec.%s.%s is not one of %s" $f $sk (join ", " $st.keys)) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $ranges := index $v "ranges" hub}}
+  {{hub- if not (kindIs "invalid" $ranges) hub}}
+  {{hub- $rangesOk := kindIs "slice" $ranges hub}}
+  {{hub- if $rangesOk hub}}{{hub- range $rg := $ranges hub}}{{hub- if not (kindIs "map" $rg) hub}}{{hub- $rangesOk = false hub}}{{hub- else hub}}{{hub- range $rk, $rv := $rg hub}}{{hub- if or (not (has $rk (list "min" "max"))) (kindIs "string" $rv) (not (regexMatch "^[0-9]{1,10}$" (printf "%v" $rv))) hub}}{{hub- $rangesOk = false hub}}{{hub- end hub}}{{hub- end hub}}{{hub- if not (and (hasKey $rg "min") (hasKey $rg "max")) hub}}{{hub- $rangesOk = false hub}}{{hub- else if $rangesOk hub}}{{hub- if gt (int64 (printf "%v" $rg.min)) (int64 (printf "%v" $rg.max)) hub}}{{hub- $rangesOk = false hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- if not $rangesOk hub}}{{hub- $stOk = false hub}}{{hub- $bad = append $bad (printf "spec.%s.ranges is not a list of {min, max} ID ranges of non-negative integers with min at most max" $f) hub}}{{hub- end hub}}
+  {{hub- end hub}}
   {{hub- if $stOk hub}}{{hub- $_ := set $scc $f $v hub}}{{hub- end hub}}
   {{hub- end hub}}
   {{hub- else if eq $f "allowedFlexVolumes" hub}}
@@ -164,10 +182,17 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- if and (eq (printf "%v" $scc.defaultAllowPrivilegeEscalation) "true") (ne (printf "%v" $scc.allowPrivilegeEscalation) "true") hub}}{{hub- $bad = append $bad "spec.defaultAllowPrivilegeEscalation true needs spec.allowPrivilegeEscalation true" hub}}{{hub- end hub}}
+  {{hub- if and (eq (printf "%v" (dig "type" "" $scc.runAsUser)) "MustRunAs") (not (hasKey $scc.runAsUser "uid")) hub}}{{hub- $bad = append $bad "spec.runAsUser.type MustRunAs needs spec.runAsUser.uid: unlike MustRunAsRange it does not take a UID from the namespace range" hub}}{{hub- end hub}}
   {{hub- range $uk := list "uid" "uidRangeMin" "uidRangeMax" hub}}{{hub- if hasKey $scc.runAsUser $uk hub}}{{hub- $uv := index $scc.runAsUser $uk hub}}{{hub- if or (kindIs "string" $uv) (not (regexMatch "^-?[0-9]+$" (printf "%v" $uv))) hub}}{{hub- $bad = append $bad (printf "spec.runAsUser.%s is not an integer" $uk) hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $rr := $scc.runAsUser hub}}{{hub- if and (hasKey $rr "uidRangeMin") (hasKey $rr "uidRangeMax") (regexMatch "^-?[0-9]+$" (printf "%v" $rr.uidRangeMin)) (regexMatch "^-?[0-9]+$" (printf "%v" $rr.uidRangeMax)) hub}}{{hub- if gt (int64 (printf "%v" $rr.uidRangeMin)) (int64 (printf "%v" $rr.uidRangeMax)) hub}}{{hub- $bad = append $bad "spec.runAsUser.uidRangeMin is greater than uidRangeMax" hub}}{{hub- end hub}}{{hub- end hub}}
   {{hub- $fsLower := list hub}}{{hub- range $t := $fsTypes hub}}{{hub- $fsLower = append $fsLower (lower $t) hub}}{{hub- end hub}}
   {{hub- range $vol := $scc.volumes hub}}{{hub- if and (not (has $vol $fsTypes)) (has (lower $vol) $fsLower) hub}}{{hub- $bad = append $bad (printf "spec.volumes %s is not a volume type: volume types are case-sensitive, for example hostPath or persistentVolumeClaim" $vol) hub}}{{hub- end hub}}{{hub- end hub}}
   {{hub- $seOpts := dig "seLinuxOptions" dict $scc.seLinuxContext hub}}
+  {{hub- if and (hasKey $scc.seLinuxContext "seLinuxOptions") (kindIs "invalid" $seOpts) hub}}
+  {{hub- $slc := dict hub}}{{hub- range $sk, $sv := $scc.seLinuxContext hub}}{{hub- if ne $sk "seLinuxOptions" hub}}{{hub- $_ := set $slc $sk $sv hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $_ := set $scc "seLinuxContext" $slc hub}}
+  {{hub- $seOpts = dict hub}}
+  {{hub- end hub}}
   {{hub- if kindIs "map" $seOpts hub}}
   {{hub- range $sk := keys $seOpts | sortAlpha hub}}{{hub- if not (has $sk (list "user" "role" "type" "level")) hub}}{{hub- $bad = append $bad (printf "spec.seLinuxContext.seLinuxOptions.%s is not one of user, role, type, level" $sk) hub}}{{hub- else if not (kindIs "string" (index $seOpts $sk)) hub}}{{hub- $bad = append $bad (printf "spec.seLinuxContext.seLinuxOptions.%s is not a string" $sk) hub}}{{hub- end hub}}{{hub- end hub}}
   {{hub- else if not (kindIs "invalid" $seOpts) hub}}
@@ -247,7 +272,6 @@ object-templates-raw: |
   {{- $_ := set $status $e.key (list (printf "ClusterRole autoshift-scc-%s already exists and is not managed by custom-sccs" $e.name)) }}
   {{- $_ := set $held $e.name true }}
   {{- else }}
-  {{hub- if eq $want "enforce" hub}}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: security.openshift.io/v1
@@ -280,7 +304,6 @@ object-templates-raw: |
             - {{ $e.name | toJson }}
           verbs:
             - use
-  {{hub- end hub}}
   {{- range $ns, $sas := $e.byNs }}
   {{- if not (lookup "v1" "Namespace" "" $ns) }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "namespace %s does not exist, so its RoleBinding is not created" $ns)) }}
@@ -289,7 +312,6 @@ object-templates-raw: |
   {{- if and $liveRB (ne (printf "%v" (index (dig "metadata" "labels" dict $liveRB) "autoshift.io/managed-by" | default "")) "custom-sccs") }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/autoshift-scc-%s already exists and is not managed by custom-sccs, so it is not changed" $ns $e.name)) }}
   {{- else }}
-  {{hub- if eq $want "enforce" hub}}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: rbac.authorization.k8s.io/v1
@@ -310,12 +332,13 @@ object-templates-raw: |
           name: {{ $sa | toJson }}
           namespace: {{ $ns | toJson }}
         {{- end }}
-  {{hub- end hub}}
   {{- end }}
   {{- end }}
   {{- end }}
   {{- end }}
   {{- end }}
+  {{- $report := dict }}
+  {{- range $k, $msgs := $status }}{{- $_ := set $report $k (join "; " $msgs) }}{{- end }}
   {{hub- if eq $want "inform" hub}}
   {{- if $hub.sweep }}
   {{- range $kind := list (dict "apiVersion" "security.openshift.io/v1" "kind" "SecurityContextConstraints") (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "ClusterRole") (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "RoleBinding") }}
@@ -324,15 +347,7 @@ object-templates-raw: |
   {{- $objName := printf "%v" (dig "metadata" "name" "" $obj) }}
   {{- $owner := printf "%v" (index (dig "metadata" "labels" dict $obj) "autoshift.io/scc" | default "") }}
   {{- if not (or (hasKey $held $owner) (hasKey $hub.declared (printf "%s|%s|%s" $kind.kind $objNs $objName))) }}
-  - complianceType: mustnothave
-    objectDefinition:
-      apiVersion: {{ $kind.apiVersion | toJson }}
-      kind: {{ $kind.kind | toJson }}
-      metadata:
-        name: {{ $objName | toJson }}
-        {{- if $objNs }}
-        namespace: {{ $objNs | toJson }}
-        {{- end }}
+  {{- $_ := set $report (printf "stale.%s.%s.%s" $kind.kind $objNs $objName | trunc 253) (printf "%s %s is labelled autoshift.io/managed-by: custom-sccs but no longer declared; it is not deleted: delete it by hand if it should go" $kind.kind (ternary (printf "%s/%s" $objNs $objName) $objName (ne $objNs ""))) }}
   {{- end }}
   {{- end }}
   {{- end }}
@@ -363,11 +378,27 @@ object-templates-raw: |
         namespace: open-cluster-management-agent-addon
   {{- end }}
   {{hub- else hub}}
-  - complianceType: mustnothave
+  {{- /* Always one satisfied assertion, so the -test ConfigurationPolicy is never empty: the agent namespace exists, and naming it changes nothing even if the Policy were set to enforce. */}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: open-cluster-management-agent-addon
+  {{- if $report }}
+  - complianceType: musthave
     objectDefinition:
       apiVersion: v1
       kind: ConfigMap
       metadata:
-        name: custom-sccs-status
+        name: custom-sccs-test-report
         namespace: open-cluster-management-agent-addon
+      data:
+        {{- range $k, $v := $report }}
+        {{ $k | toJson }}: {{ $v | toJson }}
+        {{- end }}
+        _unsatisfiable: "never created: this key is in both data and binaryData, which the API server refuses"
+      binaryData:
+        _unsatisfiable: ""
+  {{- end }}
   {{hub- end hub}}
