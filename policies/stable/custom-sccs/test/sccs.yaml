@@ -1,4 +1,4 @@
-# SecurityContextConstraints from config.securityContextConstraints, a map keyed by SCC name.
+# SecurityContextConstraints from config.customSccs, a map keyed by SCC name.
 # Rendered twice, identically except for $want: manifests/sccs.yaml is the enforce
 # ConfigurationPolicy (Policy policy-custom-sccs), test/sccs.yaml the inform one (Policy
 # policy-custom-sccs-test). Keep the two files in sync.
@@ -56,7 +56,7 @@
 # declare (its entry was removed or disabled, or a namespace left serviceAccounts) gets mustnothave in
 # the inform ConfigurationPolicy only, so it is reported and never deleted. Objects of an entry with
 # errors are held: never reported, since the entry is still declared. No sweep runs when the rendered
-# config cannot be read or securityContextConstraints is not a map.
+# config cannot be read or customSccs is not a map.
 #
 # Hub results reach the managed side as base64-encoded JSON in one quoted string, never as template
 # text: go-template-utils rewrites template text with regexes (autoindent, toInt) before parsing,
@@ -73,7 +73,7 @@ object-templates-raw: |
   {{hub- $entries := list hub}}
   {{hub- $sweep := false hub}}
   {{hub- $sccs := dict hub}}
-  {{hub- $sccsRaw := index $cfg "securityContextConstraints" hub}}
+  {{hub- $sccsRaw := index $cfg "customSccs" hub}}
   {{hub- if not (and $rcm $cfg) hub}}
   {{hub- $_ := set $errs "rendered-config" (list (printf "cannot read %s.rendered-config" .ManagedClusterName)) hub}}
   {{hub- else if kindIs "map" $sccsRaw hub}}
@@ -82,7 +82,7 @@ object-templates-raw: |
   {{hub- else if kindIs "invalid" $sccsRaw hub}}
   {{hub- $sweep = true hub}}
   {{hub- else hub}}
-  {{hub- $_ := set $errs "securityContextConstraints" (list "config.securityContextConstraints is not a map") hub}}
+  {{hub- $_ := set $errs "customSccs" (list "config.customSccs is not a map") hub}}
   {{hub- end hub}}
   {{hub- $dns1123 := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" hub}}
   {{hub- $subdomain := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" hub}}

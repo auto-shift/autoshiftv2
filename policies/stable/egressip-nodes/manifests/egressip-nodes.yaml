@@ -1,8 +1,8 @@
-# EgressIP-assignable nodes, from config.egressIPNodes: every selected node gets the label
+# EgressIP-assignable nodes, from config.egressipNodes: every selected node gets the label
 # k8s.ovn.org/egress-assignable: "" (musthave on the Node, so no other label or field is touched).
 #
 #   config:
-#     egressIPNodes:
+#     egressipNodes:
 #       worker-0.example.com: true     # a node name (DNS-1123 subdomain) and true or false
 #       worker-1.example.com: false    # false: never selected, even when nodeSelector matches it
 #       nodeSelector:                  # optional: also select every node with these labels
@@ -31,9 +31,9 @@ object-templates-raw: |
   {{hub- if not $rcm hub}}{{hub- fail (printf "egressip-nodes: cannot read %s.rendered-config" .ManagedClusterName) hub}}{{hub- end hub}}
   {{hub- $cfg := index ($rcm.data | default dict) "config" | default "" | fromYaml hub}}
   {{hub- if not (kindIs "map" $cfg) hub}}{{hub- fail (printf "egressip-nodes: config in %s.rendered-config is not a map" .ManagedClusterName) hub}}{{hub- end hub}}
-  {{hub- $raw := index $cfg "egressIPNodes" hub}}
+  {{hub- $raw := index $cfg "egressipNodes" hub}}
   {{hub- if kindIs "invalid" $raw hub}}{{hub- $raw = dict hub}}{{hub- end hub}}
-  {{hub- if not (kindIs "map" $raw) hub}}{{hub- fail "egressip-nodes: config.egressIPNodes is not a map keyed by node name" hub}}{{hub- end hub}}
+  {{hub- if not (kindIs "map" $raw) hub}}{{hub- fail "egressip-nodes: config.egressipNodes is not a map keyed by node name" hub}}{{hub- end hub}}
   {{hub- $subdomain := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" hub}}
   {{hub- $labelName := "^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$" hub}}
   {{hub- $labelValue := "^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$" hub}}
@@ -70,7 +70,7 @@ object-templates-raw: |
   {{hub- $_ := set $nodes $key $v hub}}
   {{hub- end hub}}
   {{hub- end hub}}
-  {{hub- if $errs hub}}{{hub- fail (printf "egressip-nodes: config.egressIPNodes.%s" (join "; config.egressIPNodes." $errs)) hub}}{{hub- end hub}}
+  {{hub- if $errs hub}}{{hub- fail (printf "egressip-nodes: config.egressipNodes.%s" (join "; config.egressipNodes." $errs)) hub}}{{hub- end hub}}
   {{- $hub := {{hub dict "nodes" $nodes "selector" (join "," $selector) | toJson | quote hub}} | fromJson }}
   {{- $label := "k8s.ovn.org/egress-assignable" }}
   {{- $status := dict }}
@@ -99,7 +99,7 @@ object-templates-raw: |
   {{- range $n := (lookup "v1" "Node" "" "" $label).items | default list }}
   {{- $name := printf "%v" (dig "metadata" "name" "" $n) }}
   {{- if and $name (not (hasKey $selected $name)) }}
-  {{- $_ := set $status $name (printf "node %s carries %s but is not selected by config.egressIPNodes; it is not removed automatically, remove it with: oc label node %s %s-" $name $label $name $label) }}
+  {{- $_ := set $status $name (printf "node %s carries %s but is not selected by config.egressipNodes; it is not removed automatically, remove it with: oc label node %s %s-" $name $label $name $label) }}
   {{- end }}
   {{- end }}
   {{- range $name, $_ := $selected }}

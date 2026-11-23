@@ -1,4 +1,4 @@
-# Project onboarding, from config.projects (per project) and config.projectDefaults (shared).
+# Project onboarding, from config.projectOnboarding: projects (per project) and defaults (shared).
 # Rendered twice, identically except for $want on the next line: manifests/projects.yaml is the
 # enforce ConfigurationPolicy, test/projects.yaml the inform one. Each renders only the projects
 # whose effective mode equals $want. Keep the two files in sync.
@@ -70,9 +70,9 @@
 # managed cluster when its CRD exists, so on a hub; a hub template cannot list cluster-scoped kinds
 # outside the policy namespace). It is then
 # kept, with the reason in the status, unless the cluster label
-# autoshift.io/project-onboarding-delete-namespaces is 'true' ($nsDelOn), prune is on, config.projects
+# autoshift.io/project-onboarding-delete-namespaces is 'true' ($nsDelOn), prune is on, config.projectOnboarding.projects
 # has a project ($projEmpty: an empty or missing map never marks or deletes),
-# projectDefaults.namespaceDeleteGracePeriod is valid, and it holds no storage ($storeKinds): no
+# projectOnboarding.defaults.namespaceDeleteGracePeriod is valid, and it holds no storage ($storeKinds): no
 # PersistentVolumeClaim in any phase, and no VolumeSnapshot, ObjectBucketClaim, DataVolume or
 # VirtualMachine, each listed only when its CRD exists. A CRD that exists without serving the
 # version listed blocks the deletion, and a lookup that fails (Forbidden) fails the template, so
@@ -111,10 +111,10 @@
 # never adds anything, so writes from two shards converge. Under dry run the enforce
 # ConfigurationPolicy is inform, so nothing is recorded (see Dry run in the README).
 #
-# Circuit breaker: projectDefaults.maxNamespaceDeletes, validated on the hub against ^[0-9]{1,9}$
+# Circuit breaker: projectOnboarding.defaults.maxNamespaceDeletes, validated on the hub against ^[0-9]{1,9}$
 # (not a string), or a float64 holding such an integer (the rendered config passes through YAML,
 # which writes 1000000 as 1e+06). Unset or null: no limit. 0: nothing is deleted, only reported. Any
-# other value is reported under the status key projectDefaults.maxNamespaceDeletes (shard 0) and
+# other value is reported under the status key projectOnboarding.defaults.maxNamespaceDeletes (shard 0) and
 # counts as 0. A positive N, with both cluster labels on, passes every shard the declared project
 # names ($allNames, label-value names only), so each shard counts the same global set of Namespaces
 # that pass every guard with recorded mode enforce and whose grace period is over ($nsDelCount);
@@ -130,7 +130,7 @@
 # NonCompliant without changing anything. Annotations are only merged. A new Namespace is created
 # with this run's metadata alone.
 #
-# Quotas: a project's size selects projectDefaults.sizes.<size>; its quota and limitRange maps are
+# Quotas: a project's size selects projectOnboarding.defaults.sizes.<size>; its quota and limitRange maps are
 # merged over the size (mergeOverwrite, so an empty override never blanks a key) into the ResourceQuota
 # autoshift-quota (spec.hard) and the LimitRange autoshift-limits (one Container item). Both are
 # mustonlyhave, so a removed key goes away; the LimitRange is rendered with the API server's defaulting
@@ -142,7 +142,7 @@
 # container resource. A quantity not in canonical form ($canon) is rendered as written and listed
 # as a note.
 #
-# Network: a project's networkProfile selects projectDefaults.networkProfiles.<profile>. Its rules and
+# Network: a project's networkProfile selects projectOnboarding.defaults.networkProfiles.<profile>. Its rules and
 # the project's network.rules are merged by rule name (mergeOverwrite of each rule, project last);
 # enabled: false drops a rule, and network.defaultDeny overrides the profile's per direction. Each rule
 # is validated into the rule model ($ruleModel: direction, action, origin profile or project, in-cluster
@@ -177,7 +177,7 @@
 # router pods are not matched), a missing EgressFirewall or AdminNetworkPolicy CRD, and an ingress
 # deny from cidrs. The managed-cluster ones block the project like an ownership block.
 #
-# Admin network policies: each enabled projectDefaults.adminNetworkPolicies entry renders the
+# Admin network policies: each enabled projectOnboarding.defaults.adminNetworkPolicies entry renders the
 # AdminNetworkPolicy autoshift-admin-<entry>, once and in the enforce ConfigurationPolicy only (drift
 # is corrected there; under dry-run that one is inform and reports it), independent of projects.
 # Priority 10 upward in entry-name order, so at most 40 entries (10 to 49) and all ahead of the
@@ -186,7 +186,7 @@
 # Peers: namespaces, router (allow only), monitoring, dns (openshift-dns on 5353, its own rule) and,
 # egress only, cidrs as networks peers of up to 25. Any invalid entry, or more than 40, fails the tier
 # closed: no admin AdminNetworkPolicy renders and none is pruned, so live ones stay as they were.
-# Errors and a missing CRD are reported under the status key projectDefaults.adminNetworkPolicies.
+# Errors and a missing CRD are reported under the status key projectOnboarding.defaults.adminNetworkPolicies.
 #
 # EgressIP: a project's egressIP list (IPv4 dotted decimal or IPv6 hex groups, no prefix length)
 # renders the cluster-scoped EgressIP autoshift-<name>, selecting the namespaces labeled
@@ -230,12 +230,13 @@
 # annotations or groups value that is not a map, a group that is not a string, and a label or
 # annotation with a platform key ($platformKey: the keys that make a namespace a router or
 # monitoring peer, or lift Pod Security, SCC, run-level or scheduling guards) that
-# projectDefaults.allowedPlatformKeys does not map to true. An unknown mode is reported and the
+# projectOnboarding.defaults.allowedPlatformKeys does not map to true. An unknown mode is reported and the
 # project renders in inform. The managed cluster adds ownership blocks, which render nothing for the
 # project: a namespace another project owns, or an existing unowned one without adopt: true. A
-# rendered config that cannot be read, or whose projects key is not a map, is reported under the key
-# rendered-config and nothing renders; a readable config with no projects key has no projects, so
-# nothing is reported. Malformed projectDefaults fails the hub template for every project. A project
+# rendered config that cannot be read, or whose projectOnboarding or projectOnboarding.projects key is
+# present but not a map (false and [] included), is reported under the key rendered-config and
+# nothing renders; a readable config with no projects key has no projects, so nothing is reported.
+# Malformed projectOnboarding.defaults fails the hub template for every project. A project
 # name that is not a ConfigMap key is reported under the name with each invalid character replaced
 # by "_". The enforce ConfigurationPolicy writes the ConfigMap while there are errors and deletes it
 # when there are none; the inform one asserts it is absent, so it is NonCompliant while the
@@ -267,20 +268,26 @@ object-templates-raw: |
   {{hub- $cfgRaw := index ($rcm.data | default dict) "config" | default "" | fromYaml hub}}
   {{hub- $cfg := dict hub}}
   {{hub- if kindIs "map" $cfgRaw hub}}{{hub- $cfg = $cfgRaw hub}}{{hub- end hub}}
+  {{hub- $poRaw := index $cfg "projectOnboarding" hub}}
+  {{hub- $po := dict hub}}
+  {{hub- if kindIs "map" $poRaw hub}}{{hub- $po = $poRaw hub}}{{hub- end hub}}
+  {{hub- $projVal := index $po "projects" hub}}
   {{hub- $cfgErr := "" hub}}
   {{hub- if not (and $rcm $cfg) hub}}
   {{hub- $cfgErr = printf "cannot read %s.rendered-config" .ManagedClusterName hub}}
-  {{hub- else if and (index $cfg "projects") (not (kindIs "map" (index $cfg "projects"))) hub}}
-  {{hub- $cfgErr = printf "config.projects in %s.rendered-config is not a map" .ManagedClusterName hub}}
+  {{hub- else if not (or (kindIs "map" $poRaw) (kindIs "invalid" $poRaw)) hub}}
+  {{hub- $cfgErr = printf "config.projectOnboarding in %s.rendered-config is not a map" .ManagedClusterName hub}}
+  {{hub- else if not (or (kindIs "map" $projVal) (kindIs "invalid" $projVal)) hub}}
+  {{hub- $cfgErr = printf "config.projectOnboarding.projects in %s.rendered-config is not a map" .ManagedClusterName hub}}
   {{hub- end hub}}
   {{hub- $projects := dict hub}}
-  {{hub- if kindIs "map" (index $cfg "projects") hub}}{{hub- $projects = index $cfg "projects" hub}}{{hub- end hub}}
-  {{hub- $defaultsRaw := index $cfg "projectDefaults" | default dict hub}}
-  {{hub- if not (kindIs "map" $defaultsRaw) hub}}{{hub- fail "config.projectDefaults is not a map" hub}}{{hub- end hub}}
+  {{hub- if kindIs "map" $projVal hub}}{{hub- $projects = $projVal hub}}{{hub- end hub}}
+  {{hub- $defaultsRaw := index $po "defaults" | default dict hub}}
+  {{hub- if not (kindIs "map" $defaultsRaw) hub}}{{hub- fail "config.projectOnboarding.defaults is not a map" hub}}{{hub- end hub}}
   {{hub- $defaults := dict hub}}
   {{hub- range $section := list "labels" "annotations" "groups" "roles" "sizes" "networkProfiles" "allowedPlatformKeys" hub}}
   {{hub- $sectionCfg := index $defaultsRaw $section | default dict hub}}
-  {{hub- if not (kindIs "map" $sectionCfg) hub}}{{hub- fail (printf "config.projectDefaults.%s is not a map" $section) hub}}{{hub- end hub}}
+  {{hub- if not (kindIs "map" $sectionCfg) hub}}{{hub- fail (printf "config.projectOnboarding.defaults.%s is not a map" $section) hub}}{{hub- end hub}}
   {{hub- $_ := set $defaults $section $sectionCfg hub}}
   {{hub- end hub}}
   {{hub- $dns1123 := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" hub}}
@@ -431,7 +438,6 @@ object-templates-raw: |
   {{hub- else hub}}{{hub- $graceBad = true hub}}
   {{hub- end hub}}
   {{hub- $projEmpty := eq (len $projects) 0 hub}}
-  {{hub- $projVal := index $cfg "projects" hub}}
   {{hub- $breaker := and $nsDelOn $pruneOn (gt $maxDel 0) hub}}
   {{hub- $allNames := list hub}}
   {{hub- if $breaker hub}}{{hub- range $n, $pv := $projects hub}}{{hub- if and (le (len $n) 63) (regexMatch $labelValue $n) hub}}{{hub- $allNames = append $allNames $n hub}}{{hub- end hub}}{{hub- end hub}}{{hub- end hub}}
@@ -440,7 +446,7 @@ object-templates-raw: |
   {{hub- $adminRaw := index $defaultsRaw "adminNetworkPolicies" hub}}
   {{hub- $adminCfg := dict hub}}
   {{hub- if ne $shard 0 hub}}
-  {{hub- else if kindIs "map" $adminRaw hub}}{{hub- $adminCfg = $adminRaw hub}}{{hub- else if not (kindIs "invalid" $adminRaw) hub}}{{hub- $adminErrs = append $adminErrs "projectDefaults.adminNetworkPolicies is not a map" hub}}{{hub- end hub}}
+  {{hub- else if kindIs "map" $adminRaw hub}}{{hub- $adminCfg = $adminRaw hub}}{{hub- else if not (kindIs "invalid" $adminRaw) hub}}{{hub- $adminErrs = append $adminErrs "projectOnboarding.defaults.adminNetworkPolicies is not a map" hub}}{{hub- end hub}}
   {{hub- range $entryName := keys $adminCfg | sortAlpha hub}}
   {{hub- $entry := index $adminCfg $entryName hub}}
   {{hub- $bad := list hub}}
@@ -736,7 +742,7 @@ object-templates-raw: |
   {{hub- $sizeSkipped := list hub}}
   {{hub- $sizeHard := 1415577 hub}}
   {{hub- $maxProjects := 3200 hub}}
-  {{hub- if gt $sizeTotal $sizeHard hub}}{{hub- fail (printf "project-onboarding: the policy would be about %d bytes from the projectDefaults.adminNetworkPolicies errors alone, over the %d bytes that keep it below the etcd request limit; fix projectDefaults.adminNetworkPolicies (see Size limit in the project-onboarding README)" $sizeTotal $sizeHard) hub}}{{hub- end hub}}
+  {{hub- if gt $sizeTotal $sizeHard hub}}{{hub- fail (printf "project-onboarding: the policy would be about %d bytes from the projectOnboarding.defaults.adminNetworkPolicies errors alone, over the %d bytes that keep it below the etcd request limit; fix projectOnboarding.defaults.adminNetworkPolicies (see Size limit in the project-onboarding README)" $sizeTotal $sizeHard) hub}}{{hub- end hub}}
   {{hub- if gt (len $projects) $maxProjects hub}}{{hub- fail (printf "project-onboarding: %d projects declared, maximum %d per cluster; split the projects across clusters (see Size limit in the project-onboarding README)" (len $projects) $maxProjects) hub}}{{hub- end hub}}
   {{- $rendered := dict }}
   {{- $live := dict }}
@@ -818,19 +824,19 @@ object-templates-raw: |
   {{- $_ := set $status "rendered-config" (list ({{hub $cfgErr | toJson | base64enc | quote hub}} | base64dec | fromJson)) }}
   {{hub- end hub}}
   {{hub- if and $maxDelBad (eq $shard 0) hub}}
-  {{- $_ := set $status "projectDefaults.maxNamespaceDeletes" (list "maxNamespaceDeletes is not a non-negative integer, so it counts as 0 and no namespace is deleted") }}
+  {{- $_ := set $status "projectOnboarding.defaults.maxNamespaceDeletes" (list "maxNamespaceDeletes is not a non-negative integer, so it counts as 0 and no namespace is deleted") }}
   {{hub- end hub}}
   {{hub- if and $graceLow (eq $shard 0) hub}}
-  {{- $_ := set $status "projectDefaults.namespaceDeleteGracePeriod" (list "namespaceDeleteGracePeriod is shorter than the minimum of 1h, so the default 24h is used") }}
+  {{- $_ := set $status "projectOnboarding.defaults.namespaceDeleteGracePeriod" (list "namespaceDeleteGracePeriod is shorter than the minimum of 1h, so the default 24h is used") }}
   {{hub- end hub}}
   {{hub- if and $graceBad (eq $shard 0) hub}}
-  {{- $_ := set $status "projectDefaults.namespaceDeleteGracePeriod" (list "namespaceDeleteGracePeriod is not a positive duration in hours, minutes and seconds, such as 24h or 1h30m, so no namespace is marked for deletion or deleted") }}
+  {{- $_ := set $status "projectOnboarding.defaults.namespaceDeleteGracePeriod" (list "namespaceDeleteGracePeriod is not a positive duration in hours, minutes and seconds, such as 24h or 1h30m, so no namespace is marked for deletion or deleted") }}
   {{hub- end hub}}
   {{hub- if $adminErrs hub}}
-  {{- $_ := set $status "projectDefaults.adminNetworkPolicies" ({{hub $adminMsgs | toJson | base64enc | quote hub}} | base64dec | fromJson) }}
+  {{- $_ := set $status "projectOnboarding.defaults.adminNetworkPolicies" ({{hub $adminMsgs | toJson | base64enc | quote hub}} | base64dec | fromJson) }}
   {{hub- else if $adminANPs hub}}
   {{- if not $anpCrd }}
-  {{- $_ := set $status "projectDefaults.adminNetworkPolicies" (list "the AdminNetworkPolicy CRD (adminnetworkpolicies.policy.networking.k8s.io) is not installed, so the admin network policies cannot be enforced") }}
+  {{- $_ := set $status "projectOnboarding.defaults.adminNetworkPolicies" (list "the AdminNetworkPolicy CRD (adminnetworkpolicies.policy.networking.k8s.io) is not installed, so the admin network policies cannot be enforced") }}
   {{- end }}
   {{hub- end hub}}
   {{hub- range $name, $p := $projects hub}}
@@ -956,7 +962,7 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- if and $ok (regexMatch $platformKey $k) (ne (printf "%v" (index $defaults.allowedPlatformKeys $k)) "true") hub}}
   {{hub- $ok = false hub}}
-  {{hub- $errs = append $errs (printf "%s %s is reserved for the platform; list it in projectDefaults.allowedPlatformKeys to set it" (ternary "label" "annotation" (eq $kind "labels")) $k) hub}}
+  {{hub- $errs = append $errs (printf "%s %s is reserved for the platform; list it in projectOnboarding.defaults.allowedPlatformKeys to set it" (ternary "label" "annotation" (eq $kind "labels")) $k) hub}}
   {{hub- end hub}}
   {{hub- $from := index $keyFrom $kind hub}}
   {{hub- if and $ok (hasKey $from $k) hub}}
@@ -1040,16 +1046,16 @@ object-templates-raw: |
   {{hub- else if $sizeRaw hub}}
   {{hub- $size := printf "%v" $sizeRaw hub}}
   {{hub- if not (hasKey $defaults.sizes $size) hub}}
-  {{hub- $errs = append $errs (printf "size %s is not defined in projectDefaults.sizes" $size) hub}}
+  {{hub- $errs = append $errs (printf "size %s is not defined in projectOnboarding.defaults.sizes" $size) hub}}
   {{hub- $valid = false hub}}
   {{hub- else if not (kindIs "map" (index $defaults.sizes $size)) hub}}
-  {{hub- $errs = append $errs (printf "projectDefaults.sizes.%s is not a map" $size) hub}}
+  {{hub- $errs = append $errs (printf "projectOnboarding.defaults.sizes.%s is not a map" $size) hub}}
   {{hub- $valid = false hub}}
   {{hub- else hub}}
   {{hub- range $section := list "quota" "limitRange" hub}}
   {{hub- $base := index (index $defaults.sizes $size) $section | default dict hub}}
   {{hub- $own := dig $section dict $fields | default dict hub}}
-  {{hub- if not (kindIs "map" $base) hub}}{{hub- $errs = append $errs (printf "projectDefaults.sizes.%s.%s is not a map" $size $section) hub}}{{hub- $_ := set $sizedOk $section false hub}}{{hub- end hub}}
+  {{hub- if not (kindIs "map" $base) hub}}{{hub- $errs = append $errs (printf "projectOnboarding.defaults.sizes.%s.%s is not a map" $size $section) hub}}{{hub- $_ := set $sizedOk $section false hub}}{{hub- end hub}}
   {{hub- if not (kindIs "map" $own) hub}}{{hub- $errs = append $errs (printf "%s is not a map" $section) hub}}{{hub- $_ := set $sizedOk $section false hub}}{{hub- $own = dict hub}}{{hub- end hub}}
   {{hub- $ownSet := dict hub}}
   {{hub- range $k, $v := $own hub}}
@@ -1137,9 +1143,9 @@ object-templates-raw: |
   {{hub- else if $profileRaw hub}}
   {{hub- $profileName := printf "%v" $profileRaw hub}}
   {{hub- if not (hasKey $defaults.networkProfiles $profileName) hub}}
-  {{hub- $netErrs = append $netErrs (printf "networkProfile %s is not defined in projectDefaults.networkProfiles" $profileName) hub}}
+  {{hub- $netErrs = append $netErrs (printf "networkProfile %s is not defined in projectOnboarding.defaults.networkProfiles" $profileName) hub}}
   {{hub- else if not (kindIs "map" (index $defaults.networkProfiles $profileName)) hub}}
-  {{hub- $netErrs = append $netErrs (printf "projectDefaults.networkProfiles.%s is not a map" $profileName) hub}}
+  {{hub- $netErrs = append $netErrs (printf "projectOnboarding.defaults.networkProfiles.%s is not a map" $profileName) hub}}
   {{hub- else hub}}
   {{hub- $profile = index $defaults.networkProfiles $profileName hub}}
   {{hub- end hub}}
@@ -1150,7 +1156,7 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- $netDeny := dict "ingress" false "egress" false hub}}
   {{hub- $ruleLayers := list hub}}
-  {{hub- range $layer := list (list (printf "projectDefaults.networkProfiles.%v" $profileRaw) $profile) (list "network" $network) hub}}
+  {{hub- range $layer := list (list (printf "projectOnboarding.defaults.networkProfiles.%v" $profileRaw) $profile) (list "network" $network) hub}}
   {{hub- $where := index $layer 0 hub}}
   {{hub- $src := index $layer 1 hub}}
   {{hub- range $nk := keys $src | sortAlpha hub}}{{hub- if not (has $nk (list "defaultDeny" "rules")) hub}}{{hub- $netErrs = append $netErrs (printf "%s key %s is not defaultDeny or rules" $where $nk) hub}}{{hub- end hub}}{{hub- end hub}}
@@ -2011,7 +2017,7 @@ object-templates-raw: |
   {{- end }}
   {{hub- end hub}}
   {{hub- range $a := $adminANPs hub}}{{hub- $_ := set $declared (printf "AdminNetworkPolicy||autoshift-admin-%s" $a.name) true hub}}{{hub- end hub}}
-  {{hub- if and $rcm $cfg (or (kindIs "map" $projVal) (kindIs "invalid" $projVal)) hub}}
+  {{hub- if and $rcm $cfg (not $cfgErr) hub}}
   {{- $nsOwners := {{hub $nsOwners | toJson | base64enc | quote hub}} | base64dec | fromJson }}
   {{- $projOwners := {{hub $projOwners | toJson | base64enc | quote hub}} | base64dec | fromJson }}
   {{- $shard := {{hub $shard hub}} }}
@@ -2175,7 +2181,7 @@ object-templates-raw: |
   {{hub- else if not $pruneOn hub}}
   {{- $clusterWhy = "the cluster label project-onboarding-prune is not 'true'" }}
   {{hub- else if $projEmpty hub}}
-  {{- $clusterWhy = "config.projects is empty or missing, which never deletes a namespace" }}
+  {{- $clusterWhy = "config.projectOnboarding.projects is empty or missing, which never deletes a namespace" }}
   {{hub- else if $graceBad hub}}
   {{- $clusterWhy = "namespaceDeleteGracePeriod is invalid, which never deletes a namespace" }}
   {{hub- end hub}}

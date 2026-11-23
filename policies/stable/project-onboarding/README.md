@@ -1,14 +1,14 @@
 # project-onboarding
 
 Onboards OpenShift projects declared in the AutoShift values files. For each entry in
-`config.projects` the policy creates a Namespace with OpenShift Project annotations, labels and
+`config.projectOnboarding.projects` the policy creates a Namespace with OpenShift Project annotations, labels and
 annotations built from templates, RoleBindings for the project's admin, write, and read groups, and
 a ResourceQuota and LimitRange from a named size, NetworkPolicies, an EgressFirewall, and an
 AdminNetworkPolicy from a named network profile and the project's own rules, and an EgressIP from
 the project's own addresses. Shared conventions,
 such as group-name patterns, the label catalog, the sizes, and the network profiles, are defined
-once in `config.projectDefaults`. Each project supplies only what is specific to it. Admin network
-policies in `config.projectDefaults` apply rules that no project can override.
+once in `config.projectOnboarding.defaults`. Each project supplies only what is specific to it. Admin network
+policies in `config.projectOnboarding.defaults` apply rules that no project can override.
 
 A project that cannot be onboarded is skipped and reported by name in a status ConfigMap, and every
 other project still applies. See [Status](#status).
@@ -17,7 +17,7 @@ other project still applies. See [Status](#status).
 
 | Label | Default | Description |
 |---|---|---|
-| `autoshift.io/project-onboarding` | `'false'` | Set `'true'` to onboard the projects in `config.projects` |
+| `autoshift.io/project-onboarding` | `'false'` | Set `'true'` to onboard the projects in `config.projectOnboarding.projects` |
 | `autoshift.io/project-onboarding-prune` | `'false'` | Set `'true'` to delete owned objects and remove catalog labels that are no longer declared. Any other value only reports them. See [Pruning](#pruning) |
 | `autoshift.io/project-onboarding-delete-namespaces` | `'false'` | Set `'true'`, together with the prune label, to delete the namespace of a removed project that onboarding created and that set `deleteOnRemoval: true`. Irreversible. See [Namespace deletion](#namespace-deletion) |
 
@@ -26,85 +26,86 @@ on a ManagedCluster by hand.
 
 ## Configuration
 
-Projects live at `config.projects.<project-name>`. Shared defaults live at `config.projectDefaults`,
+Projects live at `config.projectOnboarding.projects.<project-name>`. Shared defaults live at `config.projectOnboarding.defaults`,
 typically in `global.yaml` or a clusterset file. The normal precedence applies: cluster over
 clusterset over global, as a deep merge. See `autoshift/values/clustersets/_example.yaml` for a
 complete example.
 
 ```yaml
 config:
-  projectDefaults:
-    groups:                         # group-name template per access level
-      admin: 'K8S_{team}_ADMINS_{environment}'
-      write: 'K8S_{team}_DEVELOPERS_{environment}'
-      read: 'K8S_{team}_VIEWERS_{environment}'
-    roles:                          # optional, these are the defaults
-      admin: admin
-      write: edit
-      read: view
-    labels:                         # label catalog, keyed by entry name
-      team:
-        enabled: true
-        key: 'example.com/team'
-        value: '{team}'
-      cost-center:
-        enabled: true
-        key: 'example.com/cost-center'
-        value: 'cc-{costCenter}'    # skipped when the project has no costCenter
-      vlan:
-        enabled: true
-        key: 'network.example.com/vlan-{vlan}'
-        value: 'true'
-    annotations: {}                 # same shape as labels
-    sizes:                          # named quota bundles, see Quotas
-      small:
+  projectOnboarding:
+    defaults:
+      groups:                         # group-name template per access level
+        admin: 'K8S_{team}_ADMINS_{environment}'
+        write: 'K8S_{team}_DEVELOPERS_{environment}'
+        read: 'K8S_{team}_VIEWERS_{environment}'
+      roles:                          # optional, these are the defaults
+        admin: admin
+        write: edit
+        read: view
+      labels:                         # label catalog, keyed by entry name
+        team:
+          enabled: true
+          key: 'example.com/team'
+          value: '{team}'
+        cost-center:
+          enabled: true
+          key: 'example.com/cost-center'
+          value: 'cc-{costCenter}'    # skipped when the project has no costCenter
+        vlan:
+          enabled: true
+          key: 'network.example.com/vlan-{vlan}'
+          value: 'true'
+      annotations: {}                 # same shape as labels
+      sizes:                          # named quota bundles, see Quotas
+        small:
+          quota:
+            requests.cpu: '4'
+            requests.memory: 8Gi
+            limits.memory: 16Gi
+            pods: '50'
+          limitRange:
+            default: {cpu: 500m, memory: 512Mi}
+            defaultRequest: {cpu: 100m, memory: 128Mi}
+      networkProfiles:                # named network rule bundles, see Network rules
+        strict:
+          defaultDeny: {ingress: true, egress: true}
+          rules:
+            dns: {direction: egress, action: allow, to: {dns: true}}
+        permissive:
+          defaultDeny: {ingress: true, egress: false}
+          rules:
+            same-namespace: {direction: ingress, action: allow, from: {sameNamespace: true}}
+            router: {direction: ingress, action: allow, from: {router: true}}
+            monitoring: {direction: ingress, action: allow, from: {monitoring: true}}
+    projects:
+      payments-api:
+        displayName: Payments API     # optional, becomes openshift.io/display-name
+        team: payments                # placeholder values, free-form keys
+        environment: NONPROD
+        costCenter: '4711'
+        vlan: '70'
+        groups:
+          read: K8S_SHARED_AUDITORS   # overrides the resolved name for one level
+        labels:
+          cost-center: {enabled: false}   # switches off a catalog entry for this project
+        size: small                   # ResourceQuota and LimitRange from projectOnboarding.defaults.sizes.small
         quota:
-          requests.cpu: '4'
-          requests.memory: 8Gi
-          limits.memory: 16Gi
-          pods: '50'
-        limitRange:
-          default: {cpu: 500m, memory: 512Mi}
-          defaultRequest: {cpu: 100m, memory: 128Mi}
-    networkProfiles:                # named network rule bundles, see Network rules
-      strict:
-        defaultDeny: {ingress: true, egress: true}
-        rules:
-          dns: {direction: egress, action: allow, to: {dns: true}}
-      permissive:
-        defaultDeny: {ingress: true, egress: false}
-        rules:
-          same-namespace: {direction: ingress, action: allow, from: {sameNamespace: true}}
-          router: {direction: ingress, action: allow, from: {router: true}}
-          monitoring: {direction: ingress, action: allow, from: {monitoring: true}}
-  projects:
-    payments-api:
-      displayName: Payments API     # optional, becomes openshift.io/display-name
-      team: payments                # placeholder values, free-form keys
-      environment: NONPROD
-      costCenter: '4711'
-      vlan: '70'
-      groups:
-        read: K8S_SHARED_AUDITORS   # overrides the resolved name for one level
-      labels:
-        cost-center: {enabled: false}   # switches off a catalog entry for this project
-      size: small                   # ResourceQuota and LimitRange from projectDefaults.sizes.small
-      quota:
-        pods: '80'                  # overrides one key of the size
-      networkProfile: strict        # NetworkPolicies from projectDefaults.networkProfiles.strict
-      network:
-        rules:
-          from-frontend:
-            direction: ingress
-            action: allow
-            from: {namespaces: {labels: {example.com/team: web}}}
-            ports: [8443]           # no protocol: TCP
-          dns: {enabled: false}     # removes the profile's dns rule
-      egressIP: ['198.51.100.50']   # optional, EgressIP autoshift-payments-api, see EgressIP
-    legacy-app:
-      team: legacy
-      environment: PROD
-      adopt: true                   # may take over an existing namespace, see Mode and adoption
+          pods: '80'                  # overrides one key of the size
+        networkProfile: strict        # NetworkPolicies from projectOnboarding.defaults.networkProfiles.strict
+        network:
+          rules:
+            from-frontend:
+              direction: ingress
+              action: allow
+              from: {namespaces: {labels: {example.com/team: web}}}
+              ports: [8443]           # no protocol: TCP
+            dns: {enabled: false}     # removes the profile's dns rule
+        egressIP: ['198.51.100.50']   # optional, EgressIP autoshift-payments-api, see EgressIP
+      legacy-app:
+        team: legacy
+        environment: PROD
+        adopt: true                   # may take over an existing namespace, see Mode and adoption
 ```
 
 Project keys:
@@ -115,9 +116,9 @@ Project keys:
 | `displayName`, `description`, `requester` | Become the `openshift.io/display-name`, `openshift.io/description`, and `openshift.io/requester` annotations |
 | `groups.<level>` | Overrides the resolved group name for `admin`, `write`, or `read`. `''`, `null`, or `false` drops the level for this project. Any other level is reported |
 | `labels.<entry>`, `annotations.<entry>` | Overrides a catalog entry by name, or adds a project-only entry |
-| `size` | Name of an entry in `projectDefaults.sizes`. See [Quotas](#quotas) |
+| `size` | Name of an entry in `projectOnboarding.defaults.sizes`. See [Quotas](#quotas) |
 | `quota.<resource>`, `limitRange.<field>` | Overrides keys of the selected size |
-| `networkProfile` | Name of an entry in `projectDefaults.networkProfiles`. See [Network rules](#network-rules) |
+| `networkProfile` | Name of an entry in `projectOnboarding.defaults.networkProfiles`. See [Network rules](#network-rules) |
 | `network.rules.<rule>`, `network.defaultDeny` | Overrides the profile's rules by name and its default deny, or adds rules |
 | `egressIP` | Optional list of IPv4 or IPv6 addresses for the project's egress traffic. See [EgressIP](#egressip) |
 | `adopt` | `true` lets the project take over an existing namespace that no project owns. `true`, `false`, `'true'`, and `'false'` are accepted; any other value is reported and counts as `false` |
@@ -130,7 +131,7 @@ A lower level can therefore override one entry without restating the others.
 
 ### Configuration reference
 
-Every key of `config.projectDefaults`. A `projectDefaults` value of the wrong type stops every
+Every key of `config.projectOnboarding.defaults`. A `projectOnboarding.defaults` value of the wrong type stops every
 project, because it affects them all: the hub template fails and the live objects stay as they are.
 `adminNetworkPolicies`, `maxNamespaceDeletes`, and `namespaceDeleteGracePeriod` are the exceptions:
 the errors of the first stop only the admin tier, and those of the other two only namespace deletion.
@@ -144,11 +145,11 @@ the errors of the first stop only the admin tier, and those of the other two onl
 | `allowedPlatformKeys.<key>` | map of an exact label or annotation key to `true` | `{}`, every platform key refused | `pod-security.kubernetes.io/warn: true` | Not a map: hub template fails |
 | `sizes.<size>` | map of size name to `{quota, limitRange}` | `{}` | `small: {quota: {pods: '50'}}` | See [Quotas](#quotas) |
 | `networkProfiles.<profile>` | map of profile name to `{defaultDeny, rules}` | `{}` | `strict: {defaultDeny: {ingress: true, egress: true}}` | See [Network rules](#network-rules): the projects that select it are skipped |
-| `adminNetworkPolicies.<entry>` | map of entry name to `{appliesTo, direction, action, to or from}` | `{}`, no admin tier | see [Admin network policies](#admin-network-policies) | Reported under `projectDefaults.adminNetworkPolicies` in the status of shard 0; the whole tier stops |
+| `adminNetworkPolicies.<entry>` | map of entry name to `{appliesTo, direction, action, to or from}` | `{}`, no admin tier | see [Admin network policies](#admin-network-policies) | Reported under `projectOnboarding.defaults.adminNetworkPolicies` in the status of shard 0; the whole tier stops |
 | `maxNamespaceDeletes` | integer from 0 to 999,999,999 | no limit | `2` | Reported, and treated as `0`: no namespace is deleted. See [Circuit breaker](#circuit-breaker) |
 | `namespaceDeleteGracePeriod` | duration in hours, minutes, and seconds, at least `1h` | `24h` | `1h30m` | Shorter than `1h`: reported, `24h` is used. Any other value: reported, nothing is marked or deleted. See [Two phases](#two-phases) |
 
-Every key of `config.projects.<project>`. An invalid project is skipped and reported by name in the
+Every key of `config.projectOnboarding.projects.<project>`. An invalid project is skipped and reported by name in the
 [status](#status), and every other project still applies.
 
 | Key | Type | Default | Example | Invalid input |
@@ -156,7 +157,7 @@ Every key of `config.projects.<project>`. An invalid project is skipped and repo
 | `<project>` (the map key) | DNS-1123 label | required | `payments-api` | Project skipped and reported |
 | `namespace` | DNS-1123 label | the project key | `payments-prod` | Not a string, or not a DNS-1123 label: project skipped. A platform namespace: project skipped, no override |
 | `displayName`, `description`, `requester` | string | not set | `displayName: Payments API` | A list or a map: that annotation skipped and reported |
-| `groups.<level>` | string, or `''`, `null`, `false` to drop the level | the `projectDefaults.groups` template | `read: K8S_SHARED_AUDITORS` | Not a string: the level gets no RoleBinding. Unknown level: ignored and reported |
+| `groups.<level>` | string, or `''`, `null`, `false` to drop the level | the `projectOnboarding.defaults.groups` template | `read: K8S_SHARED_AUDITORS` | Not a string: the level gets no RoleBinding. Unknown level: ignored and reported |
 | `labels.<entry>`, `annotations.<entry>` | map, same shape as the catalog | the catalog entry | `cost-center: {enabled: false}` | Entry skipped and reported |
 | `size` | string, the name of a size | no ResourceQuota and no LimitRange | `small` | Undefined or not a string: project skipped |
 | `quota.<resource>` | map of resource name to quantity string | the size's value | `pods: '80'` | Set without `size`: ignored and reported. Bad key or quantity: no ResourceQuota rendered |
@@ -213,7 +214,7 @@ value or a group name keeps them literally.
 - A catalog label that tries to set the ownership key `autoshift.io/project` or
   `autoshift.io/managed-by` is skipped and reported.
 - A label or annotation with a platform key is skipped and reported, unless
-  `projectDefaults.allowedPlatformKeys` allows it. See [Platform keys](#platform-keys).
+  `projectOnboarding.defaults.allowedPlatformKeys` allows it. See [Platform keys](#platform-keys).
 - A namespace that several projects declare belongs to the project named after it, otherwise to
   the first of them in name order. Every other project that declares it is skipped whole and
   reported. A new project that names an existing project's namespace by mistake therefore never
@@ -283,15 +284,16 @@ them by default:
 | `kubernetes.io/metadata.name` | Set by the API server to the namespace name; any other value never complies |
 
 A label or annotation with one of these keys is skipped and reported as `label <key> is reserved
-for the platform; list it in projectDefaults.allowedPlatformKeys to set it`. The project still
-renders. To allow a key, list it in `projectDefaults.allowedPlatformKeys`, a map of the exact key to
+for the platform; list it in projectOnboarding.defaults.allowedPlatformKeys to set it`. The project still
+renders. To allow a key, list it in `projectOnboarding.defaults.allowedPlatformKeys`, a map of the exact key to
 `true`. The map is values controlled, so a platform administrator decides which keys projects can
 set:
 
 ```yaml
-projectDefaults:
-  allowedPlatformKeys:
-    pod-security.kubernetes.io/warn: true     # every project may set this exact key
+projectOnboarding:
+  defaults:
+    allowedPlatformKeys:
+      pod-security.kubernetes.io/warn: true     # every project may set this exact key
 ```
 
 An entry allows only its exact key, never a prefix: allowing `pod-security.kubernetes.io/warn`
@@ -306,15 +308,15 @@ pruning on later removes that label too.
 
 ### Access (RBAC)
 
-`projectDefaults.groups` holds a group-name template per access level (`admin`, `write`, `read`).
+`projectOnboarding.defaults.groups` holds a group-name template per access level (`admin`, `write`, `read`).
 Each level that resolves gets a RoleBinding named `autoshift-<level>` in the project namespace,
-with the group as a `Group` subject (`apiGroup: rbac.authorization.k8s.io`). `projectDefaults.roles`
+with the group as a `Group` subject (`apiGroup: rbac.authorization.k8s.io`). `projectOnboarding.defaults.roles`
 maps levels to ClusterRoles and defaults to `admin`, `edit`, and `view`.
 
 A role change re-creates the RoleBinding, because Kubernetes does not allow `roleRef` to change in
 place. The RoleBindings are exact (`mustonlyhave`), so labels another tool adds to them are removed.
 
-A project can drop a level that `projectDefaults.groups` defines by setting it to `''`, `null`, or
+A project can drop a level that `projectOnboarding.defaults.groups` defines by setting it to `''`, `null`, or
 `false`, for example `groups: {write: ''}` for a read-only project. The level gets no RoleBinding,
 and with pruning on its earlier RoleBinding is removed. Dropping `admin` leaves the project with no
 resolvable admin group, so it is skipped and reported.
@@ -324,7 +326,7 @@ OpenShift, through the OIDC `groups` claim or LDAP group sync.
 
 ### Quotas
 
-`projectDefaults.sizes` holds named quota bundles. A project selects one with `size`, and the policy
+`projectOnboarding.defaults.sizes` holds named quota bundles. A project selects one with `size`, and the policy
 renders two objects in the project namespace from it:
 
 - The ResourceQuota `autoshift-quota`, whose `spec.hard` is the size's `quota` map.
@@ -369,7 +371,7 @@ suffixes and exponent forms, and any mismatch would make the exact objects diffe
 ones on every evaluation without a report. The check instead passes only forms whose stored value is
 the same text, so a quantity that is not reported cannot drift, and every other one is visible.
 
-A `size` that `projectDefaults.sizes` does not define, a `size` that is set but not a string (such
+A `size` that `projectOnboarding.defaults.sizes` does not define, a `size` that is set but not a string (such
 as `true`, `1`, or `0.5`), and a size entry that is not a map are required-input errors: the
 project is skipped whole and reported. A `quota` or `limitRange` value that is not a map, a
 `limitRange` field that is set and not a map (such as `max: 0`), a key that is not a valid resource
@@ -386,7 +388,7 @@ can change in place, so the policy updates them without re-creating them.
 
 ## Network rules
 
-`projectDefaults.networkProfiles` holds named network rule bundles. A project selects one with
+`projectOnboarding.defaults.networkProfiles` holds named network rule bundles. A project selects one with
 `networkProfile`, and adds or overrides rules with its own `network.rules`. Users write one rule
 format, and the policy picks the object that can express each rule: NetworkPolicies, the
 EgressFirewall, and the project's AdminNetworkPolicy. Rules that no project can override belong in
@@ -618,18 +620,19 @@ open than declared. The prune sweep skips the kind on such a cluster.
 
 ### Admin network policies
 
-`projectDefaults.adminNetworkPolicies` holds rules that no project can override, keyed by entry
+`projectOnboarding.defaults.adminNetworkPolicies` holds rules that no project can override, keyed by entry
 name. It is empty unless defined. Each enabled entry renders one cluster-scoped AdminNetworkPolicy,
 `autoshift-admin-<entry>`, once for the cluster rather than per project:
 
 ```yaml
-projectDefaults:
-  adminNetworkPolicies:
-    deny-metadata:
-      appliesTo: {allProjects: true}
-      direction: egress
-      action: deny
-      to: {cidrs: ['169.254.169.254/32']}
+projectOnboarding:
+  defaults:
+    adminNetworkPolicies:
+      deny-metadata:
+        appliesTo: {allProjects: true}
+        direction: egress
+        action: deny
+        to: {cidrs: ['169.254.169.254/32']}
 ```
 
 An entry has the fields of a [rule](#network-rules), `direction`, `action`, `from` or `to`, `ports`,
@@ -692,7 +695,7 @@ named port, `ports` with `dns` as the only peer, or a name that is not a DNS-112
 error, and so are more than 40 enabled entries. Any such error stops the whole admin tier: no admin
 AdminNetworkPolicy is rendered or pruned, so the live ones stay as they were and the priorities
 never shift under a partial set. The errors are listed under the status key
-`projectDefaults.adminNetworkPolicies`, see [Status](#status). Projects are not affected and still
+`projectOnboarding.defaults.adminNetworkPolicies`, see [Status](#status). Projects are not affected and still
 render.
 
 The admin AdminNetworkPolicies are rendered by the enforce ConfigurationPolicy only, which corrects
@@ -710,7 +713,7 @@ managed cluster lacks the AdminNetworkPolicy CRD, that is reported under the sam
 - A project rule with a new name is added to the profile's rules.
 - An override in one project never changes the shared profile.
 
-A `networkProfile` that `projectDefaults.networkProfiles` does not define, a `networkProfile` that
+A `networkProfile` that `projectOnboarding.defaults.networkProfiles` does not define, a `networkProfile` that
 is set but not a string (such as `false` or `0`), and a rule that cannot be rendered, are
 required-input errors: the project is skipped whole and reported, because
 rendering the rest could leave it more open than declared. A rule cannot be rendered when it has
@@ -763,7 +766,7 @@ These are errors that skip the project whole and are reported in the [status](#s
 - Two or more projects declare the same address. OVN-Kubernetes assigns an address to one EgressIP
   only, so every project that declares it is reported and skipped until all but one drop it. IPv6
   addresses are compared by value: `2001:db8::1` and `2001:db8:0:0:0:0:0:1` are the same address.
-  The check covers the projects in `config.projects`, not EgressIPs created by other tools.
+  The check covers the projects in `config.projectOnboarding.projects`, not EgressIPs created by other tools.
 
 An address listed twice in one project is rendered once, in the spelling of its first entry.
 
@@ -897,7 +900,7 @@ group no longer resolves, the quota objects of a project that no longer sets `si
 NetworkPolicy of a removed or disabled rule, the EgressFirewall of a project with no external
 egress rule and no egress default deny, the AdminNetworkPolicy of a project with no in-cluster
 deny, the EgressIP of a project with no `egressIP`, the admin AdminNetworkPolicy of a removed or
-disabled admin entry, or every owned object of a project removed from `config.projects`.
+disabled admin entry, or every owned object of a project removed from `config.projectOnboarding.projects`.
 
 With pruning off, the default:
 
@@ -948,7 +951,7 @@ off:
 - A namespace with an empty `autoshift.io/project` value holds nothing back.
 - No admin AdminNetworkPolicy is deleted or reported while the admin tier has errors.
 - No sweep runs when the cluster's rendered configuration cannot be read, or when it has no
-  `config.projects` map. A missing `projects` key, for example after a values restructure or a
+  `config.projectOnboarding.projects` map. A missing `projects` key, for example after a values restructure or a
   misplaced file, sweeps nothing. An explicit `projects: {}` is a deliberate removal and sweeps
   every owned object. A rendered configuration that cannot be read is also reported in the
   [status](#status).
@@ -1000,10 +1003,10 @@ only in [two phases](#two-phases), never in the evaluation that first sees the p
    fails, for example because it is forbidden, fails the managed-cluster template, so nothing of the
    shard is applied and nothing is deleted.
 4. Pruning is on: `autoshift.io/project-onboarding-prune: 'true'`.
-5. `config.projects` is a map with at least one project. An empty or missing `projects` never
+5. `config.projectOnboarding.projects` is a map with at least one project. An empty or missing `projects` never
    deletes or marks a namespace, see [Two phases](#two-phases).
 6. The project has been undeclared for the whole grace period,
-   `config.projectDefaults.namespaceDeleteGracePeriod`.
+   `config.projectOnboarding.defaults.namespaceDeleteGracePeriod`.
 
 Only a namespace that onboarding created itself can be deleted. When onboarding creates a namespace,
 because it did not exist and the project does not set `adopt: true`, it stamps a creation record:
@@ -1078,7 +1081,7 @@ Nothing on the namespace tells the two creators apart: `metadata.managedFields` 
 managers last wrote which fields, not which one created the object. To rule the case out, do not
 let anything other than onboarding create the namespaces of projects with `deleteOnRemoval: true`.
 
-After the project is removed from `config.projects`, the [shard](#shards) of its name, the
+After the project is removed from `config.projectOnboarding.projects`, the [shard](#shards) of its name, the
 `autoshift.io/project` label of the namespace, deletes the namespace with `mustnothave` when:
 
 - The namespace carries `autoshift.io/managed-by: project-onboarding`, the label
@@ -1106,12 +1109,12 @@ evaluation:
 2. Delete: on an evaluation at least `namespaceDeleteGracePeriod` after that time, if the project is
    still undeclared and every guard still holds, the namespace is deleted.
 
-| `projectDefaults.namespaceDeleteGracePeriod` | Effect |
+| `projectOnboarding.defaults.namespaceDeleteGracePeriod` | Effect |
 |---|---|
 | Not set, or `null` | `24h` |
 | A string of hours, minutes, and seconds, in that order and each optional, of at least `1h`, such as `24h`, `90m`, `1h30m`, or `2h0m0s` | That grace period |
-| Such a string shorter than `1h`, such as `30m`, `1s`, or `0s` | Reported under the status key `projectDefaults.namespaceDeleteGracePeriod` in shard 0, and the default `24h` is used |
-| Anything else, such as `1d`, `1.5h`, `500ms`, an empty string, a number, or a string with spaces | Reported under the status key `projectDefaults.namespaceDeleteGracePeriod` in shard 0. No namespace is marked or deleted |
+| Such a string shorter than `1h`, such as `30m`, `1s`, or `0s` | Reported under the status key `projectOnboarding.defaults.namespaceDeleteGracePeriod` in shard 0, and the default `24h` is used |
+| Anything else, such as `1d`, `1.5h`, `500ms`, an empty string, a number, or a string with spaces | Reported under the status key `projectOnboarding.defaults.namespaceDeleteGracePeriod` in shard 0. No namespace is marked or deleted |
 
 The grace period is compared with every mark at each evaluation, so a change applies to the
 namespaces marked already: shortening `48h` to `24h` makes every namespace marked more than 24
@@ -1129,7 +1132,7 @@ The grace period protects every case in which a project only seems to be gone:
   namespaces of the missing projects. They are canceled when the configuration is whole again.
 - An empty or missing `projects`, including `projects: {}` and `projects: null`, marks nothing and
   deletes nothing, even for a namespace whose grace period is over. Each candidate is reported as
-  `it is not deleted: config.projects is empty or missing, which never deletes a namespace`. To
+  `it is not deleted: config.projectOnboarding.projects is empty or missing, which never deletes a namespace`. To
   remove every project and delete their namespaces, keep one placeholder project declared.
 
 A mark is read only when it is a timestamp in exactly that form, not in the future, and later than
@@ -1170,12 +1173,13 @@ itself, such as storage in it, keeps the mark.
 To rename a project and keep its namespace, set `namespace:` to the old name in the same change:
 
 ```yaml
-projects:
-  payments-api:          # the new project key, was payments
-    namespace: payments  # the existing namespace keeps its name
-    groups:
-      admin: PAYMENTS_ADMINS
-    deleteOnRemoval: true
+projectOnboarding:
+  projects:
+    payments-api:          # the new project key, was payments
+      namespace: payments  # the existing namespace keeps its name
+      groups:
+        admin: PAYMENTS_ADMINS
+      deleteOnRemoval: true
 ```
 
 The namespace is then declared by a current project, so it is never marked or deleted, whatever its
@@ -1203,7 +1207,7 @@ Two related cases:
 
 ### Circuit breaker
 
-`config.projectDefaults.maxNamespaceDeletes` caps how many namespaces one evaluation may delete. It
+`config.projectOnboarding.defaults.maxNamespaceDeletes` caps how many namespaces one evaluation may delete. It
 is off by default. It counts only the namespaces whose grace period is over and that would be
 deleted in this evaluation. Marking a namespace is not counted, because it deletes nothing and
 declaring the project again undoes it.
@@ -1213,7 +1217,7 @@ declaring the project again undoes it.
 | Not set, or `null` | No limit |
 | `0` | Nothing is deleted. Each namespace whose grace period is over is reported in the status |
 | A positive integer N | When more than N namespaces pass every guard and their grace period is over, none of them is deleted. Each is listed in the status as `blocked by maxNamespaceDeletes (<K> candidates > <N>)`, and the `-test` Policy of its shard is NonCompliant |
-| Anything else, such as a negative number, a string, a fraction, a number over 999,999,999, or a map | Reported under the status key `projectDefaults.maxNamespaceDeletes` in shard 0, and treated as `0` |
+| Anything else, such as a negative number, a string, a fraction, a number over 999,999,999, or a map | Reported under the status key `projectOnboarding.defaults.maxNamespaceDeletes` in shard 0, and treated as `0` |
 
 A positive integer is accepted up to 999,999,999, in either form the rendered configuration can
 hold it: as an integer, or as a floating point number with no fraction. The rendered configuration
@@ -1320,12 +1324,12 @@ namespace is gone or the guard is resolved. To keep such a namespace for good, r
 
 To recover:
 
-- Before the deletion: put the project back in `config.projects`, or set
+- Before the deletion: put the project back in `config.projectOnboarding.projects`, or set
   `project-onboarding-delete-namespaces` to `'false'`. Either removes the mark, outside a dry run.
   Either stops it on the next evaluation. The status lists each marked namespace with the time it
   becomes deletable.
 - After the deletion: the namespace and everything in it are gone. Put the project back in
-  `config.projects` to create an empty namespace with its RoleBindings and other onboarding
+  `config.projectOnboarding.projects` to create an empty namespace with its RoleBindings and other onboarding
   objects, then restore the workloads from Git and their data from backups.
 
 ## Status
@@ -1371,15 +1375,15 @@ data:
 | `group <level> name "<name>" has an unresolved placeholder, so the level gets no RoleBinding`, `group <level> name is blank, so the level gets no RoleBinding` (a `write` or `read` project override) | hub | Note only: level gets no RoleBinding, the project is not in error |
 | `size is not a string` | hub | Project skipped |
 | `quota is set without size`, `limitRange is set without size` | hub | Value ignored, nothing of the project pruned |
-| `size <size> is not defined in projectDefaults.sizes` | hub | Project skipped |
-| `projectDefaults.sizes.<size> is not a map` | hub | Project skipped |
-| `quota is not a map`, `projectDefaults.sizes.<size>.quota is not a map` | hub | No ResourceQuota rendered |
+| `size <size> is not defined in projectOnboarding.defaults.sizes` | hub | Project skipped |
+| `projectOnboarding.defaults.sizes.<size> is not a map` | hub | Project skipped |
+| `quota is not a map`, `projectOnboarding.defaults.sizes.<size>.quota is not a map` | hub | No ResourceQuota rendered |
 | `quota key <key> is not a valid resource name`, `quota key <key> is not a standard ResourceQuota resource name, such as pods or requests.cpu`, `quota <key>=<value> is not a valid quantity` | hub | No ResourceQuota rendered |
-| `limitRange is not a map`, `projectDefaults.sizes.<size>.limitRange is not a map` | hub | No LimitRange rendered |
+| `limitRange is not a map`, `projectOnboarding.defaults.sizes.<size>.limitRange is not a map` | hub | No LimitRange rendered |
 | `limitRange field <field> is not one of default, defaultRequest, max, min, maxLimitRequestRatio`, `limitRange.<field> is not a map` | hub | No LimitRange rendered |
 | `limitRange.<field> key <key> is not a valid resource name`, `limitRange.<field> key <key> is not a container resource name, such as cpu or memory`, `limitRange.<field> <key>=<value> is not a valid quantity` | hub | No LimitRange rendered |
 | `quota <key>=<value> is not in the canonical form the API server stores, ...` (or `limitRange.<field> <key>=<value>`) | hub | Note only: rendered as written, see [Quotas](#quotas) |
-| `networkProfile is not a string`, `networkProfile <profile> is not defined in projectDefaults.networkProfiles`, `projectDefaults.networkProfiles.<profile> is not a map` | hub | Project skipped |
+| `networkProfile is not a string`, `networkProfile <profile> is not defined in projectOnboarding.defaults.networkProfiles`, `projectOnboarding.defaults.networkProfiles.<profile> is not a map` | hub | Project skipped |
 | `network is not a map`, `<where> key <key> is not defaultDeny or rules`, `<where>.rules is not a map`, `<where>.defaultDeny is not a map`, `<where>.defaultDeny.<direction> is not true or false` | hub | Project skipped |
 | `rule <rule> is not a map`, `rule <rule>: <problem>`, `rule <rule> has no peers` | hub | Project skipped |
 | `cannot read the cluster and service network CIDRs, so autoshift-default-deny-egress denies all egress` | managed cluster | That NetworkPolicy denies all egress; the project still renders and is not exempt from pruning |
@@ -1410,22 +1414,22 @@ data:
 | `...; it is pending deletion since <time>, and can be deleted from <time>` | managed cluster | Namespace kept until the grace period is over |
 | `...; it has been pending deletion since <time>; it is deleted with everything in it` | managed cluster | Namespace deleted, see [Namespace deletion](#namespace-deletion) |
 | `...; it would be deleted, but its last recorded mode is inform, so it is only reported`, `...; it would be deleted, but the deployment runs as a dry run, so it is only reported`, `...; it would be marked for deletion, but the deployment runs as a dry run, so it is only reported` | managed cluster | Reported only, nothing marked or deleted |
-| `...; it is not deleted: the cluster label project-onboarding-delete-namespaces is not 'true'`, `...: the cluster label project-onboarding-prune is not 'true'`, `...: namespace holds storage: <kind> <count>, ...`, `...: maxNamespaceDeletes is 0`, `...: maxNamespaceDeletes is invalid, which counts as 0`, `...: blocked by maxNamespaceDeletes (<K> candidates > <N>)`, `...: config.projects is empty or missing, which never deletes a namespace`, `...: namespaceDeleteGracePeriod is invalid, which never deletes a namespace`, `...: its creation record is not bound to this namespace (...); delete it by hand if it should go` | managed cluster | Namespace kept |
-| `maxNamespaceDeletes is not a non-negative integer, so it counts as 0 and no namespace is deleted`, under the key `projectDefaults.maxNamespaceDeletes` in shard 0 | hub | No namespace deleted |
-| `namespaceDeleteGracePeriod is not a positive duration in hours, minutes and seconds, such as 24h or 1h30m, so no namespace is marked for deletion or deleted`, under the key `projectDefaults.namespaceDeleteGracePeriod` in shard 0 | hub | No namespace marked or deleted |
-| `label <key> is reserved for the platform; list it in projectDefaults.allowedPlatformKeys to set it`, `annotation <key> is reserved ...` | hub | Label or annotation skipped |
+| `...; it is not deleted: the cluster label project-onboarding-delete-namespaces is not 'true'`, `...: the cluster label project-onboarding-prune is not 'true'`, `...: namespace holds storage: <kind> <count>, ...`, `...: maxNamespaceDeletes is 0`, `...: maxNamespaceDeletes is invalid, which counts as 0`, `...: blocked by maxNamespaceDeletes (<K> candidates > <N>)`, `...: config.projectOnboarding.projects is empty or missing, which never deletes a namespace`, `...: namespaceDeleteGracePeriod is invalid, which never deletes a namespace`, `...: its creation record is not bound to this namespace (...); delete it by hand if it should go` | managed cluster | Namespace kept |
+| `maxNamespaceDeletes is not a non-negative integer, so it counts as 0 and no namespace is deleted`, under the key `projectOnboarding.defaults.maxNamespaceDeletes` in shard 0 | hub | No namespace deleted |
+| `namespaceDeleteGracePeriod is not a positive duration in hours, minutes and seconds, such as 24h or 1h30m, so no namespace is marked for deletion or deleted`, under the key `projectOnboarding.defaults.namespaceDeleteGracePeriod` in shard 0 | hub | No namespace marked or deleted |
+| `label <key> is reserved for the platform; list it in projectOnboarding.defaults.allowedPlatformKeys to set it`, `annotation <key> is reserved ...` | hub | Label or annotation skipped |
 | `namespace <ns> already declared by <project>` | hub | Project skipped |
 | `namespace <ns> is owned by project <owner>` | managed cluster | Nothing rendered for the project |
 | `namespace <ns> exists and is not owned by AutoShift; set adopt: true to take it over`, or `...; adopt is not true or false, so it is not taken over` | managed cluster | Nothing rendered for the project |
 
 The admin network policy tier is global, so its errors are listed under one key,
-`projectDefaults.adminNetworkPolicies` in the status ConfigMap of shard 0, rather than under a
+`projectOnboarding.defaults.adminNetworkPolicies` in the status ConfigMap of shard 0, rather than under a
 project. Any of them stops the whole
 tier, see [Admin network policies](#admin-network-policies):
 
 | Error | Found on |
 |---|---|
-| `projectDefaults.adminNetworkPolicies is not a map` | hub |
+| `projectOnboarding.defaults.adminNetworkPolicies is not a map` | hub |
 | `entry <entry> is not a map`, `entry <entry>: enabled is not true or false` | hub |
 | `entry <entry>: <problem>`, for example `appliesTo is not set` or `peer pods is not supported here: ...` | hub |
 | `<n> enabled entries, more than the 40 that fit at priorities 10 to 49 (below the project AdminNetworkPolicies at 50)` | hub |
@@ -1440,7 +1444,7 @@ When a shard Policy would grow past its size limit, the key `project-onboarding.
 shard's status names the projects that are not rendered, see [Size limit](#size-limit).
 
 When the cluster's rendered configuration, `<cluster>.rendered-config`, cannot be read, or its
-`config.projects` is not a map, nothing is rendered and the status of every shard holds a single
+`config.projectOnboarding.projects` is not a map, nothing is rendered and the status of every shard holds a single
 key, `rendered-config`, for example `rendered-config: cannot read cluster1.rendered-config`. The
 status is written rather than deleted, so every `-test` Policy stays NonCompliant while nothing can
 be checked. A
@@ -1477,8 +1481,8 @@ dry run nothing is written, so the shard Policy is NonCompliant and names the mi
 `project-onboarding-status-<shard>` ConfigMap, but the error text is not stored on the cluster. To
 read it, run with `REMEDIATION` set to `enforce`, or check the values against the error table.
 
-Errors in `config.projectDefaults` itself, which would affect every project, fail hub template
-resolution for the whole policy: `projectDefaults`, or its `labels`, `annotations`, `groups`,
+Errors in `config.projectOnboarding.defaults` itself, which would affect every project, fail hub template
+resolution for the whole policy: `projectOnboarding.defaults`, or its `labels`, `annotations`, `groups`,
 `roles`, `sizes`, `networkProfiles`, or `allowedPlatformKeys`, set to something other than a map.
 A malformed `adminNetworkPolicies` is reported in the status instead, and stops only the admin
 tier.
@@ -1549,15 +1553,15 @@ template resolution, so nothing is applied or pruned and no Policy can pass the 
   1,415,577 bytes (1.35 MiB): `project-onboarding: the policy would be about <n> bytes even with
   <n> projects not rendered, ...; split the projects across clusters or shorten project names`. Only
   that shard fails. With 63-character names this happens at about 350 projects in one shard.
-- The errors of `projectDefaults.adminNetworkPolicies` alone pass that size: `project-onboarding:
-  the policy would be about <n> bytes from the projectDefaults.adminNetworkPolicies errors alone,
-  ...; fix projectDefaults.adminNetworkPolicies`. Only shard 0, which owns the admin tier, fails.
+- The errors of `projectOnboarding.defaults.adminNetworkPolicies` alone pass that size: `project-onboarding:
+  the policy would be about <n> bytes from the projectOnboarding.defaults.adminNetworkPolicies errors alone,
+  ...; fix projectOnboarding.defaults.adminNetworkPolicies`. Only shard 0, which owns the admin tier, fails.
   Each admin error is cut to 400 characters, like project messages.
 
 Names and other strings are charged at their JSON-encoded length, so characters that JSON escapes,
 such as `<` and `>` in an invalid namespace, count several times.
 
-As with a malformed `projectDefaults`, a failed hub template leaves the live objects as they are and
+As with a malformed `projectOnboarding.defaults`, a failed hub template leaves the live objects as they are and
 keeps the Policies NonCompliant until the configuration is fixed.
 
 At the limit, the `-test` Policy of the shard stays NonCompliant until its project set fits again. Nothing is

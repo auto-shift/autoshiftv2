@@ -3,7 +3,7 @@
 Makes nodes assignable for EgressIP objects. OVN-Kubernetes assigns an EgressIP address only to a
 node that carries the label `k8s.ovn.org/egress-assignable`; without one, every EgressIP stays
 unassigned and the pods it selects keep leaving the cluster from their node address. This policy
-adds that label, with an empty value, to the nodes selected in `config.egressIPNodes`. Use it with
+adds that label, with an empty value, to the nodes selected in `config.egressipNodes`. Use it with
 any feature that creates EgressIP objects, such as the EgressIP of project onboarding.
 
 OVN-Kubernetes has one more requirement that this policy cannot check: an EgressIP address must be
@@ -41,7 +41,7 @@ Neither Policy depends on the other:
 
 | Label | Default | Description |
 |---|---|---|
-| `autoshift.io/egressip-nodes` | `'false'` | `'true'` labels the nodes in `config.egressIPNodes` |
+| `autoshift.io/egressip-nodes` | `'false'` | `'true'` labels the nodes in `config.egressipNodes` |
 
 Set it in a clusterset or cluster values file, without the `autoshift.io/` prefix. Never put it on
 a ManagedCluster by hand.
@@ -50,7 +50,7 @@ a ManagedCluster by hand.
 
 ```yaml
 config:
-  egressIPNodes:
+  egressipNodes:
     worker-0.example.com: true     # a node name and true or false
     worker-1.example.com: false    # never selected, even when nodeSelector matches it
     nodeSelector:                  # optional: also select every node with all of these labels
@@ -70,7 +70,7 @@ config:
 | `<node>` | `true` or `false`, keyed by a node name (DNS-1123 subdomain) | not selected | `worker-0.example.com: true` | Hub template fails, nothing applied |
 | `nodeSelector.matchLabels` | non-empty map of label key to label value | no selector | `node-role.kubernetes.io/worker: ''` | Empty, unknown sibling key, or invalid label: hub template fails |
 
-`config.egressIPNodes` is a map, not a list, because AutoShift replaces lists whole when it merges
+`config.egressipNodes` is a map, not a list, because AutoShift replaces lists whole when it merges
 values files. The key `nodeSelector` is reserved and cannot clash with a node name, which has no
 upper-case letters.
 
@@ -88,7 +88,7 @@ metadata:
 ## Validation
 
 Any invalid key or value fails the hub template of the policy, with every error listed and each
-naming its key, for example `config.egressIPNodes.worker-0.example.com: value is not true or
+naming its key, for example `config.egressipNodes.worker-0.example.com: value is not true or
 false`. Nothing is applied until it is fixed. A node name that is not a DNS-1123 subdomain, a value
 that is not a boolean, a `nodeSelector` with a key other than `matchLabels`, an empty
 `matchLabels`, and an invalid label key or value are errors. A string with `{{` or `}}` is never a
@@ -121,7 +121,7 @@ oc get configmap egressip-nodes-status -n open-cluster-management-agent-addon -o
 ## Removing the label
 
 The policy never removes the label: deletion is a manual decision. Removing a node from
-`config.egressIPNodes`, or setting it to `false`, leaves the label in place and reports the node.
+`config.egressipNodes`, or setting it to `false`, leaves the label in place and reports the node.
 OVN-Kubernetes moves the EgressIP addresses of a node that loses the label to another assignable
 node, so check that one is left first, then remove the label:
 

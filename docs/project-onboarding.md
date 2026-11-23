@@ -6,11 +6,11 @@ reads its own key of the `config:` block, so you can adopt them one at a time.
 
 | Policy | Label | Config key | What it manages |
 |---|---|---|---|
-| [project-onboarding](../policies/stable/project-onboarding/README.md) | `project-onboarding` | `projects`, `projectDefaults` | One namespace (an OpenShift Project) per project, with labels, annotations, group RoleBindings, a ResourceQuota and LimitRange, NetworkPolicies, an EgressFirewall, AdminNetworkPolicies, and an EgressIP. Opt-in deletion of the namespaces it created |
+| [project-onboarding](../policies/stable/project-onboarding/README.md) | `project-onboarding` | `projectOnboarding` | One namespace (an OpenShift Project) per project, with labels, annotations, group RoleBindings, a ResourceQuota and LimitRange, NetworkPolicies, an EgressFirewall, AdminNetworkPolicies, and an EgressIP. Opt-in deletion of the namespaces it created |
 | [namespace-rbac](../policies/stable/namespace-rbac/README.md) | `namespace-rbac` | `namespaceRbac` | ServiceAccounts, Roles with exact rules, and RoleBindings to those Roles or to the built-in ClusterRole `edit` or `view`, in namespaces that already exist |
-| [custom-sccs](../policies/stable/custom-sccs/README.md) | `custom-sccs` | `securityContextConstraints` | SecurityContextConstraints, granted to named ServiceAccounts through RBAC only |
+| [custom-sccs](../policies/stable/custom-sccs/README.md) | `custom-sccs` | `customSccs` | SecurityContextConstraints, granted to named ServiceAccounts through RBAC only |
 | [project-networks](../policies/stable/project-networks/README.md) | `project-networks` | `projectNetworks` | ClusterUserDefinedNetworks that attach namespaces to a VLAN as a secondary network |
-| [egressip-nodes](../policies/stable/egressip-nodes/README.md) | `egressip-nodes` | `egressIPNodes` | The `k8s.ovn.org/egress-assignable` label on the nodes that can carry EgressIP addresses |
+| [egressip-nodes](../policies/stable/egressip-nodes/README.md) | `egressip-nodes` | `egressipNodes` | The `k8s.ovn.org/egress-assignable` label on the nodes that can carry EgressIP addresses |
 
 Each policy README is the configuration guide for that policy: every key, its type and default, an
 example, and what happens on invalid input. Every key is also listed in the
@@ -122,59 +122,61 @@ values files.
 
 ### Step 2: define the shared conventions
 
-`projectDefaults` holds what every project shares: group-name patterns, the label catalog, quota
+`projectOnboarding.defaults` holds what every project shares: group-name patterns, the label catalog, quota
 sizes, and network profiles. A project supplies only the fields those templates need.
 
 ```yaml
     config:
-      projectDefaults:
-        groups:
-          admin: '{team}-admins'
-          write: '{team}-developers'
-          read: '{team}-viewers'
-        labels:
-          team:
-            key: example.com/team
-            value: '{team}'
-          vlan:
-            key: 'network.example.com/vlan-{vlan}'
-            value: 'true'
-        sizes:
-          small:
-            quota:
-              requests.cpu: '4'
-              requests.memory: 8Gi
-              limits.memory: 16Gi
-              pods: '50'
-            limitRange:
-              default: {cpu: 500m, memory: 512Mi}
-              defaultRequest: {cpu: 100m, memory: 128Mi}
-        networkProfiles:
-          strict:
-            defaultDeny: {ingress: true, egress: true}
-            rules:
-              dns: {direction: egress, action: allow, to: {dns: true}}
-              router: {direction: ingress, action: allow, from: {router: true}}
+      projectOnboarding:
+        defaults:
+          groups:
+            admin: '{team}-admins'
+            write: '{team}-developers'
+            read: '{team}-viewers'
+          labels:
+            team:
+              key: example.com/team
+              value: '{team}'
+            vlan:
+              key: 'network.example.com/vlan-{vlan}'
+              value: 'true'
+          sizes:
+            small:
+              quota:
+                requests.cpu: '4'
+                requests.memory: 8Gi
+                limits.memory: 16Gi
+                pods: '50'
+              limitRange:
+                default: {cpu: 500m, memory: 512Mi}
+                defaultRequest: {cpu: 100m, memory: 128Mi}
+          networkProfiles:
+            strict:
+              defaultDeny: {ingress: true, egress: true}
+              rules:
+                dns: {direction: egress, action: allow, to: {dns: true}}
+                router: {direction: ingress, action: allow, from: {router: true}}
 ```
 
 ### Step 3: declare the project
 
 ```yaml
-      projects:
-        payments-api:
-          displayName: Payments API
-          team: payments
-          vlan: '70'
-          size: small
-          networkProfile: strict
-          network:
-            rules:
-              to-database:
-                direction: egress
-                action: allow
-                to: {cidrs: ['203.0.113.0/24']}
-                ports: [5432]
-          egressIP: ['198.51.100.50']
+      projectOnboarding:
+        projects:
+          payments-api:
+            displayName: Payments API
+            team: payments
+            vlan: '70'
+            size: small
+            networkProfile: strict
+            network:
+              rules:
+                to-database:
+                  direction: egress
+                  action: allow
+                  to: {cidrs: ['203.0.113.0/24']}
+                  ports: [5432]
+            egressIP: ['198.51.100.50']
 ```
 
 project-onboarding renders, in the namespace `payments-api`:
@@ -195,7 +197,7 @@ project-onboarding renders, in the namespace `payments-api`:
 The address must lie in the node subnet of an assignable node. Select the nodes on that network:
 
 ```yaml
-      egressIPNodes:
+      egressipNodes:
         worker-0.example.com: true
         worker-1.example.com: true
 ```
@@ -264,7 +266,7 @@ never bound to `edit` or `view`, see
 ### Step 7: grant an SCC to the builder
 
 ```yaml
-      securityContextConstraints:
+      customSccs:
         payments-builder:
           spec:
             runAsUser:
@@ -304,10 +306,11 @@ accident. To bring one under management:
    what it would change, and changes nothing.
 
    ```yaml
-   projects:
-     legacy-app:
-       team: legacy
-       adopt: true
+   projectOnboarding:
+     projects:
+       legacy-app:
+         team: legacy
+         adopt: true
    ```
 
 2. Review the drift. The -test Policy of the project's shard is NonCompliant for each object that
@@ -348,7 +351,7 @@ Deletion is opt-in and limited to project onboarding. With `project-onboarding-p
 objects that project onboarding owns but no longer declares are deleted, and catalog labels that are
 no longer applied are removed from the namespace. Examples are the RoleBinding of a group that was
 removed, the quota of a project that no longer sets `size`, the NetworkPolicy of a removed rule,
-and every owned object of a project removed from `config.projects`. With any other value, the
+and every owned object of a project removed from `config.projectOnboarding.projects`. With any other value, the
 default, they are reported by the -test Policies and left in place.
 
 Pruning never deletes a namespace. Removing a project leaves its namespace and its workloads in
@@ -384,14 +387,15 @@ managedClusterSets:
       project-onboarding-prune: 'true'
       project-onboarding-delete-namespaces: 'true'
     config:
-      projectDefaults:
-        maxNamespaceDeletes: 2            # circuit breaker, recommended
-        namespaceDeleteGracePeriod: 24h   # the default, at least 1h
-      projects:
-        payments-sandbox:
-          team: payments
-          environment: DEV
-          deleteOnRemoval: true
+      projectOnboarding:
+        defaults:
+          maxNamespaceDeletes: 2            # circuit breaker, recommended
+          namespaceDeleteGracePeriod: 24h   # the default, at least 1h
+        projects:
+          payments-sandbox:
+            team: payments
+            environment: DEV
+            deleteOnRemoval: true
 ```
 
 When onboarding creates a namespace, it writes a creation record on it: the label
@@ -411,7 +415,7 @@ Before it deletes, onboarding checks every guard again:
   DataVolumes, or VirtualMachines;
 - no current project, in any shard, declares the namespace, so renaming a project that keeps its
   namespace deletes nothing;
-- `config.projects` has at least one project, because an empty or missing map is read as a broken
+- `config.projectOnboarding.projects` has at least one project, because an empty or missing map is read as a broken
   configuration, not as a removal;
 - the namespace is not a platform namespace, the namespace of the onboarding Policies, or one named
   after a ManagedCluster;

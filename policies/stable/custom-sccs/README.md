@@ -1,7 +1,7 @@
 # custom-sccs
 
 Creates SecurityContextConstraints (SCCs) declared in the AutoShift values files, and grants their
-use to named ServiceAccounts through RBAC. For each entry in `config.securityContextConstraints`
+use to named ServiceAccounts through RBAC. For each entry in `config.customSccs`
 the policy renders:
 
 - the SecurityContextConstraints `<name>`, with the entry's `spec` over the `nonroot-v2` posture;
@@ -47,21 +47,21 @@ Neither Policy depends on the other:
 
 | Label | Default | Description |
 |---|---|---|
-| `autoshift.io/custom-sccs` | `'false'` | `'true'` manages `config.securityContextConstraints` |
+| `autoshift.io/custom-sccs` | `'false'` | `'true'` manages `config.customSccs` |
 
 Set it in a clusterset or cluster values file, without the `autoshift.io/` prefix. Never put it on
 a ManagedCluster by hand.
 
 ## Configuration
 
-Entries live at `config.securityContextConstraints.<name>`, a map keyed by SCC name. The normal
+Entries live at `config.customSccs.<name>`, a map keyed by SCC name. The normal
 precedence applies: cluster over clusterset over global, as a deep merge. Because entries and
 ServiceAccounts are map keys, a cluster file can disable one entry or revoke one ServiceAccount
 that a clusterset file declares.
 
 ```yaml
 config:
-  securityContextConstraints:
+  customSccs:
     example-build:
       enabled: true                 # optional, default true
       spec:                         # optional, fields not set keep the nonroot-v2 posture
