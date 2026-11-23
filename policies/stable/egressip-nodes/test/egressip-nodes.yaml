@@ -29,7 +29,10 @@
 #   - a node that carries k8s.ovn.org/egress-assignable but is not selected. The label is never
 #     removed automatically; remove it by hand with oc label node <name> k8s.ovn.org/egress-assignable-
 # plus the key nodeSelector when the selector matches no node. The enforce ConfigurationPolicy writes
-# the ConfigMap while there is something to report and deletes it otherwise. The inform one asserts
+# the ConfigMap while there is something to report and deletes it otherwise, but only while it is
+# absent or carries the label autoshift.io/managed-by: egressip-nodes: one of that name without the
+# label is left alone and reported under the key statusConfigMap (never a node name, which has no
+# upper-case letters) of the inform one's report. The inform one asserts
 # the label on every selected node itself and never carries a mustnothave, so an Enforce set on the
 # -test Policy by hand can delete nothing; while its own evaluation has something to report it
 # asserts the ConfigMap egressip-nodes-test-report with the same messages, which can never exist
@@ -124,8 +127,14 @@ object-templates-raw: |
         labels:
           k8s.ovn.org/egress-assignable: ""
   {{- end }}
+  {{- $liveStatus := lookup "v1" "ConfigMap" "open-cluster-management-agent-addon" "egressip-nodes-status" }}
+  {{- $foreignStatus := and $liveStatus (ne (printf "%v" (index (dig "metadata" "labels" dict $liveStatus) "autoshift.io/managed-by" | default "")) "egressip-nodes") }}
+  {{- if $foreignStatus }}
+  {{- $_ := set $status "statusConfigMap" "ConfigMap open-cluster-management-agent-addon/egressip-nodes-status exists without the label autoshift.io/managed-by: egressip-nodes, so egressip-nodes neither writes nor deletes it and cannot report there; remove it by hand" }}
+  {{- end }}
   {{hub- if eq $want "enforce" hub}}
-  {{- if $status }}
+  {{- if $foreignStatus }}
+  {{- else if $status }}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: v1

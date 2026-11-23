@@ -116,7 +116,10 @@ These are reported in the ConfigMap `egressip-nodes-status` in
 - the key `nodeSelector`, when the selector matches no node.
 
 `policy-egressip-nodes` writes the ConfigMap while there is something to report and deletes it
-otherwise. The inform-only `policy-egressip-nodes-test` does not read it, because under dry run
+otherwise, but only while it is absent or carries the label `autoshift.io/managed-by:
+egressip-nodes`. A ConfigMap of that name without the label belongs to someone else: it is left as
+it is, and the test policy reports it under the key `statusConfigMap` of its report, which can
+never be a node name, until it is removed by hand. The inform-only `policy-egressip-nodes-test` does not read it, because under dry run
 nothing writes it: the test policy asserts the label on each selected node itself, and while its own
 evaluation has something to report it asserts the ConfigMap `egressip-nodes-test-report` with the
 same messages. That ConfigMap can never exist, because its key `_unsatisfiable` is in both `data` and

@@ -25,7 +25,9 @@
 # a RoleBinding owned elsewhere or a missing namespace skips only that RoleBinding. Every error is
 # reported in the ConfigMap custom-sccs-status (open-cluster-management-agent-addon), one data key
 # per entry, messages joined by "; ". The enforce ConfigurationPolicy writes it while there are
-# errors and deletes it when there are none. The inform one never carries a mustnothave, so an
+# errors and deletes it when there are none, but only while it is absent or carries the label
+# autoshift.io/managed-by: custom-sccs: one of that name without the label is left alone and
+# reported under the key custom-sccs-status of the inform one's report. The inform one never carries a mustnothave, so an
 # Enforce set on the -test Policy by hand can delete nothing: it reports the errors it computes
 # itself, and the stale objects of the sweep, as data of a musthave on the ConfigMap
 # custom-sccs-test-report, which can never exist (the key _unsatisfiable is in both data and
@@ -337,6 +339,11 @@ object-templates-raw: |
   {{- end }}
   {{- end }}
   {{- end }}
+  {{- $liveStatus := lookup "v1" "ConfigMap" "open-cluster-management-agent-addon" "custom-sccs-status" }}
+  {{- $foreignStatus := and $liveStatus (ne (printf "%v" (index (dig "metadata" "labels" dict $liveStatus) "autoshift.io/managed-by" | default "")) "custom-sccs") }}
+  {{- if $foreignStatus }}
+  {{- $_ := set $status "custom-sccs-status" (append (index $status "custom-sccs-status" | default list) "ConfigMap open-cluster-management-agent-addon/custom-sccs-status exists without the label autoshift.io/managed-by: custom-sccs, so custom-sccs neither writes nor deletes it and cannot report there; remove it by hand") }}
+  {{- end }}
   {{- $report := dict }}
   {{- range $k, $msgs := $status }}{{- $_ := set $report $k (join "; " $msgs) }}{{- end }}
   {{hub- if eq $want "inform" hub}}
@@ -354,7 +361,8 @@ object-templates-raw: |
   {{- end }}
   {{hub- end hub}}
   {{hub- if eq $want "enforce" hub}}
-  {{- if $status }}
+  {{- if $foreignStatus }}
+  {{- else if $status }}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: v1

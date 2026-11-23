@@ -231,6 +231,11 @@ while there is anything to report, and its compliance message names the ConfigMa
 Policy has no `mustnothave` at all, so even Enforce clicked on it in the Governance console deletes
 nothing. With nothing to report the assertion is not rendered.
 
+The status ConfigMap is written or deleted only while it is absent or carries the label
+`autoshift.io/managed-by: custom-sccs`. A ConfigMap of that name without the label belongs to
+someone else: it is left as it is, and `policy-custom-sccs-test` reports it under the key
+`custom-sccs-status` of `custom-sccs-test-report` until it is removed by hand.
+
 An entry with an error renders none of its objects; objects that it created earlier stay in place.
 Errors include an invalid name or field, an unknown `spec` field, `users` or `groups` in `spec`, a
 `serviceAccounts` key that is not `<namespace>/<serviceaccount>`, a value that is not `true` or
