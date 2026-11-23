@@ -1706,19 +1706,23 @@ These follow from what a ConfigurationPolicy can express, and are documented rat
 
 - **Namespace metadata is written from a snapshot.** An existing Namespace is rendered with
   `metadataComplianceType: mustonlyhave`, from the labels and annotations the managed cluster read
-  at the start of the evaluation. A label that another controller adds between that read and the
-  write can be removed by the write; the controller that owns it adds it back on its next
-  reconcile, and the next evaluation of this policy keeps it. A ConfigurationPolicy has no patch
-  of individual keys that also removes retired ones, so the exact write is what lets onboarding drop
-  the catalog keys it retired.
+  at the start of the evaluation, its cached `lookup`. A label or annotation that anything else
+  adds between that read and the write can be removed by the write. A controller that owns the key
+  adds it back on its next reconcile. A key added once, by hand or by a one-shot job, is lost for
+  good and has to be added again. The next evaluation reads the new state, so only a key added
+  inside that window is affected. A ConfigurationPolicy has no patch of individual keys that also
+  removes retired ones, so the exact write is what lets onboarding drop the catalog keys it retired.
 - **A namespace is deleted by name, without a uid precondition.** The `mustnothave` that deletes a
   namespace names it only: Red Hat Advanced Cluster Management sends a DELETE without
-  `DeleteOptions` preconditions, and a ConfigurationPolicy cannot request one. The guards, the
-  creation record and its uid, are checked in the same evaluation, just before the controller
-  acts. A namespace deleted and recreated under the same name inside that window would be deleted
-  without having passed them; it would need to be created by someone else, carry the creation
-  labels, and appear between the policy's read and its delete. Keep namespace creation of projects
-  with `deleteOnRemoval: true` to onboarding to rule this out.
+  `DeleteOptions` preconditions, and a ConfigurationPolicy cannot request one. Every guard,
+  including the creation record and its uid, is checked against the cached `lookup` of the old
+  namespace. If that namespace is deleted and a new one of the same name is created between that
+  read and the controller's DELETE, the new namespace is deleted although it never passed a guard.
+  It needs no labels for that. The window is the time from the lookup to the DELETE plus the age of
+  the controller's cache, as described under [Creation race](#creation-race). The namespace must
+  first have been pending for the whole grace period and listed in the status as deletable. To rule
+  this out, do not let anything other than onboarding delete and re-create the namespace of a
+  removed project with `deleteOnRemoval: true` while it is pending.
 
 ## Limitations to check on a live cluster
 

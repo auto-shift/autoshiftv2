@@ -69,12 +69,18 @@ The policies follow the same rules, so what you learn from one applies to the ot
 - **An enforcing Policy and a -test Policy.** Each policy directory renders an enforcing Policy
   from `manifests/` and an inform-only Policy from `test/`, named with a `-test` suffix, for example
   `policy-custom-sccs` and `policy-custom-sccs-test`. The enforcing Policy applies the declared
-  state. The -test Policy reports what is not applied: errors, drift of `mode: inform` projects, and
-  stale objects. Neither depends on the other. A policy that needs "every entry applied" depends on
-  the -test Policy.
+  state. The -test Policy asserts every declared object exactly as the enforcing Policy applies it,
+  so it is the readiness check, and reports the errors of its own evaluation and stale objects.
+  Neither depends on the other. A policy that needs "every entry applied" depends on the -test
+  Policy.
+- **-test Policies never delete.** A -test Policy carries no `mustnothave`. It reports through a
+  `musthave` on a ConfigMap `<name>-test-report` that can never exist, with what it found as data,
+  so it stays NonCompliant while there is anything to report, also under dry run, where nothing
+  writes the status ConfigMaps. Even Enforce clicked on a -test Policy in the Governance console
+  deletes nothing.
 - **Status ConfigMaps.** A policy that skips one bad entry and applies the rest writes the errors to
-  a ConfigMap in `open-cluster-management-agent-addon` on the managed cluster, and its -test Policy
-  stays NonCompliant while that ConfigMap exists. A policy whose configuration is all or nothing
+  a ConfigMap in `open-cluster-management-agent-addon` on the managed cluster. Its -test Policy
+  computes the same errors itself and stays NonCompliant while there are any. A policy whose configuration is all or nothing
   fails its hub template instead, and leaves the live objects as they are.
 
 | Policy | On invalid input | Where to read the errors |
@@ -404,10 +410,18 @@ the creation time. On a later evaluation it stamps the namespace's `metadata.uid
 A namespace restored from a backup, or applied again from a saved copy, gets a new uid, so its
 record no longer matches and it is never deleted.
 
+Labels alone are not trusted, because anyone who can patch a namespace can write them. The
+authoritative record is the ConfigMap `project-onboarding-records-<shard>` in
+`open-cluster-management-agent-addon`, which only cluster administrators can write. A namespace is
+deleted only while its labels and its entry there agree, the uid included. A missing records
+ConfigMap blocks every deletion of its shard, and no entry is ever imported from labels.
+
 Deletion is two-phase. The first evaluation that finds the project gone only marks the namespace
 with `autoshift.io/onboarding-pending-deletion-since`. A later evaluation deletes it once the
 project has stayed undeclared for the whole `namespaceDeleteGracePeriod`. Declaring the project
-again within that time removes the mark and cancels the deletion.
+again within that time removes the mark and cancels the deletion. While a namespace is pending,
+the ResourceQuota `autoshift-deletion-freeze` in it sets PersistentVolumeClaims, storage requests,
+and every served storage kind to zero, so no new storage is admitted during the grace period.
 
 Before it deletes, onboarding checks every guard again:
 
@@ -420,7 +434,9 @@ Before it deletes, onboarding checks every guard again:
 - the namespace is not a platform namespace, the namespace of the onboarding Policies, or one named
   after a ManagedCluster;
 - the project's last recorded mode is `enforce`, and the deployment is not a dry run. The -test
-  Policies never carry a deletion.
+  Policies never carry a deletion;
+- an evaluation in which the project had errors never raised `deleteOnRemoval` or the mode: errors
+  only lower the record.
 
 `maxNamespaceDeletes` caps how many namespaces one evaluation may delete, counted across all eight
 shards. When more would go, none is deleted and each is reported, so a values change that drops

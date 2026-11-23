@@ -1153,8 +1153,9 @@ the project's own addresses. Admin network policies add cluster-wide rules that 
 override. Shared conventions live in `config.projectOnboarding.defaults`. A project that cannot be onboarded is
 skipped and listed in the status ConfigMap of its shard, `project-onboarding-status-<shard>`. The
 projects are split by a hash of the name into eight shard Policies, `policy-project-onboarding-0`
-to `-7`, each with an inform-only `policy-project-onboarding-<shard>-test` that is NonCompliant
-while its shard's status ConfigMap exists. With `project-onboarding-prune` off, stale owned objects
+to `-7`, each with an inform-only `policy-project-onboarding-<shard>-test` that asserts every project
+of the shard as declared and is NonCompliant while an object is missing or its own evaluation
+reports an error or a stale object. It carries no `mustnothave`, so it never deletes anything. With `project-onboarding-prune` off, stale owned objects
 and dropped catalog labels also keep the `-test` Policy NonCompliant, without a status ConfigMap. The
 hub keeps each resolved shard Policy below 1 MiB: past that, the remaining projects of the shard in
 name order are not rendered and are listed under the status key `project-onboarding.size` (about
@@ -1203,7 +1204,7 @@ Configuration keys, set in the `config:` block:
 | `projectOnboarding.projects.<name>.network.defaultDeny`         | map               | (optional)                | Overrides the profile's `defaultDeny.ingress` or `defaultDeny.egress` |
 | `projectOnboarding.projects.<name>.egressIP`                    | list              | (optional)                | IPv4 or IPv6 addresses, without a prefix length, for the cluster-scoped EgressIP `autoshift-<name>`, which selects the project namespace. Replaced whole by a lower level; an address listed twice is rendered once. Not a list, an invalid address, a loopback, link-local, multicast, broadcast, or reserved address, an address inside the cluster or service network (checked on the managed cluster), or an address another project also declares skips the project and is reported (on every project that declares it). Needs nodes labeled `k8s.ovn.org/egress-assignable` and addresses in their subnet |
 | `projectOnboarding.projects.<name>.adopt`                       | bool              | `false`                   | `true` lets the project take over an existing namespace that no project owns. A namespace owned by another project is never taken over. A value other than `true` or `false` is reported and counts as `false` |
-| `projectOnboarding.projects.<name>.deleteOnRemoval`             | bool              | `false`                   | `true` lets onboarding delete the namespace once the project is removed from `config.projectOnboarding.projects`, if onboarding created it, the cluster labels `project-onboarding-delete-namespaces` and `project-onboarding-prune` are `true`, it holds no storage, and the grace period after it is marked is over. Recorded on the namespace while the project is declared. Ignored, with a status note, with `adopt: true`. A value other than `true` or `false` is reported and counts as `false` |
+| `projectOnboarding.projects.<name>.deleteOnRemoval`             | bool              | `false`                   | `true` lets onboarding delete the namespace once the project is removed from `config.projectOnboarding.projects`, if onboarding created it, the cluster labels `project-onboarding-delete-namespaces` and `project-onboarding-prune` are `true`, it holds no storage, and the grace period after it is marked is over. Recorded on the namespace and in the ConfigMap `project-onboarding-records-<shard>` while the project is declared; both must agree. Ignored, with a status note, with `adopt: true`. A value other than `true` or `false` is reported and counts as `false` |
 | `projectOnboarding.projects.<name>.mode`                        | string            | `enforce`                 | `enforce` or `inform`. With `adopt: true` and no mode, the default is `inform`. Any other value, including `false` (`mode: off` in YAML), is reported and treated as `inform` |
 | `projectOnboarding.projects.<name>.<field>`                     | string            | (optional)                | Any other key is a placeholder value for `{field}` in templates; `{name}` is always the project name |
 
@@ -1297,7 +1298,9 @@ The label is never removed automatically: a labeled node that is no longer selec
 the `egressip-nodes-status` ConfigMap, which keeps `policy-egressip-nodes-test` NonCompliant, and
 you remove the label
 with `oc label node <name> k8s.ovn.org/egress-assignable-`. An invalid key fails the policy with a
-message naming the key. See the [policy README](../policies/stable/egressip-nodes/README.md).
+message naming the key, and so does a cluster with the `egressip-nodes` label and no
+`config.egressipNodes`; set it to `{}` to label no node. See the
+[policy README](../policies/stable/egressip-nodes/README.md).
 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
