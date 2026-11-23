@@ -7,6 +7,16 @@
 # (feature.node.kubernetes.io/pci-10de.present) is what the NVIDIA GPU Operator selects GPU nodes on,
 # for OpenShift AI and for OpenShift Virtualization GPU passthrough alike.
 #
+# nodeFeatureRules takes either form:
+#   - a list of {name, rules}, one NodeFeatureRule per entry (the original form);
+#   - a map keyed by NodeFeatureRule name, {<name>: {rules, enabled}}. The rendered-config merge
+#     deep-merges maps but replaces lists whole, so only the map form lets a cluster add, override or
+#     switch off (enabled: false) a single rule from its clusterset without restating the others.
+#     A switched-off rule renders as mustnothave, so it is deleted from the cluster rather than
+#     left in place unmanaged.
+# Map keys render in sorted order. In both forms every rule needs rules, and the name must be a
+# valid Kubernetes object name; the policy fails and names the entry otherwise.
+#
 # No operand.image: the Operator uses NODE_FEATURE_DISCOVERY_IMAGE from its CSV, a digest the bundle
 # also lists as a relatedImage, so oc-mirror copies it and an ImageDigestMirrorSet redirects it. A tag
 # bypasses digest mirroring and fails on a disconnected cluster.
@@ -38,8 +48,24 @@ object-templates-raw: |
         workerConfig:
           configData: |
             {{hub $worker | toYaml | autoindent hub}}
-  {{hub- range $rule := (index $nfd "nodeFeatureRules" | default list) hub}}
+  {{hub- $rulesCfg := (index $nfd "nodeFeatureRules" | default list) hub}}
+  {{hub- $rules := list hub}}
+  {{hub- $disabled := list hub}}
+  {{hub- if kindIs "map" $rulesCfg hub}}
+  {{hub- range $name, $r := $rulesCfg hub}}
+  {{hub- $r = ($r | default dict) hub}}
+  {{hub- if and (hasKey $r "enabled") (eq (printf "%v" (index $r "enabled")) "false") hub}}
+  {{hub- $disabled = (append $disabled $name) hub}}
+  {{hub- else hub}}
+  {{hub- $rules = (append $rules (merge (dict "name" $name) (omit $r "enabled" "name"))) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else hub}}
+  {{hub- $rules = $rulesCfg hub}}
+  {{hub- end hub}}
+  {{hub- range $rule := $rules hub}}
   {{hub- if not (index $rule "name") hub}}{{hub fail "config.nodeFeatureDiscovery.nodeFeatureRules[]: name is required" hub}}{{hub- end hub}}
+  {{hub- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" (printf "%v" (index $rule "name"))) hub}}{{hub fail (printf "config.nodeFeatureDiscovery.nodeFeatureRules[%v]: name must be a lowercase Kubernetes object name" (index $rule "name")) hub}}{{hub- end hub}}
   {{hub- if not (index $rule "rules") hub}}{{hub fail (printf "config.nodeFeatureDiscovery.nodeFeatureRules[%s]: rules is required" (index $rule "name")) hub}}{{hub- end hub}}
   - complianceType: mustonlyhave
     objectDefinition:
@@ -50,4 +76,14 @@ object-templates-raw: |
         namespace: openshift-nfd
       spec:
         rules: {{hub (index $rule "rules") | toRawJson hub}}
+  {{hub- end hub}}
+  {{hub- range $name := $disabled hub}}
+  {{hub- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" (printf "%v" $name)) hub}}{{hub fail (printf "config.nodeFeatureDiscovery.nodeFeatureRules[%v]: name must be a lowercase Kubernetes object name" $name) hub}}{{hub- end hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: nfd.k8s-sigs.io/v1alpha1
+      kind: NodeFeatureRule
+      metadata:
+        name: '{{hub $name hub}}'
+        namespace: openshift-nfd
   {{hub- end hub}}
