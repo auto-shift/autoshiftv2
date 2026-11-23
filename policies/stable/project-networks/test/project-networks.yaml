@@ -33,10 +33,17 @@
 # immutable in OVN-Kubernetes, so a changed vlan, physicalNetworkName or subnets would be rejected on
 # every evaluation; such an entry, and one whose live network lacks the managed-by label, is held: the
 # inform ConfigurationPolicy renders the declared object instead, which is NonCompliant and shows the
-# difference. Change a network under a new entry name, or delete and re-create it by hand.
+# difference. Change a network under a new entry name, or delete and re-create it by hand. The
+# inform ConfigurationPolicy renders every declared network, not only held ones, so
+# policy-project-networks-test is Compliant only once each declared network exists and matches.
+# A matchLabels or matchExpressions that is set must be a map or a list; null counts as unset and is
+# left out of the rendered selector.
 #
 # Deletion: never. An owned network that is no longer declared is reported by the inform
-# ConfigurationPolicy (mustnothave, which inform never enforces). Without the CRD nothing is applied,
+# ConfigurationPolicy, under stale.ClusterUserDefinedNetwork..<name> of a musthave on the ConfigMap
+# project-networks-test-report, which can never exist (the key _unsatisfiable is in both data and
+# binaryData, which the API server refuses); the inform template has no mustnothave, so an Enforce
+# set on the -test Policy by hand can delete nothing. Without the CRD nothing is applied,
 # and with entries declared the inform ConfigurationPolicy reports the CRD as missing.
 object-templates-raw: |
   {{hub- $want := "inform" hub}}
@@ -77,10 +84,12 @@ object-templates-raw: |
   {{hub- $sel := index $e "namespaceSelector" hub}}
   {{hub- if not (and (kindIs "map" $sel) $sel) hub}}{{hub- fail (printf "%s namespaceSelector is required (matchLabels or matchExpressions)" $at) hub}}{{hub- end hub}}
   {{hub- range $k, $_ := $sel hub}}{{hub- if not (has $k (list "matchLabels" "matchExpressions")) hub}}{{hub- fail (printf "%s namespaceSelector key %s is not one of matchLabels, matchExpressions" $at $k) hub}}{{hub- end hub}}{{hub- end hub}}
-  {{hub- $matchLabels := index $sel "matchLabels" | default dict hub}}
-  {{hub- if not (kindIs "map" $matchLabels) hub}}{{hub- fail (printf "%s namespaceSelector.matchLabels is not a map" $at) hub}}{{hub- end hub}}
+  {{hub- $mlRaw := index $sel "matchLabels" hub}}
+  {{hub- if not (or (kindIs "invalid" $mlRaw) (kindIs "map" $mlRaw)) hub}}{{hub- fail (printf "%s namespaceSelector.matchLabels is not a map" $at) hub}}{{hub- end hub}}
+  {{hub- $meRaw := index $sel "matchExpressions" hub}}
+  {{hub- if not (or (kindIs "invalid" $meRaw) (kindIs "slice" $meRaw)) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions is not a list" $at) hub}}{{hub- end hub}}
+  {{hub- $matchLabels := $mlRaw | default dict hub}}
   {{hub- range $k, $v := $matchLabels hub}}{{hub- if not (kindIs "string" $v) hub}}{{hub- fail (printf "%s namespaceSelector.matchLabels value of %s is not a string (quote it)" $at $k) hub}}{{hub- end hub}}{{hub- end hub}}
-  {{hub- if not (kindIs "slice" (index $sel "matchExpressions" | default list)) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions is not a list" $at) hub}}{{hub- end hub}}
   {{hub- if not (or $matchLabels (index $sel "matchExpressions")) hub}}{{hub- fail (printf "%s namespaceSelector is required (matchLabels or matchExpressions)" $at) hub}}{{hub- end hub}}
   {{hub- $selStrings := list hub}}
   {{hub- range $k, $v := $matchLabels hub}}{{hub- $selStrings = append (append $selStrings $k) $v hub}}{{hub- end hub}}
@@ -91,7 +100,9 @@ object-templates-raw: |
   {{hub- if not (and (kindIs "string" $xkey) $xkey) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry needs a key" $at) hub}}{{hub- end hub}}
   {{hub- $xop := index $x "operator" hub}}
   {{hub- if not (and (kindIs "string" $xop) (has $xop (list "In" "NotIn" "Exists" "DoesNotExist"))) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry %s: operator must be In, NotIn, Exists or DoesNotExist" $at $xkey) hub}}{{hub- end hub}}
-  {{hub- $xvals := index $x "values" | default list hub}}
+  {{hub- $xvalsRaw := index $x "values" hub}}
+  {{hub- if not (or (kindIs "invalid" $xvalsRaw) (kindIs "slice" $xvalsRaw)) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry %s: values is not a list" $at $xkey) hub}}{{hub- end hub}}
+  {{hub- $xvals := $xvalsRaw | default list hub}}
   {{hub- if not (kindIs "slice" $xvals) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry %s: values is not a list" $at $xkey) hub}}{{hub- end hub}}
   {{hub- if and (has $xop (list "In" "NotIn")) (not $xvals) hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry %s: values is required with operator %s" $at $xkey $xop) hub}}{{hub- end hub}}
   {{hub- if and (has $xop (list "Exists" "DoesNotExist")) $xvals hub}}{{hub- fail (printf "%s namespaceSelector.matchExpressions entry %s: values must be omitted with operator %s" $at $xkey $xop) hub}}{{hub- end hub}}
@@ -118,7 +129,10 @@ object-templates-raw: |
   {{hub- if not $positive hub}}{{hub- fail (printf "%s namespaceSelector can match every namespace, openshift-* and kube-system included: it needs a matchLabels pair or an In or Exists expression (Exists on kubernetes.io/metadata.name matches every namespace)" $at) hub}}{{hub- end hub}}
   {{hub- $local := dict "role" "Secondary" "physicalNetworkName" $phys "vlan" (dict "mode" "Access" "access" (dict "id" (int $vlan))) hub}}
   {{hub- if $subnets hub}}{{hub- $_ := set $local "subnets" $subnets hub}}{{hub- else hub}}{{hub- $_ := set $local "ipam" (dict "mode" "Disabled") hub}}{{hub- end hub}}
-  {{hub- $_ := set $specs $name (dict "namespaceSelector" $sel "network" (dict "topology" "Localnet" "localnet" $local)) hub}}
+  {{hub- $selOut := dict hub}}
+  {{hub- if kindIs "map" $mlRaw hub}}{{hub- $_ := set $selOut "matchLabels" $mlRaw hub}}{{hub- end hub}}
+  {{hub- if kindIs "slice" $meRaw hub}}{{hub- $_ := set $selOut "matchExpressions" $meRaw hub}}{{hub- end hub}}
+  {{hub- $_ := set $specs $name (dict "namespaceSelector" $selOut "network" (dict "topology" "Localnet" "localnet" $local)) hub}}
   {{hub- end hub}}
   {{- $crd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "clusteruserdefinednetworks.k8s.ovn.org" }}
   {{- if $crd }}
@@ -126,7 +140,7 @@ object-templates-raw: |
   {{- $live := lookup "k8s.ovn.org/v1" "ClusterUserDefinedNetwork" "" ({{hub $name | base64enc | quote hub}} | base64dec) }}
   {{- $owned := eq (printf "%v" (get (dig "metadata" "labels" dict $live) "autoshift.io/managed-by")) "project-networks" }}
   {{- $same := eq (dig "spec" "network" dict $live | toJson) ({{hub $spec.network | toJson | base64enc | quote hub}} | base64dec | fromJson | toJson) }}
-  {{- if eq (or (not $live) (and $owned $same)) {{hub eq $want "enforce" hub}} }}
+  {{- if or {{hub eq $want "inform" hub}} (not $live) (and $owned $same) }}
   - complianceType: mustonlyhave
     metadataComplianceType: musthave
     objectDefinition:
@@ -141,15 +155,35 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- if eq $want "inform" hub}}
   {{- $declared := {{hub keys $specs | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $report := dict }}
   {{- range $obj := (lookup "k8s.ovn.org/v1" "ClusterUserDefinedNetwork" "" "" "autoshift.io/managed-by=project-networks").items | default list }}
-  {{- if not (has (printf "%v" (dig "metadata" "name" "" $obj)) $declared) }}
-  - complianceType: mustnothave
-    objectDefinition:
-      apiVersion: k8s.ovn.org/v1
-      kind: ClusterUserDefinedNetwork
-      metadata:
-        name: {{ dig "metadata" "name" "" $obj | printf "%v" | toJson }}
+  {{- $objName := printf "%v" (dig "metadata" "name" "" $obj) }}
+  {{- if not (has $objName $declared) }}
+  {{- $_ := set $report (printf "stale.ClusterUserDefinedNetwork..%s" $objName | trunc 253) (printf "ClusterUserDefinedNetwork %s is labelled autoshift.io/managed-by: project-networks but no longer declared; it is not deleted: delete it by hand once no workload uses it" $objName) }}
   {{- end }}
+  {{- end }}
+  {{- /* Always one satisfied assertion, so the -test ConfigurationPolicy is never empty: the agent namespace exists, and naming it changes nothing even if the Policy were set to enforce. */}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: open-cluster-management-agent-addon
+  {{- if $report }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: project-networks-test-report
+        namespace: open-cluster-management-agent-addon
+      data:
+        {{- range $k, $v := $report }}
+        {{ $k | toJson }}: {{ $v | toJson }}
+        {{- end }}
+        _unsatisfiable: "never created: this key is in both data and binaryData, which the API server refuses"
+      binaryData:
+        _unsatisfiable: ""
   {{- end }}
   {{hub- end hub}}
   {{- else }}

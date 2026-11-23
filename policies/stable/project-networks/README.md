@@ -16,7 +16,7 @@ NodeNetworkConfigurationPolicy `spec.desiredState.ovn.bridge-mappings` entry wit
 | Policy | Remediation | What it does |
 |---|---|---|
 | `policy-project-networks` | `${REMEDIATION}`: enforce, or inform under `autoshift.dryRun` | Applies each declared ClusterUserDefinedNetwork from `manifests/project-networks.yaml` that is absent, or owned with an unchanged `spec.network` |
-| `policy-project-networks-test` | Always inform | From `test/project-networks.yaml`: reports held entries, a missing CRD, and owned networks that are no longer declared. It never changes anything |
+| `policy-project-networks-test` | Always inform | From `test/project-networks.yaml`: asserts every declared network exactly as declared, so a missing, drifted, or held network is NonCompliant, and reports a missing CRD and owned networks that are no longer declared. It never changes anything |
 
 Both files are the same template and differ only in the `$want` line. The
 inform-only checks are a policy of their own, as the [developer
@@ -24,8 +24,9 @@ guide](../../../docs/developer-guide.md#gating-on-cluster-state) requires: a `re
 the root of one Policy overrides all of its children, so a check bundled into the enforcing Policy
 would start changing what it should only report.
 
-`policy-project-networks-test` is Compliant only when every declared network is applied, none is
-held, and nothing stale is left, so depend on it, not on `policy-project-networks`, when another
+`policy-project-networks-test` is Compliant only when every declared network exists and matches,
+none is held, and nothing stale is left. It asserts each declared network itself, so it does not
+report Compliant before the enforcing policy has created it, so depend on it, not on `policy-project-networks`, when another
 policy needs that state. `policy-project-networks` has no status ConfigMap; it stays Compliant while
 an entry is held, because a held entry is not applied by design.
 
@@ -110,7 +111,10 @@ so a misspelled key cannot be silently ignored. Two subnets of the same IP famil
 value that is not a string or not a valid label value), are errors too. So is a `matchLabels` key
 that is not a valid label key (an optional DNS subdomain prefix and `/`, then a name of at most 63
 characters) or a value that is not a valid label value (at most 63 characters, alphanumeric at both
-ends, with `-`, `_`, and `.` inside). So are a `physicalNetworkName` with whitespace or control
+ends, with `-`, `_`, and `.` inside). So is a `matchLabels` that is set but is not a map, or a
+`matchExpressions` or expression `values` that is set but is not a list, such as `matchLabels:
+false`: the type is checked before any default applies, and `null` counts as unset. So are a
+`physicalNetworkName` with whitespace or control
 characters, which would never match a bridge mapping, a `subnets` value that is set but not a list
 (such as `""`, `{}`, `false`, or `0`), and a subnet that is not a valid IPv4 or IPv6 CIDR (such as
 `10.70.0.0/33` or `10.70/24`). Strings containing `{{` or `}}` are rejected.
@@ -158,8 +162,11 @@ held and reported the same way.
 ## Removal
 
 Deletion is never automatic. A network with the managed-by label that is no longer declared is
-reported by `policy-project-networks-test`, which stays NonCompliant until it is deleted by hand or
-declared again. Deleting a ClusterUserDefinedNetwork that pods still use is blocked by
+reported by `policy-project-networks-test` under `stale.ClusterUserDefinedNetwork..<name>` of the
+ConfigMap `project-networks-test-report`, which can never exist (its key `_unsatisfiable` is in both
+`data` and `binaryData`, which the API server refuses), so it stays NonCompliant until the network is
+deleted by hand or declared again. The test policy has no `mustnothave`, so even Enforce clicked on
+it in the console deletes nothing. Deleting a ClusterUserDefinedNetwork that pods still use is blocked by
 OVN-Kubernetes until they are gone.
 
 ## Prerequisites
