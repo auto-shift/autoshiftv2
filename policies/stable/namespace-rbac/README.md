@@ -26,7 +26,7 @@ applies. See [Status](#status).
 | Policy | Remediation | What it does |
 |---|---|---|
 | `policy-namespace-rbac` | `${REMEDIATION}`: enforce, or inform under `autoshift.dryRun` | Creates and corrects the declared ServiceAccounts, Roles, and RoleBindings from `manifests/namespace-rbac.yaml`, and writes the `namespace-rbac-status` ConfigMap while there are errors |
-| `policy-namespace-rbac-test` | Always inform | From `test/namespace-rbac.yaml`: reports objects that are no longer declared and asserts that the status ConfigMap is absent. It never changes anything |
+| `policy-namespace-rbac-test` | Always inform | From `test/namespace-rbac.yaml`: asserts every accepted ServiceAccount, Role, RoleBinding and token Secret exactly as declared, reports objects that are no longer declared and the errors of its own evaluation in `namespace-rbac-test-report`. It never deletes anything |
 
 Both files are the same template and differ only in the `$want` line. The
 inform-only checks are a policy of their own, as the [developer
@@ -34,8 +34,8 @@ guide](../../../docs/developer-guide.md#gating-on-cluster-state) requires: a `re
 the root of one Policy overrides all of its children, so a check bundled into the enforcing Policy
 would start deleting what it should only report.
 
-`policy-namespace-rbac-test` is Compliant only when every declared entry is applied and nothing
-stale is left, so depend on it, not on `policy-namespace-rbac`, when another policy needs the
+`policy-namespace-rbac-test` is Compliant only when every declared object exists and matches, no
+entry has an error, and nothing stale is left, so depend on it, not on `policy-namespace-rbac`, when another policy needs the
 ServiceAccounts and RoleBindings to be in place. `policy-namespace-rbac` reports Compliant once its
 objects and the status ConfigMap are written, even when the status lists errors.
 
@@ -156,7 +156,8 @@ The rules of `edit` and `view` are not checked by the safety gate, because the c
 and operators aggregate their own rules into both. `edit` creates and changes workloads, reads and
 writes every Secret, runs `pods/exec`, impersonates and requests tokens for every ServiceAccount of
 its namespace, so it carries what any ServiceAccount of that namespace can do. Grant it only in a
-namespace whose ServiceAccounts hold no wider rights. `view` reads most objects but not Secrets.
+namespace whose ServiceAccounts hold no wider rights. `view` reads most objects but not Secrets,
+unless an operator aggregates more rights into it; the token guards below check for that.
 
 Every other guard applies unchanged: subjects are ServiceAccounts only, a platform namespace or the
 namespace of a ManagedCluster is refused as the namespace of the entry or of a subject, the
@@ -173,8 +174,10 @@ create or change pods or workload controllers (the workload list of the safety g
 builds and build configurations); create, change, or read Secrets, since every ServiceAccount has a
 pull Secret that carries a token; use `pods/exec`, `pods/attach`, or `pods/ephemeralcontainers`;
 request tokens without `resourceNames`; `bind` or `escalate` RBAC objects; or impersonate
-ServiceAccounts, users, or groups. Granted through a ClusterRoleBinding, any of these makes every
-namespace reachable. On the hub, a ClusterRole other than `view` and a Role that cannot be inspected
+ServiceAccounts. Granted through a ClusterRoleBinding, any of these makes every namespace reachable,
+and so does impersonating users, groups, `uids`, or `userextras`. A RoleBinding cannot grant those
+last four, because Kubernetes checks them at cluster scope, so in a RoleBinding they make nothing
+reachable. On the hub, a ClusterRole other than `view` and a Role that cannot be inspected
 count as all of these; on the managed cluster the live rules of each Role and ClusterRole are read,
 aggregated rules included. The set is computed as a closure, repeated until a round adds nothing,
 for at most 6 rounds; when it is still growing after that, every `clusterRole` binding is refused
@@ -201,7 +204,18 @@ counted. Review such grants in a namespace a token can reach.
 - an `edit` RoleBinding is held, and reported, while its namespace holds such a live token Secret;
 - a token Secret is not created or changed while a live labeled `edit` RoleBinding is in its
   namespace, or while any live RoleBinding or ClusterRoleBinding binds `edit` or `view` to a
-  ServiceAccount, or a ServiceAccount group, that its ServiceAccount can act as.
+  ServiceAccount, or a ServiceAccount group, that its ServiceAccount can act as;
+- `view` is not trusted to stay read-only. On the managed cluster the live `view` ClusterRole is
+  read, aggregated rules included. When any of its rules grants a right that the reachability
+  closure counts as reaching a token, `view` is treated like `edit` in the two guards above: creating
+  or changing pods, workload controllers, or Secrets, reading Secrets, `pods/exec`, `pods/attach`,
+  or ephemeral containers, `bind` or `escalate` on RBAC objects, impersonating ServiceAccounts, or
+  requesting tokens. A wildcard resource counts in any API group, as it does for the reachability
+  closure, except for reading Secrets, where only a wildcard in the core API group (`""`) or `*`
+  counts: a read-only wildcard in another group, such as the Gatekeeper constraint groups, does not. With
+  such a right, a `view` RoleBinding is held next to a live token Secret, a live labeled `view`
+  RoleBinding refuses a pending token Secret in its namespace, and a declared `view` binding makes
+  its namespace token-reachable. A `view` with none of these rights stays allowed.
 
 The guards act before creation only. When reachability arises after an `edit` or `view` RoleBinding
 or a token Secret is already live, for example through a binding created by hand, the object is
@@ -444,9 +458,28 @@ Errors are reported in the ConfigMap `namespace-rbac-status` in the
 messages joined by `; `. Each message names the entry, for example `roles."example-ci-builds":
 rules[0].verbs escalate is never granted: it escalates privileges`. The key is the namespace with
 invalid characters replaced by `_`, a leading `.` replaced by `_`, an empty name written as `_`,
-cut to 240 characters, and a suffix such as `-2` when two names produce the same key. The ConfigMap
-exists only while there are errors, and `policy-namespace-rbac-test` is NonCompliant while it
-exists.
+cut to 240 characters, and a suffix such as `-2` when two names produce the same key.
+
+The ConfigMap also exists when there is no error but a token Secret is rendered: it then holds only
+the informational `token-secret-exceptions` line. That is not a refusal. In that state
+`policy-namespace-rbac-test` asserts the ConfigMap present, not absent, and stays Compliant, so do
+not delete the ConfigMap to clear compliance; the next evaluation writes it again. With an error,
+the ConfigMap holds the error keys as well, and `policy-namespace-rbac-test` is NonCompliant while
+any error stands.
+
+`policy-namespace-rbac-test` does not rely on that ConfigMap: under dry run nothing writes it. It
+reports what its own evaluation finds, the errors under the same keys and each stale or held object
+under `stale.<Kind>.<namespace>.<name>`, as the data of the ConfigMap `namespace-rbac-test-report`
+in the same namespace. The report is a `musthave` on a ConfigMap that can never exist: its key `_unsatisfiable` is in both
+`data` and `binaryData`, which the API server refuses. The assertion therefore stays NonCompliant
+while there is anything to report, and its compliance message names the ConfigMap. The `-test`
+Policy has no `mustnothave` at all, so even Enforce clicked on it in the Governance console deletes
+nothing. The `token-secret-exceptions` line is never part of it.
+
+The status ConfigMap is written or deleted only while it is absent or carries the label
+`autoshift.io/managed-by: namespace-rbac`. A ConfigMap of that name without the label belongs to
+someone else: it is left as it is, and `policy-namespace-rbac-test` reports it under the key
+`namespace-rbac-status` of `namespace-rbac-test-report` until it is removed by hand.
 
 A namespace-level error, such as an invalid or platform namespace, an unknown key, or a section
 that is not a map, skips the whole namespace. Any other error skips only its ServiceAccount, Role,
@@ -473,8 +506,8 @@ oc get configmap namespace-rbac-status -n open-cluster-management-agent-addon -o
 Removal is manual. An object labeled `autoshift.io/managed-by: namespace-rbac` that is no longer
 declared is not deleted. That covers a removed namespace, Role, or RoleBinding, a ServiceAccount set
 to `false`, and a RoleBinding whose subjects are all `false`. `policy-namespace-rbac-test` reports
-each one as a `mustnothave` violation, so it stays NonCompliant until the object is removed
-by hand:
+each one under `stale.<Kind>.<namespace>.<name>` of `namespace-rbac-test-report`, so it stays
+NonCompliant until the object is removed by hand:
 
 ```bash
 oc delete rolebinding <name> -n <namespace>

@@ -30,12 +30,24 @@
 # cluster from live token Secrets and every RoleBinding/ClusterRoleBinding, groups included). An
 # identity that can request tokens adds those ServiceAccounts; one that can create workloads, read or
 # write Secrets, exec/attach/ephemeralcontainers, request tokens without resourceNames, bind or
-# escalate, or impersonate adds its whole namespace (every namespace through a ClusterRoleBinding).
+# escalate, or impersonate ServiceAccounts adds its whole namespace (every namespace through a
+# ClusterRoleBinding). Impersonating users, groups, uids or userextras is a cluster-scoped check that
+# a RoleBinding cannot grant, so only a ClusterRoleBinding with it counts (every namespace).
 # Each binding is classified once ($declEdges from config, $edges from live bindings with a
 # ServiceAccount subject); the rounds then only walk those edges, both sources in every round, and
 # stop when a round adds nothing. At most 6 rounds; still growing means every clusterRole binding is
 # refused (fail closed). system:authenticated is not matched (README). A pending token Secret is
 # refused while a live edit or view binding names a ServiceAccount it can act as.
+#
+# view is not trusted to stay read-only: ClusterRoles aggregate into it, so on the managed cluster
+# the live view ClusterRole is read ($secretReaders). When any rule of it grants a right the closure
+# counts as reaching a token (create or change workloads or Secrets, read Secrets, pods/exec or
+# attach, ephemeral containers, bind or escalate RBAC objects, impersonate ServiceAccounts, request
+# tokens; a wildcard resource counts in any API group, except for reading Secrets, where only a
+# wildcard in the core group or * counts), view is treated like edit: a view binding is held in a
+# namespace with a live labelled token Secret, a live labelled view RoleBinding in the namespace of a
+# pending token Secret refuses that Secret, and a declared view binding makes its whole namespace
+# token-reachable. A view that cannot read Secrets stays allowed.
 #
 # Every object is labelled autoshift.io/managed-by: namespace-rbac. Roles and RoleBindings are
 # mustonlyhave, so rules and subjects are replaced, never merged; a RoleBinding whose role changes is
@@ -80,8 +92,18 @@
 # skipped too. Every other entry still applies. Errors are reported in the ConfigMap
 # namespace-rbac-status (open-cluster-management-agent-addon), one data key per namespace, messages
 # joined by "; ". The enforce ConfigurationPolicy writes it while there are errors and deletes it
-# when there are none; the inform one asserts it is absent, so policy-namespace-rbac-test is
-# NonCompliant while any error stands. A hub `fail` is not used: one bad entry would block every valid one.
+# when there are none. The inform one never carries a mustnothave, so an Enforce set on the -test
+# Policy by hand can delete nothing: it reports its own errors (the token-secret-exceptions line is
+# informational, not an error) and the stale objects of the sweep, under
+# stale.<Kind>.<namespace>.<name>, as data of a musthave on the ConfigMap namespace-rbac-test-report,
+# which can never exist (the key _unsatisfiable is in both data and binaryData, which the API server
+# refuses). policy-namespace-rbac-test is therefore NonCompliant while any of them stands, under dry
+# run too, where nothing writes the status ConfigMap. A hub `fail` is not used: one bad entry would
+# block every valid one.
+#
+# Readiness: the inform ConfigurationPolicy also asserts every accepted ServiceAccount, Role,
+# RoleBinding and token Secret exactly as the enforce one applies them, so policy-namespace-rbac-test
+# is Compliant only once each declared object exists and matches.
 #
 # Safety gate, rule by rule (strings are trimmed and lower-cased before the checks):
 #   - * anywhere in apiGroups, resources, verbs or resourceNames;
@@ -121,8 +143,15 @@
 # when none is left); all are reported. A held or skipped object keeps its live state.
 #
 # Removal is manual. An object labelled autoshift.io/managed-by: namespace-rbac that this run does
-# not declare (removed, set to false, a RoleBinding with no true subject left) gets mustnothave in
-# the inform ConfigurationPolicy only, so it is reported and never deleted. Objects with errors stay
+# not declare (removed, set to false, a RoleBinding with no true subject left) is reported in the
+# inform ConfigurationPolicy only, under stale.<Kind>.<namespace>.<name> of the report, and never
+# deleted. A declared token Secret
+# that the managed-cluster checks hold ($heldSecrets) counts as not declared there, so a live one
+# is reported for cleanup too.
+#
+# The status ConfigMap is written or deleted only while it is absent or carries the managed-by
+# label. One of that name without the label is left alone and reported in the inform
+# ConfigurationPolicy, through its report. Objects with errors stay
 # declared and are never reported, and nothing in a namespace with a namespace-level error is. No
 # sweep runs when the rendered config cannot be read or namespaceRbac is not a map.
 #
@@ -328,7 +357,7 @@ object-templates-raw: |
   {{hub- if and (or $any (has "create" $vs) (has "get" $vs)) (has $x (list "pods/exec" "pods/attach")) hub}}{{hub- $all = true hub}}{{hub- end hub}}
   {{hub- if and (or $any (has "patch" $vs) (has "update" $vs)) (eq $x "pods/ephemeralcontainers") hub}}{{hub- $all = true hub}}{{hub- end hub}}
   {{hub- if and $bindEsc (or (has $x (list "roles" "clusterroles" "rolebindings" "clusterrolebindings")) $wild) hub}}{{hub- $all = true hub}}{{hub- end hub}}
-  {{hub- if and $imp (or (has $x (list "serviceaccounts" "users" "groups" "uids")) (hasPrefix "userextras" $x) $wild) hub}}{{hub- $all = true hub}}{{hub- end hub}}
+  {{hub- if and $imp (or (eq $x "serviceaccounts") $wild) hub}}{{hub- $all = true hub}}{{hub- end hub}}
   {{hub- if and (eq $x "serviceaccounts/token") (or $any (has "create" $vs)) hub}}
   {{hub- $rnm := index $rule "resourceNames" hub}}
   {{hub- if and (kindIs "slice" $rnm) $rnm hub}}{{hub- range $n := $rnm hub}}{{hub- $targets = append $targets (printf "%s/%v" $r.ns $n) hub}}{{hub- end hub}}{{hub- else hub}}{{hub- $all = true hub}}{{hub- end hub}}
@@ -591,6 +620,7 @@ object-templates-raw: |
   {{- $clusterRoleNames := list "edit" "view" }}
   {{- $renderedMinters := dict }}
   {{- $pending := list }}
+  {{- $heldSecrets := dict }}
   {{- $liveReach := dict }}
   {{- range $k, $v := $hub.reach }}{{- $_ := set $liveReach $k $v }}{{- end }}
   {{- range $sec := (lookup "v1" "Secret" "" "" "autoshift.io/managed-by=namespace-rbac").items | default list }}
@@ -598,6 +628,22 @@ object-templates-raw: |
   {{- if and $hn (eq (printf "%v" (dig "type" "" $sec)) "kubernetes.io/service-account-token") }}
   {{- $h := printf "%v/%s" (dig "metadata" "namespace" "" $sec) $hn }}
   {{- $_ := set $liveReach $h (concat (index $liveReach $h | default list) (list $h) | uniq) }}
+  {{- end }}
+  {{- end }}
+  {{- $secretReaders := list "edit" }}
+  {{- if $liveReach }}
+  {{- range $rule := (index (lookup "rbac.authorization.k8s.io/v1" "ClusterRole" "" "view" | default dict) "rules" | default list) }}
+  {{- $ag := index $rule "apiGroups" | default list }}{{- $rs := list }}{{- range $x := (index $rule "resources" | default list) }}{{- $rs = append $rs (lower (printf "%v" $x)) }}{{- end }}{{- $vs := list }}{{- range $x := (index $rule "verbs" | default list) }}{{- $vs = append $vs (lower (printf "%v" $x)) }}{{- end }}
+  {{- $any := has "*" $vs }}
+  {{- $write := or $any (has "create" $vs) (has "update" $vs) (has "patch" $vs) }}
+  {{- $read := or $any (has "get" $vs) (has "list" $vs) (has "watch" $vs) }}
+  {{- $imp := or $any (has "impersonate" $vs) }}
+  {{- $bindEsc := or $any (has "bind" $vs) (has "escalate" $vs) }}
+  {{- range $x := $rs }}
+  {{- $wild := contains "*" $x }}
+  {{- $wildCore := and $wild (or (has "" $ag) (has "*" $ag)) }}
+  {{- if or (and $write (or (has $x $hub.workloads) (eq $x "secrets") $wild)) (and $read (or (eq $x "secrets") $wildCore)) (and (or $any (has "create" $vs) (has "get" $vs)) (has $x (list "pods/exec" "pods/attach"))) (and (or $any (has "patch" $vs) (has "update" $vs)) (eq $x "pods/ephemeralcontainers")) (and $bindEsc (or (has $x (list "roles" "clusterroles" "rolebindings" "clusterrolebindings")) $wild)) (and $imp (or (eq $x "serviceaccounts") $wild)) (and (eq $x "serviceaccounts/token") (or $any (has "create" $vs))) }}{{- $secretReaders = list "edit" "view" }}{{- end }}
+  {{- end }}
   {{- end }}
   {{- end }}
   {{- $liveGrew := false }}
@@ -648,7 +694,7 @@ object-templates-raw: |
   {{- if and (or $any (has "create" $vs) (has "get" $vs)) (has $x (list "pods/exec" "pods/attach")) }}{{- $all = true }}{{- end }}
   {{- if and (or $any (has "patch" $vs) (has "update" $vs)) (eq $x "pods/ephemeralcontainers") }}{{- $all = true }}{{- end }}
   {{- if and $bindEsc (or (has $x (list "roles" "clusterroles" "rolebindings" "clusterrolebindings")) $wild) }}{{- $all = true }}{{- end }}
-  {{- if and $imp (or (has $x (list "serviceaccounts" "users" "groups" "uids")) (hasPrefix "userextras" $x) $wild) }}{{- $all = true }}{{- end }}
+  {{- if and $imp (or (eq $x "serviceaccounts") $wild (and (eq $rbNs "") (or (has $x (list "users" "groups" "uids")) (hasPrefix "userextras" $x)))) }}{{- $all = true }}{{- end }}
   {{- if and (eq $x "serviceaccounts/token") (or $any (has "create" $vs)) }}
   {{- $rnm := index $rule "resourceNames" | default list }}
   {{- if and $rnm $rbNs }}{{- range $n := $rnm }}{{- $targets = append $targets (printf "%s/%v" $rbNs $n) }}{{- end }}{{- else }}{{- $all = true }}{{- end }}
@@ -660,6 +706,12 @@ object-templates-raw: |
   {{- end }}
   {{- end }}
   {{- range $ref, $tg := $hub.declEdges }}{{- $edges = append $edges (dict "subs" (list (dict "label" "" "ref" $ref "gns" "" "gall" false)) "targets" $tg) }}{{- end }}
+  {{- if has "view" $secretReaders }}
+  {{- range $e := $hub.entries }}{{- range $b := $e.bindings }}{{- if and (eq $b.kind "ClusterRole") (eq $b.role "view") }}
+  {{- $vsubs := list }}{{- range $vsub := $b.subjects }}{{- $vsubs = append $vsubs (dict "label" "" "ref" (printf "%s/%s" $vsub.namespace $vsub.name) "gns" "" "gall" false) }}{{- end }}
+  {{- $edges = append $edges (dict "subs" $vsubs "targets" (list (printf "%s/*" $e.ns))) }}
+  {{- end }}{{- end }}{{- end }}
+  {{- end }}
   {{- $liveDone := false }}
   {{- range $round := until 6 }}
   {{- if not $liveDone }}
@@ -708,7 +760,6 @@ object-templates-raw: |
   {{- $_ := set $foreignSA $sa true }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "ServiceAccount %s/%s already exists and is not managed by namespace-rbac, so it is not changed" $e.ns $sa)) }}
   {{- else }}
-  {{hub- if eq $want "enforce" hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -718,7 +769,6 @@ object-templates-raw: |
         namespace: {{ $e.ns | toJson }}
         labels:
           autoshift.io/managed-by: namespace-rbac
-  {{hub- end hub}}
   {{- end }}
   {{- end }}
   {{- range $tk := $e.tokens }}
@@ -726,16 +776,24 @@ object-templates-raw: |
   {{- $secLabels := dig "metadata" "labels" dict $liveSec }}
   {{- $secFor := printf "%v" (index (dig "metadata" "annotations" dict $liveSec) "kubernetes.io/service-account.name" | default "") }}
   {{- if hasKey $foreignSA $tk.sa }}
+  {{- $_ := set $heldSecrets (printf "Secret|%s|%s" $e.ns $tk.secret) true }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "token Secret %s/%s is not created or changed: its ServiceAccount %s is not managed by namespace-rbac" $e.ns $tk.secret $tk.sa)) }}
   {{- else if and $liveSec (ne (printf "%v" (index $secLabels "autoshift.io/managed-by" | default "")) "namespace-rbac") }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "Secret %s/%s already exists and is not managed by namespace-rbac, so it is not changed" $e.ns $tk.secret)) }}
   {{- else if and $liveSec (or (ne (printf "%v" (dig "type" "" $liveSec)) "kubernetes.io/service-account-token") (ne $secFor $tk.sa)) }}
+  {{- $_ := set $heldSecrets (printf "Secret|%s|%s" $e.ns $tk.secret) true }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "Secret %s/%s is managed by namespace-rbac but is not the token Secret of ServiceAccount %s, so it is not changed: delete it by hand" $e.ns $tk.secret $tk.sa)) }}
   {{- else }}
   {{- $pending = append $pending (dict "ns" $e.ns "key" $e.key "sa" $tk.sa "secret" $tk.secret) }}
   {{- end }}
   {{- end }}
   {{- $heldRoles := dict }}
+  {{- $rbByRole := dict }}
+  {{- if $e.roles }}
+  {{- range $lrb := (lookup "rbac.authorization.k8s.io/v1" "RoleBinding" $e.ns "").items | default list }}
+  {{- if eq (printf "%v" (dig "roleRef" "kind" "" $lrb)) "Role" }}{{- $rk := printf "%v" (dig "roleRef" "name" "" $lrb) }}{{- $_ := set $rbByRole $rk (append (index $rbByRole $rk | default list) $lrb) }}{{- end }}
+  {{- end }}
+  {{- end }}
   {{- range $r := $e.roles }}
   {{- $live := lookup "rbac.authorization.k8s.io/v1" "Role" $e.ns $r.name }}
   {{- $tokenSecrets := list }}
@@ -749,8 +807,7 @@ object-templates-raw: |
   {{- end }}
   {{- $roleHolders := list }}
   {{- if not $r.minter }}
-  {{- range $lrb := (lookup "rbac.authorization.k8s.io/v1" "RoleBinding" $e.ns "").items | default list }}
-  {{- if and (eq (printf "%v" (dig "roleRef" "kind" "" $lrb)) "Role") (eq (printf "%v" (dig "roleRef" "name" "" $lrb)) $r.name) }}
+  {{- range $lrb := index $rbByRole $r.name | default list }}
   {{- range $ls := (index $lrb "subjects" | default list) }}
   {{- $lsKind := printf "%v" (index $ls "kind" | default "") }}
   {{- $lsName := printf "%v" (index $ls "name" | default "") }}
@@ -771,7 +828,6 @@ object-templates-raw: |
   {{- end }}
   {{- if hasKey (index $tokCache $lsNs) $lsName }}
   {{- $roleHolders = append $roleHolders (printf "%s/%s (RoleBinding %s)" $lsNs $lsName (dig "metadata" "name" "" $lrb)) }}
-  {{- end }}
   {{- end }}
   {{- end }}
   {{- end }}
@@ -805,7 +861,6 @@ object-templates-raw: |
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "Role %s/%s is not created or changed: serviceaccounts/token resourceNames %s name ServiceAccounts that are not managed by namespace-rbac" $e.ns $r.name (join ", " $foreignSAs))) }}
   {{- else }}
   {{- if $r.minter }}{{- $_ := set $renderedMinters (printf "%s|%s" $e.ns $r.name) true }}{{- end }}
-  {{hub- if eq $want "enforce" hub}}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: rbac.authorization.k8s.io/v1
@@ -816,7 +871,6 @@ object-templates-raw: |
         labels:
           autoshift.io/managed-by: namespace-rbac
       rules: {{ $r.rules | toJson }}
-  {{hub- end hub}}
   {{- end }}
   {{- end }}
   {{- range $b := $e.bindings }}
@@ -857,7 +911,7 @@ object-templates-raw: |
   {{- end }}
   {{- end }}
   {{- $editTokens := list }}
-  {{- if and (eq $b.kind "ClusterRole") (eq $b.role "edit") }}
+  {{- if and (eq $b.kind "ClusterRole") (has $b.role $secretReaders) }}
   {{- if not (hasKey $tokCache $e.ns) }}
   {{- $holders := dict }}
   {{- range $sec := (lookup "v1" "Secret" $e.ns "" "autoshift.io/managed-by=namespace-rbac").items | default list }}
@@ -885,13 +939,12 @@ object-templates-raw: |
   {{- else if $reached }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s is not created or changed: it binds ClusterRole %s to %s, which whoever holds a long-lived token Secret managed by namespace-rbac can act as" $e.ns $b.name $b.role (join ", " $reached))) }}
   {{- else if $editTokens }}
-  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s is not created or changed: it binds ClusterRole edit in a namespace that holds long-lived token Secrets of %s managed by namespace-rbac" $e.ns $b.name (join ", " $editTokens))) }}
+  {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s is not created or changed: it binds ClusterRole %s in a namespace that holds long-lived token Secrets of %s managed by namespace-rbac%s" $e.ns $b.name $b.role (join ", " $editTokens) (ternary ", and the view ClusterRole of this cluster reaches token Secrets" "" (eq $b.role "view")))) }}
   {{- else if not $kept }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s is not created or changed: no subject namespace exists" $e.ns $b.name)) }}
   {{- else if and $live (ne (printf "%v" (index (dig "metadata" "labels" dict $live) "autoshift.io/managed-by" | default "")) "namespace-rbac") }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s already exists and is not managed by namespace-rbac, so it is not changed" $e.ns $b.name)) }}
   {{- else }}
-  {{hub- if eq $want "enforce" hub}}
   - complianceType: mustonlyhave
     recreateOption: IfRequired
     objectDefinition:
@@ -912,7 +965,6 @@ object-templates-raw: |
           name: {{ $s.name | toJson }}
           namespace: {{ $s.namespace | toJson }}
         {{- end }}
-  {{hub- end hub}}
   {{- end }}
   {{- end }}
   {{- end }}
@@ -942,8 +994,8 @@ object-templates-raw: |
   {{- end }}
   {{- range $lrb := $liveRBs }}
   {{- $rbNs := printf "%v" (dig "metadata" "namespace" "" $lrb) }}
-  {{- if and (eq $rbNs $tk.ns) (eq (printf "%v" (dig "roleRef" "kind" "" $lrb)) "ClusterRole") (eq (printf "%v" (dig "roleRef" "name" "" $lrb)) "edit") (eq (printf "%v" (index (dig "metadata" "labels" dict $lrb) "autoshift.io/managed-by" | default "")) "namespace-rbac") }}
-  {{- $wide = append $wide (printf "RoleBinding %s/%v binds ClusterRole edit in the namespace of the Secret" $rbNs (dig "metadata" "name" "" $lrb)) }}
+  {{- if and (eq $rbNs $tk.ns) (eq (printf "%v" (dig "roleRef" "kind" "" $lrb)) "ClusterRole") (has (printf "%v" (dig "roleRef" "name" "" $lrb)) $secretReaders) (eq (printf "%v" (index (dig "metadata" "labels" dict $lrb) "autoshift.io/managed-by" | default "")) "namespace-rbac") }}
+  {{- $wide = append $wide (printf "RoleBinding %s/%v binds ClusterRole %v in the namespace of the Secret%s" $rbNs (dig "metadata" "name" "" $lrb) (dig "roleRef" "name" "" $lrb) (ternary ", and the view ClusterRole of this cluster reaches token Secrets" "" (eq (printf "%v" (dig "roleRef" "name" "" $lrb)) "view"))) }}
   {{- end }}
   {{- range $ls := (index $lrb "subjects" | default list) }}
   {{- $sk := printf "%v" (index $ls "kind" | default "") }}
@@ -977,10 +1029,10 @@ object-templates-raw: |
   {{- end }}
   {{- end }}
   {{- if $wide }}
+  {{- $_ := set $heldSecrets (printf "Secret|%s|%s" $tk.ns $tk.secret) true }}
   {{- $_ := set $status $tk.key (append (index $status $tk.key | default list) (printf "token Secret %s/%s is not created or changed: live objects widen ServiceAccount %s beyond a minter-only Role that namespace-rbac renders: %s" $tk.ns $tk.secret $tk.sa (join ", " (uniq $wide)))) }}
   {{- else }}
   {{- $exceptions = append $exceptions (printf "Secret %s/%s holds a long-lived token of the minter-only ServiceAccount %s" $tk.ns $tk.secret $tk.sa) }}
-  {{hub- if eq $want "enforce" hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -993,30 +1045,31 @@ object-templates-raw: |
           autoshift.io/managed-by: namespace-rbac
         annotations:
           kubernetes.io/service-account.name: {{ $tk.sa | toJson }}
-  {{hub- end hub}}
   {{- end }}
   {{- end }}
+  {{- $stale := dict }}
   {{hub- if eq $want "inform" hub}}
   {{- if $hub.sweep }}
   {{- range $kind := list (dict "apiVersion" "v1" "kind" "ServiceAccount") (dict "apiVersion" "v1" "kind" "Secret") (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "Role") (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "RoleBinding") }}
   {{- range $obj := (lookup $kind.apiVersion $kind.kind "" "" "autoshift.io/managed-by=namespace-rbac").items | default list }}
   {{- $objNs := printf "%v" (dig "metadata" "namespace" "" $obj) }}
   {{- $objName := printf "%v" (dig "metadata" "name" "" $obj) }}
-  {{- if not (or (hasKey $hub.held $objNs) (hasKey $clusterHeld $objNs) (hasKey $hub.declared (printf "%s|%s|%s" $kind.kind $objNs $objName))) }}
-  - complianceType: mustnothave
-    objectDefinition:
-      apiVersion: {{ $kind.apiVersion | toJson }}
-      kind: {{ $kind.kind | toJson }}
-      metadata:
-        name: {{ $objName | toJson }}
-        namespace: {{ $objNs | toJson }}
+  {{- $objKey := printf "%s|%s|%s" $kind.kind $objNs $objName }}
+  {{- if not (or (hasKey $hub.held $objNs) (hasKey $clusterHeld $objNs) (and (hasKey $hub.declared $objKey) (not (hasKey $heldSecrets $objKey)))) }}
+  {{- $_ := set $stale (printf "stale.%s.%s.%s" $kind.kind $objNs $objName | trunc 253) (printf "%s %s/%s is labelled autoshift.io/managed-by: namespace-rbac but is not declared, or is refused on this cluster; it is not deleted: delete it by hand if it should go" $kind.kind $objNs $objName) }}
   {{- end }}
   {{- end }}
   {{- end }}
   {{- end }}
   {{hub- end hub}}
+  {{- $liveStatus := lookup "v1" "ConfigMap" "open-cluster-management-agent-addon" "namespace-rbac-status" }}
+  {{- $foreignStatus := and $liveStatus (ne (printf "%v" (index (dig "metadata" "labels" dict $liveStatus) "autoshift.io/managed-by" | default "")) "namespace-rbac") }}
+  {{- if $foreignStatus }}
+  {{- $_ := set $status "namespace-rbac-status" (list "ConfigMap open-cluster-management-agent-addon/namespace-rbac-status exists without the label autoshift.io/managed-by: namespace-rbac, so namespace-rbac neither writes nor deletes it and cannot report there; remove it by hand") }}
+  {{- end }}
   {{hub- if eq $want "enforce" hub}}
-  {{- if or $status $exceptions }}
+  {{- if $foreignStatus }}
+  {{- else if or $status $exceptions }}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: v1
@@ -1043,15 +1096,7 @@ object-templates-raw: |
         namespace: open-cluster-management-agent-addon
   {{- end }}
   {{hub- else hub}}
-  {{- if or $status (not $exceptions) }}
-  - complianceType: mustnothave
-    objectDefinition:
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: namespace-rbac-status
-        namespace: open-cluster-management-agent-addon
-  {{- else }}
+  {{- if and $exceptions (not $status) }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -1059,5 +1104,31 @@ object-templates-raw: |
       metadata:
         name: namespace-rbac-status
         namespace: open-cluster-management-agent-addon
+  {{- end }}
+  {{- $report := dict }}
+  {{- range $k, $msgs := $status }}{{- $_ := set $report $k (join "; " $msgs) }}{{- end }}
+  {{- range $k, $v := $stale }}{{- $_ := set $report $k $v }}{{- end }}
+  {{- /* Always one satisfied assertion, so the -test ConfigurationPolicy is never empty: the agent namespace exists, and naming it changes nothing even if the Policy were set to enforce. */}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: open-cluster-management-agent-addon
+  {{- if $report }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: namespace-rbac-test-report
+        namespace: open-cluster-management-agent-addon
+      data:
+        {{- range $k, $v := $report }}
+        {{ $k | toJson }}: {{ $v | toJson }}
+        {{- end }}
+        _unsatisfiable: "never created: this key is in both data and binaryData, which the API server refuses"
+      binaryData:
+        _unsatisfiable: ""
   {{- end }}
   {{hub- end hub}}
