@@ -164,8 +164,11 @@ sizes, and network profiles. A project supplies only the fields those templates 
 
 ### Step 3: declare the project
 
+Add `projects` under the same `projectOnboarding` key, next to `defaults` from step 2. A second
+`projectOnboarding:` key would replace the first, or be refused, so the example shows only the lines
+to add, at the indentation of `defaults`:
+
 ```yaml
-      projectOnboarding:
         projects:
           payments-api:
             displayName: Payments API
