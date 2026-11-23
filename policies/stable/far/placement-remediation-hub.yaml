@@ -1,0 +1,38 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-far-remediation-hub
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Only the AutoShift-running hub. hubTemplateOptions blocks replication to
+  # local-cluster / self-managed=true, so this policy has no SA and uses
+  # spoke-local / explicit nodeparameters. Do NOT use cluster-type=hub here: remote
+  # hubs and mislabeled spokes also carry cluster-type=hub.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/far'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/self-managed'
+              operator: In
+              values:
+                - 'true'
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/far'
+              operator: In
+              values:
+                - 'true'
+            - key: 'local-cluster'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

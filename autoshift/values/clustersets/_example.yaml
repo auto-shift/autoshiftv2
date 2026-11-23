@@ -924,6 +924,19 @@ hubClusterSets:
           #   name: 'autoshift-repo-secret'
           #   namespace: 'policies-autoshift'
       # =======================================================================
+      # Global Hub settings (the global-hub label turns the feature on)
+      # =======================================================================
+      # Settings live here, not in labels: labels switch features on and off for placements,
+      # configuration belongs in config. The operator-install labels (subscription-name, channel,
+      # source, source-namespace, version) stay as labels to match every other operator policy.
+      global-hub:
+        availabilityConfig: High            # High (default) or Basic
+        enableMetrics: 'true'
+        installAgentOnLocal: 'true'
+        postgresRetention: 18m
+        consumerGroupPrefix: 'example_'     # optional Kafka consumer group prefix; '' for none
+        strimziChannel: amq-streams-3.1.x   # AMQ Streams channel, used on a disconnected hub
+      # =======================================================================
       # Images for AutoShift's own helper Jobs (read via rendered-config ConfigMap)
       # =======================================================================
       # Leave blank. Each Job resolves its image at runtime from the cluster's own
@@ -943,11 +956,16 @@ hubClusterSets:
           path: 'openshift'
           # ca (inline bundle) or caRef (hub ConfigMap): only when the mirror's certificate is not
           # publicly trusted. Omit both for a mirror with a public certificate.
+          # caRef names a ConfigMap on the HUB, created out of band. AutoShift copies the CA from it
+          # to every cluster that uses this config. namespace defaults to the policy namespace.
           caRef:
             name: 'cluster-ca-bundle'
             key: 'ca-bundle.crt'
             namespace: 'cluster-install-secrets'
-          # mirror is a path on host, which every consumer prefixes; omit it to use host[/path].
+          # source: the image name a cluster pulls, in full, registry included. Copy it from the left
+          #   side of oc-mirror's idms-oc-mirror.yaml.
+          # mirror: a path on host, never a registry. AutoShift prefixes host, so writing the
+          #   registry here doubles it. Omit it to use host[/path].
           mirrors:
             - source: 'registry.redhat.io'
               mirror: 'rhel'
@@ -976,6 +994,16 @@ hubClusterSets:
             publisher: Red Hat
         useIDMS: true
         disableDefaultCatalogs: true
+        # Release image signatures, required whenever disconnected-mirror is 'true'. The Cluster
+        # Version Operator refuses an update it cannot verify. Copy them from oc-mirror's
+        # cluster-resources/signature-configmap.json, or print entries with
+        # scripts/oc-mirror-to-values.sh. Removing an entry removes its signatures from the cluster;
+        # [] deletes them all. version is for people reading the list and is not used.
+        releaseSignatures:
+          - version: '4.22.18'
+            digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000001'
+            signatures:
+              - 'ZXhhbXBsZS1zaWduYXR1cmU='
       # =======================================================================
       # GitLab (values with / or spaces that can't be labels)
       # =======================================================================
@@ -1149,14 +1177,70 @@ hubClusterSets:
       #   versions:
       #     - 'rhdh.vX.Y.Z'
       #   startingCSV: 'rhdh.vX.Y.Z'
-      # dev-spaces:
-      #   versions:
-      #     - 'devspaces.vX.Y.Z'
-      #   startingCSV: 'devspaces.vX.Y.Z'
+      # Dev Spaces CheCluster settings (policy-devspaces-instance), merged over the live spec.
+      # Any CheCluster field is accepted; maps merge, lists replace.
+      dev-spaces:
+        # versions:
+        #   - 'devspaces.vX.Y.Z'
+        # startingCSV: 'devspaces.vX.Y.Z'
+        checluster:
+          devEnvironments:
+            secondsOfInactivityBeforeIdling: 1800
+            maxNumberOfWorkspacesPerUser: 2
       # external-secrets-operator:
       #   versions:
       #     - 'openshift-external-secrets-operator.vX.Y.Z'
       #   startingCSV: 'openshift-external-secrets-operator.vX.Y.Z'
+      far:
+        # copy (default): policy copies FAR-shaped Secrets (--username/--password) from
+        #                 sharedSecretNamespace into openshift-workload-availability.
+        # external: ESO or out-of-band lands the same FAR-shaped Secrets there directly;
+        #           policy-far-secrets-ready informs until they exist and gates remediation templates.
+        secretsMode: copy
+        # Shared secret defaults (source on managed cluster -> copied target in FAR namespace)
+        sharedSecretNamespace: eso-shared
+        sourceSecretName: bmc-shared-creds
+        sharedSecretName: bmc-shared-creds
+        templates:
+          # Redfish: per-node BMC hosts in nodeparameters.--ip
+          - name: far-template-redfish
+            agent: fence_redfish
+            retrycount: 15 # integer (unquoted)
+            retryinterval: '5s'
+            timeout: '60s'
+            sharedparameters:
+              '--action': reboot
+              '--ssl-insecure': ''
+              '--systems-uri': '/redfish/v1/Systems/1'
+            nodeparameters:
+              '--ip':
+                worker-0: '10.0.0.11'
+                worker-1: '10.0.0.12'
+              # Optional per-node ports when endpoint is not default 443
+              # '--ipport':
+              #   worker-0: '8443'
+            # Optional per-node credential override map
+            # nodeSecretNames:
+            #   worker-0: bmc-worker-0-creds
+            # sourceNodeSecrets:
+            #   worker-0: eso-worker-0-creds
+            # Optional: omit nodeparameters.--ip and set autoNodeIPsFromBMH: true
+            # to fill --ip (and --ipport when the BMC address includes a port) from
+            # BareMetalHost data. See policies/stable/far/README.md.
+          # Cisco UCS: shared UCS Manager IP, per-node plugs
+          - name: far-template-cisco-ucs
+            agent: fence_cisco_ucs
+            retrycount: 15
+            retryinterval: '5s'
+            timeout: '60s'
+            sharedparameters:
+              '--action': reboot
+              '--ip': ucs-manager.example.com
+              '--ssl-insecure': ''
+            nodeparameters:
+              '--plug':
+                worker-0: 'org-root/ls-worker-0'
+                worker-1: 'org-root/ls-worker-1'
       # gitlab-runner:
       #   versions:
       #     - 'gitlab-runner-operator.vX.Y.Z'
@@ -1885,11 +1969,24 @@ hubClusterSets:
             secretRef:
               name: 'global-observability-remote-write'
               namespace: 'open-cluster-management-observability'
-      # OpenShift Update Service graph written to ClusterVersion.spec.upstream
-      # (see docs/ocp-upgrade.md). Default is the public graph; you do not need
-      # to set this key if you are not using a local or disconnected service.
+      # Update graph written to ClusterVersion.spec.upstream (see docs/ocp-upgrade.md). Both keys
+      # are optional. upgradeGraphUrl, when set, wins. Otherwise graphSource picks the OpenShift
+      # Update Service: local (on this cluster), hub (on the hub that manages it) or auto. auto, the
+      # default, uses this cluster's service and then its hub's on a disconnected-mirror cluster,
+      # and the public graph on any other. local and hub fail when that service does not exist.
       openshift-upgrade:
         upgradeGraphUrl: 'https://api.openshift.com/api/upgrades_info/v1/graph'
+        graphSource: 'auto'
+      # OpenShift Update Service, for a disconnected fleet. Requires the update-service label, usually
+      # on the hub only. Every key is optional. releases and graphDataImage default to oc-mirror v2's
+      # paths under disconnected.mirrorRegistry; set them only for another layout, copying the spec
+      # of oc-mirror's cluster-resources/updateService.yaml. Disconnected clusters the hub manages
+      # find this service on their own. If you change name, set it where every cluster sees it.
+      update-service:
+        name: 'autoshift'                      # UpdateService name, which also names its Route
+        replicas: 2
+        releases: 'registry.example.com:5000/openshift/release-images'
+        graphDataImage: 'registry.example.com:5000/openshift/graph-image:latest'
     labels:
       # =======================================================================
       # Core Configuration
@@ -1956,7 +2053,7 @@ hubClusterSets:
       # 'uninstall' tears the principal down.
       gitops-agent: 'true'
       gitops-channel: gitops-1.22
-      gitops-version: 'openshift-gitops-operator.v1.22.2'
+      gitops-version: 'openshift-gitops-operator.v1.22.3'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
       # Always stamped, on every cluster. Set it here or per cluster to override; leave it out
@@ -2031,7 +2128,7 @@ hubClusterSets:
       tempo-channel: stable
       tempo-source: redhat-operators
       tempo-source-namespace: openshift-marketplace
-      tempo-version: 'tempo-operator.v0.22.0-4'
+      tempo-version: 'tempo-operator.v0.22.0-5'
 
       # =======================================================================
       # Kiali
@@ -2061,7 +2158,7 @@ hubClusterSets:
       # =======================================================================
       metallb: 'false'
       metallb-subscription-name: metallb-operator
-      metallb-version: 'metallb-operator.v4.22.0-202610241138'
+      metallb-version: 'metallb-operator.v4.22.0-202611031655'
       metallb-source: redhat-operators
       metallb-source-namespace: openshift-marketplace
       metallb-channel: stable
@@ -2082,7 +2179,7 @@ hubClusterSets:
       aap-install-plan-approval: Automatic
       aap-source: redhat-operators
       aap-source-namespace: openshift-marketplace
-      aap-version: 'aap-operator.v2.7.0-0.1793214862'
+      aap-version: 'aap-operator.v2.7.0-0.1794269743'
       # Modes. Each also places a policy of its own. Instance settings live in config.aap.instance.
       aap-noobaa-s3-storage: 'false'         # 'true' creates a NooBaa bucket and backs Hub with it
       aap-custom-cabundle: 'false'           # 'true' injects the cluster CA bundle as user-ca-bundle
@@ -2148,7 +2245,7 @@ hubClusterSets:
       # Infrastructure Nodes
       # =======================================================================
       infra-nodes: ''                        # Number of infra nodes (blank = not managed, 0 = delete)
-      infra-nodes-provider: aws              # 'aws', 'vmware', or 'baremetal'
+      infra-nodes-provider: aws              # 'aws', 'vmware', or 'baremetal' (nodes from config.infraNodes.nodes)
       infra-nodes-instance-type: ''          # AWS instance type
       infra-nodes-volume-size: '100'         # Root volume size in GiB
       infra-nodes-numcpu: ''
@@ -2194,7 +2291,7 @@ hubClusterSets:
       storage-nodes-numcores-per-socket: ''
       storage-nodes-zone-1: 'us-east-2a'    # Add -zone-2, -zone-3 for multiple zones
       storage-nodes-region: 'us-east-2'
-      storage-nodes-node-1: 'node-1'         # For baremetal: specify node names
+      storage-nodes-node-1: 'node-1'         # For baremetal: node names; config.storageNodes.nodes wins when set
       storage-nodes-node-2: 'node-2'
 
       # =======================================================================
@@ -2216,7 +2313,7 @@ hubClusterSets:
       # =======================================================================
       local-storage: 'false'
       local-storage-subscription-name: local-storage-operator
-      local-storage-version: 'local-storage-operator.v4.22.0-202610241356'
+      local-storage-version: 'local-storage-operator.v4.22.0-202611031655'
       local-storage-channel: stable
       local-storage-source: redhat-operators
       local-storage-source-namespace: openshift-marketplace
@@ -2265,7 +2362,7 @@ hubClusterSets:
       nmstate-channel: stable
       nmstate-source: redhat-operators
       nmstate-source-namespace: openshift-marketplace
-      nmstate-version: 'kubernetes-nmstate-operator.4.22.0-202610241757'
+      nmstate-version: 'kubernetes-nmstate-operator.4.22.0-202611031655'
       #
       # =======================================================================
       # Advanced Cluster Security
@@ -2283,7 +2380,7 @@ hubClusterSets:
       acs-default-policies: 'false'
       acs-registration: 'crs'
       acs-subscription-name: rhacs-operator
-      acs-version: 'rhacs-operator.v4.11.6'
+      acs-version: 'rhacs-operator.v5.0.0'
       acs-channel: stable
       acs-source: redhat-operators
       acs-source-namespace: openshift-marketplace
@@ -2295,7 +2392,7 @@ hubClusterSets:
       # =======================================================================
       dev-spaces: 'false'
       dev-spaces-subscription-name: devspaces
-      dev-spaces-version: 'devspacesoperator.v3.31.1'
+      dev-spaces-version: 'devspacesoperator.v3.31.3'
       dev-spaces-channel: stable
       dev-spaces-source: redhat-operators
       dev-spaces-source-namespace: openshift-marketplace
@@ -2305,8 +2402,8 @@ hubClusterSets:
       # =======================================================================
       dev-hub: 'false'
       dev-hub-subscription-name: rhdh
-      dev-hub-version: 'rhdh-operator.v1.10.6'
-      dev-hub-channel: fast-1.10
+      dev-hub-version: 'rhdh-operator.v2.1.0'
+      dev-hub-channel: fast-2.1
       dev-hub-source: redhat-operators
       dev-hub-source-namespace: openshift-marketplace
 
@@ -2325,7 +2422,7 @@ hubClusterSets:
       # =======================================================================
       tas: 'false'
       tas-subscription-name: rhtas-operator
-      tas-version: 'rhtas-operator.v1.5.0'
+      tas-version: 'rhtas-operator.v1.5.1'
       tas-channel: stable
       tas-source: redhat-operators
       tas-source-namespace: openshift-marketplace
@@ -2335,7 +2432,7 @@ hubClusterSets:
       # =======================================================================
       quay: 'false'
       quay-subscription-name: quay-operator
-      quay-version: 'quay-operator.v3.18.2'
+      quay-version: 'quay-operator.v3.18.3'
       quay-channel: stable-3.18
       quay-source: redhat-operators
       quay-source-namespace: openshift-marketplace
@@ -2396,8 +2493,8 @@ hubClusterSets:
       # =======================================================================
       loki: 'false'
       loki-subscription-name: loki-operator
-      loki-version: 'loki-operator.v6.6.2'
-      loki-channel: stable-6.6
+      loki-version: 'loki-operator.v6.7.0'
+      loki-channel: stable-6.7
       loki-source: redhat-operators
       loki-source-namespace: openshift-marketplace
       loki-size: 1x.extra-small             # LokiStack size
@@ -2409,8 +2506,8 @@ hubClusterSets:
       # =======================================================================
       logging: 'false'
       logging-subscription-name: cluster-logging
-      logging-version: 'cluster-logging.v6.6.2'
-      logging-channel: stable-6.6
+      logging-version: 'cluster-logging.v6.7.0'
+      logging-channel: stable-6.7
       logging-source: redhat-operators
       logging-source-namespace: openshift-marketplace
 
@@ -2419,7 +2516,7 @@ hubClusterSets:
       # =======================================================================
       coo: 'false'
       coo-subscription-name: cluster-observability-operator
-      coo-version: 'cluster-observability-operator.v1.5.3'
+      coo-version: 'cluster-observability-operator.v1.5.5'
       coo-channel: stable
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
@@ -2447,7 +2544,7 @@ hubClusterSets:
       compliance-auto-remediate: 'true'
       compliance-storage-class: ''           # StorageClass for compliance scan results (optional)
       compliance-subscription-name: compliance-operator
-      compliance-version: 'compliance-operator.v1.10.0'
+      compliance-version: 'compliance-operator.v1.10.1'
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
@@ -2474,7 +2571,7 @@ hubClusterSets:
       virt: 'false'
       virt-subscription-name: kubevirt-hyperconverged
       virt-channel: stable
-      virt-version: 'kubevirt-hyperconverged-operator.v4.22.12'
+      virt-version: 'kubevirt-hyperconverged-operator.v4.22.16'
       virt-source: redhat-operators
       virt-source-namespace: openshift-marketplace
 
@@ -2483,10 +2580,10 @@ hubClusterSets:
       # =======================================================================
       mtv: 'false'
       mtv-subscription-name: mtv-operator
-      mtv-channel: release-v2.12
+      mtv-channel: release-v5.0
       mtv-source: redhat-operators
       mtv-source-namespace: openshift-marketplace
-      mtv-version: 'mtv-operator.v2.12.10'
+      mtv-version: 'mtv-operator.v5.0.0'
 
       # =======================================================================
       # Node Feature Discovery
@@ -2496,7 +2593,7 @@ hubClusterSets:
       node-feature-discovery-channel: stable
       node-feature-discovery-source: redhat-operators
       node-feature-discovery-source-namespace: openshift-marketplace
-      node-feature-discovery-version: 'nfd.4.22.0-202610231407'
+      node-feature-discovery-version: 'nfd.4.22.0-202611040403'
 
       # =======================================================================
       # OpenShift Lightspeed. Settings: config.openshift-lightspeed.
@@ -2507,6 +2604,17 @@ hubClusterSets:
       openshift-lightspeed-source: redhat-operators
       openshift-lightspeed-source-namespace: openshift-marketplace
       openshift-lightspeed-version: ''
+
+      # =======================================================================
+      # OpenShift Update Service: serves the update graph to a disconnected fleet.
+      # Settings: config.update-service. Usually enabled on the hub only.
+      # =======================================================================
+      update-service: 'false'
+      update-service-subscription-name: cincinnati-operator
+      update-service-channel: v1
+      update-service-source: redhat-operators
+      update-service-source-namespace: openshift-marketplace
+      update-service-version: ''
 
       # =======================================================================
       # SR-IOV Network Operator
@@ -2553,7 +2661,7 @@ hubClusterSets:
       gitlab: 'false'
       gitlab-subscription-name: gitlab-operator-kubernetes
       gitlab-channel: stable
-      gitlab-version: 'gitlab-operator-kubernetes.v3.5.3'
+      gitlab-version: 'gitlab-operator-kubernetes.v3.5.5'
       gitlab-source: certified-operators
       gitlab-source-namespace: openshift-marketplace
       # Service modes: managed (default), external, or bundled
@@ -2652,7 +2760,7 @@ hubClusterSets:
       opentelemetry: 'false'
       opentelemetry-subscription-name: opentelemetry-product
       opentelemetry-channel: stable
-      opentelemetry-version: 'opentelemetry-operator.v0.158.0-202610221301'
+      opentelemetry-version: 'opentelemetry-operator.v0.158.0-202611041238'
       opentelemetry-source: redhat-operators
       opentelemetry-source-namespace: openshift-marketplace
 
@@ -2665,7 +2773,16 @@ hubClusterSets:
       trident-source: certified-operators
       trident-source-namespace: openshift-marketplace
       trident-channel: stable
-      trident-version: 'trident-operator.v25.06.0'   # optional CSV version pin
+      trident-version: 'trident-operator.v26.6.2'   # optional CSV version pin
+      # =======================================================================
+      # Far
+      # =======================================================================
+      far: 'false'
+      far-subscription-name: fence-agents-remediation
+      far-channel: stable
+      far-source: redhat-operators
+      far-source-namespace: openshift-marketplace
+      far-version: 'fence-agents-remediation.v0.8.1'
 
       # Zero Trust Workload Identity Manager (SPIRE)
       # =======================================================================
@@ -2732,3 +2849,30 @@ hubClusterSets:
       # only until config.ztwim.defaultX509Validity expires. policy-ztwim-operand-drift reports
       # when this is needed and stays Compliant when it is not.
       ztwim-operand-reconcile: 'false'
+
+      # =======================================================================
+      # Global Hub — set on the GLOBAL hub's clusterset (the self-managed hub-of-hubs)
+      # =======================================================================
+      # Turns the feature on and installs the operator here. Its settings live under
+      # config.global-hub, not in labels.
+      global-hub: 'false'
+      global-hub-subscription-name: multicluster-global-hub-operator-rh
+      global-hub-channel: release-1.8
+      global-hub-source: redhat-operators
+      global-hub-source-namespace: openshift-marketplace
+      global-hub-version: ''                       # optional: pin CSV (sets manual approval)
+
+      # =======================================================================
+      # Global Hub import — set on each MANAGED HUB's clusterset (hub1, hub2, ...)
+      # =======================================================================
+      # Opt one spoke hub in to being imported by the global hub. It is per hub: set it on
+      # every managed hub you want imported, and leave it unset on hubs you do not.
+      # Setting it on the global hub's own clusterset does nothing useful.
+      #
+      # policy-global-hub-managed-hubs reads this off the ManagedCluster and translates it into
+      # the operator's own global-hub.open-cluster-management.io/deploy-mode label — which is why
+      # it is a label and not config.
+      #   default  the only value AutoShift supports. The managed hub must set self-managed 'false'.
+      # Red Hat's 'hosted' mode is refused by the chart: it disables the policy add-on for that hub,
+      # so the hub of hubs could no longer configure it.
+      global-hub-deploy-mode: ''

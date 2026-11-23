@@ -1,0 +1,30 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-far-remediation-managed
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Every far=true cluster except the AutoShift self-managed hub. Includes
+  # spokes and remote hubs (cluster-type=hub with self-managed!=true) so they
+  # get hubTemplateOptions and can read BareMetalHosts in the hub cluster ns.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/far'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/self-managed'
+              operator: NotIn
+              values:
+                - 'true'
+            - key: 'local-cluster'
+              operator: NotIn
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
