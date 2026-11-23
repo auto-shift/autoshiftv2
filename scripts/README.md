@@ -430,7 +430,8 @@ This script automatically:
 
 - **Automatic Dependency Resolution**: Recursively discovers operator dependencies from the Red Hat operator catalog. For example, `odf-operator` automatically includes `odf-dependencies`, which in turn includes `ocs-operator`, `mcg-operator`, etc.
 
-- **Default Channel Inclusion**: oc-mirror requires the default channel for each operator package. The script automatically looks up and includes `defaultChannel` from the catalog cache, supporting `catalog.json`, `channel.json`, and `catalog.yaml` formats.
+- **Default Channel Inclusion**: oc-mirror requires the default channel for each operator package. The script looks up `defaultChannel` in the catalog cache, reading every non-bundle file, so it finds a package laid out as `package.json`, `catalog.json`, `catalog.yaml` or split YAML files.
+- **multicluster engine channel**: the script mirrors `multicluster-engine` on the channel that matches `acm-channel`, not on its catalog default: `release-2.17` mirrors `stable-2.17`, and `release-2.16` mirrors `stable-2.11`.
 
 - **Cross-Catalog Deduplication**: Dependencies that belong to a different catalog (e.g., certified-operators) are not duplicated into the redhat-operators section.
 

@@ -31,7 +31,30 @@ policyDefaults:
   # generates only the PlacementBinding.
   placement:
     placementPath: placement.yaml
+placementBindingDefaults:
+  name: binding-policy-devspaces
 policies:
+  # Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  # OLM installs the DevWorkspace Operator as a dependency of the Dev Spaces operator.
   - name: policy-devspaces-operator-install
     manifests:
-      - path: manifests
+      - path: manifests/operator-install
+  # CheCluster instance, spec from config.dev-spaces.checluster merged over a base.
+  - name: policy-devspaces-instance
+    dependencies:
+      - name: policy-devspaces-operator-install
+    manifests:
+      - path: manifests/devspaces-instance.yaml
+  # Readiness: the CheCluster reached phase Active.
+  - name: policy-devspaces-ready-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-devspaces-instance
+    customMessage:
+      noncompliant: >-
+        The OpenShift Dev Spaces CheCluster devspaces in openshift-devspaces has not reached phase
+        Active. Check its status.message and the pods in openshift-devspaces. Common causes are the
+        DevWorkspace Operator not installed or not ready (oc get csv -A | grep devworkspace) and a
+        config.dev-spaces.checluster value the operator rejects.
+    manifests:
+      - path: test/devspaces-ready.yaml
