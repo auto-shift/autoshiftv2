@@ -216,6 +216,12 @@ counted. Review such grants in a namespace a token can reach.
   such a right, a `view` RoleBinding is held next to a live token Secret, a live labeled `view`
   RoleBinding refuses a pending token Secret in its namespace, and a declared `view` binding makes
   its namespace token-reachable. A `view` with none of these rights stays allowed.
+- the two live checks cannot see each other when the RoleBinding and the token Secret are both new
+  in one evaluation. A `view` binding with such a right, or an `edit` binding, that the evaluation
+  applies therefore also refuses a pending token Secret in its namespace: the binding is applied and
+  the Secret is held, never both. On the next evaluation the binding is live and keeps refusing the
+  Secret. When the token Secret is live first, the binding is held instead. Either order leaves one
+  of the two, and the status names the other.
 
 The guards act before creation only. When reachability arises after an `edit` or `view` RoleBinding
 or a token Secret is already live, for example through a binding created by hand, the object is

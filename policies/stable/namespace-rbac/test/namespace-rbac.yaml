@@ -47,7 +47,11 @@
 # wildcard in the core group or * counts), view is treated like edit: a view binding is held in a
 # namespace with a live labelled token Secret, a live labelled view RoleBinding in the namespace of a
 # pending token Secret refuses that Secret, and a declared view binding makes its whole namespace
-# token-reachable. A view that cannot read Secrets stays allowed.
+# token-reachable. Both objects can be new in the same evaluation, where neither live check sees the
+# other: a view (or edit) RoleBinding this evaluation applies ($readerRBs) also refuses a pending
+# token Secret of its namespace, so the binding is applied and the Secret is held, never both. On
+# the next evaluation the binding is live and refuses the Secret again; with the Secret live first,
+# the binding is held instead. A view that cannot read Secrets stays allowed.
 #
 # Every object is labelled autoshift.io/managed-by: namespace-rbac. Roles and RoleBindings are
 # mustonlyhave, so rules and subjects are replaced, never merged; a RoleBinding whose role changes is
@@ -621,6 +625,7 @@ object-templates-raw: |
   {{- $renderedMinters := dict }}
   {{- $pending := list }}
   {{- $heldSecrets := dict }}
+  {{- $readerRBs := dict }}
   {{- $liveReach := dict }}
   {{- range $k, $v := $hub.reach }}{{- $_ := set $liveReach $k $v }}{{- end }}
   {{- range $sec := (lookup "v1" "Secret" "" "" "autoshift.io/managed-by=namespace-rbac").items | default list }}
@@ -945,6 +950,7 @@ object-templates-raw: |
   {{- else if and $live (ne (printf "%v" (index (dig "metadata" "labels" dict $live) "autoshift.io/managed-by" | default "")) "namespace-rbac") }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "RoleBinding %s/%s already exists and is not managed by namespace-rbac, so it is not changed" $e.ns $b.name)) }}
   {{- else }}
+  {{- if and (eq $b.kind "ClusterRole") (has $b.role $secretReaders) (not (and $live (eq (printf "%v" (dig "roleRef" "kind" "" $live)) "ClusterRole") (has (printf "%v" (dig "roleRef" "name" "" $live)) $secretReaders))) }}{{- $_ := set $readerRBs $e.ns (append (index $readerRBs $e.ns | default list) (dict "name" $b.name "role" $b.role)) }}{{- end }}
   - complianceType: mustonlyhave
     recreateOption: IfRequired
     objectDefinition:
@@ -991,6 +997,9 @@ object-templates-raw: |
   {{- $wide = append $wide (printf "%s binds ClusterRole %s to %s, which the ServiceAccount can act as" $cb.name $cb.role $sub.label) }}
   {{- end }}
   {{- end }}
+  {{- end }}
+  {{- range $ab := index $readerRBs $tk.ns | default list }}
+  {{- $wide = append $wide (printf "RoleBinding %s/%s binds ClusterRole %s in the namespace of the Secret and is applied in this evaluation%s" $tk.ns $ab.name $ab.role (ternary ", and the view ClusterRole of this cluster reaches token Secrets" "" (eq $ab.role "view"))) }}
   {{- end }}
   {{- range $lrb := $liveRBs }}
   {{- $rbNs := printf "%v" (dig "metadata" "namespace" "" $lrb) }}
