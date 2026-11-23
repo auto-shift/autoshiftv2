@@ -403,8 +403,10 @@ for ref in autoshift bootstrap/openshift-gitops bootstrap/advanced-cluster-manag
   oras cp ${SRC}/${ref}:${VERSION} ${DST}/${ref}:${VERSION}
 done
 
-# All policy charts: policy-list.txt, plus the two charts the main chart deploys directly
-for policy in $(cat policy-list.txt) cluster-labels cluster-config-maps; do
+# All policy charts: the list the main chart ships in files/policy-list.txt, plus the two
+# charts the main chart deploys directly
+helm pull oci://${SRC}/autoshift --version ${VERSION} --untar --untardir ./autoshift-${VERSION}
+for policy in $(cat ./autoshift-${VERSION}/autoshift/files/policy-list.txt) cluster-labels cluster-config-maps; do
   oras cp ${SRC}/policies/${policy}:${VERSION} ${DST}/policies/${policy}:${VERSION}
 done
 ```

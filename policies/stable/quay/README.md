@@ -213,23 +213,37 @@ applies to every repository created later.
 
 ### Create the organization and robot accounts
 
-Every call needs a superuser OAuth token. The `access_token` returned when you created the first
-user works until it expires, about 150 minutes after it was issued. For anything later, create a
-long-lived token in the web console:
+Red Hat Quay never creates organizations on push, so create the organization and both robot
+accounts first, in the web console or through the API.
+
+In the web console:
 
 1. Log in as a superuser and create or open the organization, for example **autoshift**.
-2. Select Robot Accounts, then Create Robot Account, for example release. The resulting account name is autoshift+release..
-3. Grant it Write on the repositories it publishes, or Admin on the organization if it must create repositories on first push..
-4. Open the robot account and select Credentials. The panel offers a Docker login command and a downloadable Kubernetes Secret.
+2. Select Robot Accounts, then Create Robot Account, for example `release`. The resulting account
+   name is `autoshift+release`. Create `argocd` the same way.
+3. Grant `autoshift+release` Write on the repositories it publishes, or Admin on the organization if
+   it must create repositories on first push. Grant `autoshift+argocd` Read.
+4. Open a robot account and select Credentials. The panel offers a Docker login command and a
+   downloadable Kubernetes Secret.
 
-Red Hat Quay never creates organizations on push. If you prefer to use the API to create an organization and setup the robot account then below are the various API calls you can make to do the above configuration via the API.
+Through the API, every call needs a superuser OAuth token. The `access_token` returned when you
+created the first user works until it expires, about 150 minutes after it was issued. For anything
+later, create a long-lived token in the web console:
+
+1. Log in as a superuser, open the organization, and select Applications.
+2. Select Create New Application, name it, and open it.
+3. Select Generate Token, select the permissions the calls need (Administer Organization, Administer
+   Repositories, Create Repositories, and superuser access), and select Authorize Application.
+4. Copy the token. Red Hat Quay shows it only once.
+
+Then set `QUAY_TOKEN` to that token and run the calls:
 
 ```bash
 HOST=$(oc get route registry-quay -n quay-enterprise -o jsonpath='{.spec.host}')
 API="https://${HOST}/api/v1"
 ORG=autoshift
-QUAY_TOKEN=$(curl -sf "${API}/organization/${ORG}/robots/release" -H "$AUTH" | jq -r .token)
-AUTH="Authorization: Bearer ${QUAY_TOKEN}"   # superuser OAuth token
+QUAY_TOKEN='<superuser OAuth token>'
+AUTH="Authorization: Bearer ${QUAY_TOKEN}"
 JSON='Content-Type: application/json'
 
 # Organization
@@ -269,14 +283,16 @@ curl -sf -X PUT "${API}/repository/${ORG}/<repository>/permissions/user/${ORG}+a
 Read a robot token back at any time:
 
 ```bash
-curl -sf "${API}/organization/${ORG}/robots/release" -H "$AUTH" | jq -r .token
+RELEASE_TOKEN=$(curl -sf "${API}/organization/${ORG}/robots/release" -H "$AUTH" | jq -r .token)
 ```
 
 ### Log in to Quay with Podman and Helm
 
+Log in as the release robot account, with its own token rather than the superuser token:
+
 ```bash
-podman login "$HOST" -u 'autoshift+release' -p "$QUAY_TOKEN"
-helm registry login "$HOST" -u 'autoshift+release' -p "$QUAY_TOKEN"
+podman login "$HOST" -u "${ORG}+release" -p "$RELEASE_TOKEN"
+helm registry login "$HOST" -u "${ORG}+release" -p "$RELEASE_TOKEN"
 ```
 
 ### Let Argo CD pull the charts
