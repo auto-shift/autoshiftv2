@@ -1,0 +1,25 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-quay-external-db
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Input check for quay-db-mode: external, the only mode whose database connections come from an
+  # administrator-created Secret.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/quay'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/quay-db-mode'
+              operator: In
+              values:
+                - 'external'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

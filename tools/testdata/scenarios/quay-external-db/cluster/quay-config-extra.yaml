@@ -1,0 +1,48 @@
+# The Secret an administrator creates for quay-db-mode: external. Replaces the shared stub of the
+# same name in tools/testdata/quay-secrets.yaml for this scenario only.
+#
+# Values are deliberately low-entropy placeholders: tools/testdata/ is not allowlisted in
+# .gitleaks.toml.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: quay-config-extra
+  namespace: quay-enterprise
+type: Opaque
+stringData:
+  # Merged into the bundle's config.yaml.
+  config.yaml: |
+    DB_URI: postgresql://quay:testtest@external-quay-pg:5432/quay?sslmode=require
+    DISTRIBUTED_STORAGE_CONFIG:
+      default:
+        - RadosGWStorage
+        - access_key: testtest
+          secret_key: testtest
+          bucket_name: quay-registry
+          hostname: s3.test.example.com
+          is_secure: true
+          port: 443
+          storage_path: /datastorage/registry
+    DISTRIBUTED_STORAGE_PREFERENCE:
+      - default
+  # Copied into the bundle as a file: required with an unmanaged clairpostgres.
+  clair-config.yaml: |
+    indexer:
+      connstring: host=external-clair-pg port=5432 dbname=clair user=clair password=testtest sslmode=verify-ca sslrootcert=/run/certs/db-ca.pem
+      migrations: true
+    matcher:
+      connstring: host=external-clair-pg port=5432 dbname=clair user=clair password=testtest sslmode=verify-ca sslrootcert=/run/certs/db-ca.pem
+      migrations: true
+    notifier:
+      connstring: host=external-clair-pg port=5432 dbname=clair user=clair password=testtest sslmode=verify-ca sslrootcert=/run/certs/db-ca.pem
+      migrations: true
+    metrics:
+      name: prometheus
+  # Copied into the bundle as a file: the Operator mounts it in the Clair pods at /run/certs/db-ca.pem.
+  extra_ca_cert_db-ca.pem: |
+    -----BEGIN CERTIFICATE-----
+    dGVzdA==
+    -----END CERTIFICATE-----
+  # Not an allowed bundle file. Present so the scenario proves it is not copied, where it would
+  # take over TLS from config.quay.tls.
+  ssl.cert: testtest

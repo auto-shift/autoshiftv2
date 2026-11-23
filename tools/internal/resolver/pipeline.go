@@ -270,6 +270,28 @@ func RunPipeline(
 	configs *ExampleConfigs,
 	testdataDir string,
 ) (map[string]*labels.Consumed, []ChartResult, error) {
+	return RunPipelineWithOptions(policiesDir, ctx, extraCtxs, r, spokeR, declared, configs, testdataDir, PipelineOptions{})
+}
+
+// PipelineOptions adjusts a RunPipelineWithOptions run. The zero value reproduces RunPipeline.
+type PipelineOptions struct {
+	// TestResources replaces the stubs otherwise loaded from testdataDir, for a caller that adds,
+	// replaces or removes some of them. Nil loads testdataDir.
+	TestResources []unstructured.Unstructured
+}
+
+// RunPipelineWithOptions is RunPipeline with caller-supplied stubs.
+func RunPipelineWithOptions(
+	policiesDir string,
+	ctx HubContext,
+	extraCtxs []NamedContext,
+	r *Resolver,
+	spokeR *Resolver,
+	declared map[string]*labels.Declared,
+	configs *ExampleConfigs,
+	testdataDir string,
+	opts PipelineOptions,
+) (map[string]*labels.Consumed, []ChartResult, error) {
 	charts, err := discoverCharts(policiesDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("discover charts: %w", err)
@@ -301,9 +323,12 @@ func RunPipeline(
 	// These provide realistic hub template lookup results from the very first
 	// chart. The cluster-config-maps helm output (processed later in the loop)
 	// supplements these with the actual rendered values.
-	testResources, err := LoadTestResources(testdataDir)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load test resources: %w", err)
+	testResources := opts.TestResources
+	if testResources == nil {
+		testResources, err = LoadTestResources(testdataDir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("load test resources: %w", err)
+		}
 	}
 
 	syntheticCMs, err := GenerateSyntheticConfigMaps(configs, ctx.ManagedClusterName, "policies-autoshift")
