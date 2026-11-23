@@ -16,9 +16,10 @@ network your EgressIP addresses come from.
 | Policy | Remediation | What it does |
 |---|---|---|
 | `policy-egressip-nodes` | `${REMEDIATION}`: enforce, or inform under `autoshift.dryRun` | Adds `k8s.ovn.org/egress-assignable` to the selected nodes from `manifests/egressip-nodes.yaml`, and writes the `egressip-nodes-status` ConfigMap while there is something to report |
-| `policy-egressip-nodes-test` | Always inform | From `test/egressip-nodes-status.yaml`: asserts that the status ConfigMap is absent. It never changes anything |
+| `policy-egressip-nodes-test` | Always inform | From `test/egressip-nodes.yaml`, the same template: asserts the label on every selected node that exists, and reports what its own evaluation finds in `egressip-nodes-test-report`. It never deletes anything |
 
-The inform-only check is a policy of its own, as the [developer
+Both files are the same template and differ only in the `$want` line, so keep them in sync. The
+inform-only check is a policy of its own, as the [developer
 guide](../../../docs/developer-guide.md#gating-on-cluster-state) requires: a `remediationAction` on
 the root of one Policy overrides all of its children, so a check bundled into the enforcing Policy
 would start changing what it should only report.
@@ -87,6 +88,10 @@ metadata:
 
 ## Validation
 
+`config.egressipNodes` must be set on every cluster with the `egressip-nodes` label. A missing key
+fails the hub template with `config.egressipNodes is not set`, so a forgotten or misspelled key is
+never read as selecting no node. To label no node on purpose, set it to `{}`.
+
 Any invalid key or value fails the hub template of the policy, with every error listed and each
 naming its key, for example `config.egressipNodes.worker-0.example.com: value is not true or
 false`. Nothing is applied until it is fixed. A node name that is not a DNS-1123 subdomain, a value
@@ -111,8 +116,13 @@ These are reported in the ConfigMap `egressip-nodes-status` in
 - the key `nodeSelector`, when the selector matches no node.
 
 `policy-egressip-nodes` writes the ConfigMap while there is something to report and deletes it
-otherwise. The inform-only `policy-egressip-nodes-test` asserts that the ConfigMap is absent, so it
-is NonCompliant while a report stands. Read the reports with:
+otherwise. The inform-only `policy-egressip-nodes-test` does not read it, because under dry run
+nothing writes it: the test policy asserts the label on each selected node itself, and while its own
+evaluation has something to report it asserts the ConfigMap `egressip-nodes-test-report` with the
+same messages. That ConfigMap can never exist, because its key `_unsatisfiable` is in both `data` and
+`binaryData`, which the API server refuses, so the test policy is NonCompliant while a report
+stands. It has no `mustnothave`, so even Enforce clicked on it in the console deletes nothing. Read
+the reports with:
 
 ```bash
 oc get configmap egressip-nodes-status -n open-cluster-management-agent-addon -o yaml
@@ -150,7 +160,7 @@ egressip-nodes/
   manifests/
     egressip-nodes.yaml         # object-templates-raw, $want enforce: policy-egressip-nodes
   test/
-    egressip-nodes-status.yaml  # the status ConfigMap, mustnothave: policy-egressip-nodes-test
+    egressip-nodes.yaml         # the same template, $want inform: policy-egressip-nodes-test
 ```
 
 ## Test locally

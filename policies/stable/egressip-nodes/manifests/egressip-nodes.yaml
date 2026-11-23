@@ -12,7 +12,13 @@
 # A map keyed by node name, because AutoShift replaces lists whole when it merges values. The key
 # nodeSelector is reserved; it cannot clash with a node name, which has no upper-case letters.
 #
-# Any invalid key or value fails the hub template, every error listed and naming the key, and
+# Rendered twice, identically except for $want: manifests/egressip-nodes.yaml is the enforce
+# ConfigurationPolicy (Policy policy-egressip-nodes), test/egressip-nodes.yaml the inform one
+# (Policy policy-egressip-nodes-test). Keep the two files in sync.
+#
+# config.egressipNodes must be set: a cluster with the egressip-nodes label and no key fails the hub
+# template, so a missing key is never read as selecting no node. An explicit {} selects none. Any
+# invalid key or value fails the hub template, every error listed and naming the key, and
 # nothing is applied. Only validated names and a selector built from validated labels reach the
 # managed-cluster template pass, and only as a quoted JSON string.
 #
@@ -22,15 +28,21 @@
 #   - a node set to true that does not exist;
 #   - a node that carries k8s.ovn.org/egress-assignable but is not selected. The label is never
 #     removed automatically; remove it by hand with oc label node <name> k8s.ovn.org/egress-assignable-
-# plus the key nodeSelector when the selector matches no node. This ConfigurationPolicy writes the
-# ConfigMap while there is something to report and deletes it otherwise; the inform-only
-# policy-egressip-nodes-test (test/egressip-nodes-status.yaml) asserts it is absent, so that Policy
-# is NonCompliant while a report stands.
+# plus the key nodeSelector when the selector matches no node. The enforce ConfigurationPolicy writes
+# the ConfigMap while there is something to report and deletes it otherwise. The inform one asserts
+# the label on every selected node itself and never carries a mustnothave, so an Enforce set on the
+# -test Policy by hand can delete nothing; while its own evaluation has something to report it
+# asserts the ConfigMap egressip-nodes-test-report with the same messages, which can never exist
+# (the key _unsatisfiable is in both data and binaryData, which the API server refuses). policy-egressip-nodes-test is therefore NonCompliant while a
+# selected node lacks the label or a report stands, under dry run too, where nothing writes the
+# status ConfigMap.
 object-templates-raw: |
+  {{hub- $want := "enforce" hub}}
   {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- if not $rcm hub}}{{hub- fail (printf "egressip-nodes: cannot read %s.rendered-config" .ManagedClusterName) hub}}{{hub- end hub}}
   {{hub- $cfg := index ($rcm.data | default dict) "config" | default "" | fromYaml hub}}
   {{hub- if not (kindIs "map" $cfg) hub}}{{hub- fail (printf "egressip-nodes: config in %s.rendered-config is not a map" .ManagedClusterName) hub}}{{hub- end hub}}
+  {{hub- if not (hasKey $cfg "egressipNodes") hub}}{{hub- fail "egressip-nodes: config.egressipNodes is not set (the key was egressIPNodes before it was renamed); set it to the nodes to label, or to {} to select none" hub}}{{hub- end hub}}
   {{hub- $raw := index $cfg "egressipNodes" hub}}
   {{hub- if kindIs "invalid" $raw hub}}{{hub- $raw = dict hub}}{{hub- end hub}}
   {{hub- if not (kindIs "map" $raw) hub}}{{hub- fail "egressip-nodes: config.egressipNodes is not a map keyed by node name" hub}}{{hub- end hub}}
@@ -112,6 +124,7 @@ object-templates-raw: |
         labels:
           k8s.ovn.org/egress-assignable: ""
   {{- end }}
+  {{hub- if eq $want "enforce" hub}}
   {{- if $status }}
   - complianceType: mustonlyhave
     objectDefinition:
@@ -135,3 +148,28 @@ object-templates-raw: |
         name: egressip-nodes-status
         namespace: open-cluster-management-agent-addon
   {{- end }}
+  {{hub- else hub}}
+  {{- /* Always one satisfied assertion, so the -test ConfigurationPolicy is never empty: the agent namespace exists, and naming it changes nothing even if the Policy were set to enforce. */}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: open-cluster-management-agent-addon
+  {{- if $status }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: egressip-nodes-test-report
+        namespace: open-cluster-management-agent-addon
+      data:
+        {{- range $k, $msg := $status }}
+        {{ $k | toJson }}: {{ $msg | toJson }}
+        {{- end }}
+        _unsatisfiable: "never created: this key is in both data and binaryData, which the API server refuses"
+      binaryData:
+        _unsatisfiable: ""
+  {{- end }}
+  {{hub- end hub}}

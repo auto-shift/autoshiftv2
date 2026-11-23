@@ -33,12 +33,14 @@ policyDefaults:
   placement:
     placementPath: placement.yaml
 policies:
+  # manifests/ and test/ hold the same template; only $want differs, so keep them in sync.
   # The enforcing Policy adds the k8s.ovn.org/egress-assignable label to the selected nodes that
   # exist (musthave, so no other node field is touched) and writes the status ConfigMap while there
-  # is something to report. The -test Policy asserts the status ConfigMap is absent, so it is
-  # NonCompliant while a report stands and is the one to depend on for "every selected node is
-  # assignable". Neither ever removes the label or names a Node it did not find. Dry-run
-  # (${REMEDIATION} = inform) makes the enforcing Policy inform too.
+  # is something to report. The -test Policy asserts the label on every selected node, its own
+  # report (egressip-nodes-test-report, which can never be satisfied), so it is NonCompliant while a
+  # selected node is not assignable or a report stands, and is the one to depend on for "every
+  # selected node is assignable". Neither ever removes the label or names a Node it did not find.
+  # Dry-run (${REMEDIATION} = inform) makes the enforcing Policy inform too.
   #
   # No dependency either way (README, "Policies"): the -test Policy is NonCompliant exactly while
   # the enforcing one has something to report, so gating the enforcing Policy on it would deadlock,
@@ -49,5 +51,4 @@ policies:
   - name: policy-egressip-nodes-test
     remediationAction: inform
     manifests:
-      - path: test/egressip-nodes-status.yaml
-        complianceType: mustnothave
+      - path: test/egressip-nodes.yaml
