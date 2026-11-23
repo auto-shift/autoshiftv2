@@ -158,7 +158,7 @@ carry `acm-failover-subscription-name: redhat-oadp-operator`. Those labels creat
 they exist so the mirror contains OADP. Without them a disconnected hub cannot install it.
 
 **OADP allows one DataProtectionApplication per installation namespace.** A second one reports
-`only one DPA CR can exist per OADP installation namespace` and does nothing. So this policy owns
+`only one DPA CR can exist per OADP installation namespace` and does nothing. This policy therefore owns
 the `DataProtectionApplication` in `open-cluster-management-backup`, and nothing else may create one
 there. The `vm-backup` policy uses `openshift-adp` on managed clusters for that reason.
 

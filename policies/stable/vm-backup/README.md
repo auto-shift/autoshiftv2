@@ -28,15 +28,25 @@ metadata:
     cluster.open-cluster-management.io/backup-vm: daily
 ```
 
-An unlabelled virtual machine is never backed up. That is why `policy-vm-backup-schedule` proves the
-schedules exist and run, but cannot prove any virtual machine uses them.
+An unlabelled virtual machine is never backed up.
+
+`policy-vm-backup-schedule` checks the `Schedule` specification only. It does not check that any
+backup ran, that a backup completed, or that any virtual machine carries the label, so a schedule
+whose every backup fails still reports Compliant. Check the backups by hand:
+
+```bash
+oc get backups.velero.io -n openshift-adp
+```
+
+Each backup that a schedule creates is named after it, for example `vm-backup-daily-20260101020000`,
+and the `STATUS` column shows its phase.
 
 ## Policies
 
 | Policy | Description |
 |--------|-------------|
-| `policy-vm-backup-snapshotclass-test` | Inform: a `VolumeSnapshotClass` exists |
-| `policy-vm-backup-schedule` | One `Schedule` per `config.vm-backup.schedules` entry |
+| `policy-vm-backup-snapshotclass-test` | Inform: at least one `VolumeSnapshotClass` exists, for any driver |
+| `policy-vm-backup-schedule` | One `Schedule` per `config.vm-backup.schedules` entry, checked by specification only |
 
 Placement requires both `autoshift.io/vm-backup: 'true'` and `autoshift.io/virt: 'true'`. Data
 protection and a schedule selecting `VirtualMachine` resources are pointless on a cluster with no
@@ -63,11 +73,18 @@ descriptions of storage, so the choice is unrelated to whether a StorageClass is
 
 The real prerequisite is a **`VolumeSnapshotClass`**. A CSI-provisioned StorageClass is not enough on
 its own: the driver must support snapshots and a `VolumeSnapshotClass` must reference it.
-`policy-vm-backup-snapshotclass-test` reports this, because without it backups appear to run and
-produce nothing usable.
+`policy-vm-backup-snapshotclass-test` reports a cluster with no `VolumeSnapshotClass` at all, because
+without one backups appear to run and produce nothing usable.
+
+The test checks existence only. It matches any `VolumeSnapshotClass`, whatever its driver, so a
+cluster with a class for one CSI driver is Compliant even when the virtual machine disks use another.
+Compare the two by hand: the provisioner of each storage class the virtual machine disks use must
+appear as the `DRIVER` of a `VolumeSnapshotClass`.
 
 ```bash
-oc get volumesnapshotclass
+oc get pvc -n my-vm-namespace -o custom-columns=NAME:.metadata.name,STORAGECLASS:.spec.storageClassName
+oc get storageclass -o custom-columns=NAME:.metadata.name,PROVISIONER:.provisioner
+oc get volumesnapshotclass -o custom-columns=NAME:.metadata.name,DRIVER:.driver
 ```
 
 ## Storage and credentials
@@ -79,33 +96,71 @@ them.
 ## Restore is a runbook, not a policy
 
 Restoring is deliberately out of scope, for the same reason `acm-failover` does not automate promotion
-and the ODF work does not own `DRPlacementControl`: it is per-virtual-machine, keyed by UID, and
-operational. A policy that restores on reconcile would be a policy that overwrites a running virtual
+and the Red Hat OpenShift Data Foundation work does not own `DRPlacementControl`: it is
+per-virtual-machine, keyed by UID, and operational. A policy that restores on reconcile would be a policy that overwrites a running virtual
 machine.
 
-To restore, create a Velero `Restore` referencing the backup and the virtual machine:
+### Why a restore cannot select one virtual machine
 
-```bash
-oc get backups.velero.io -n openshift-adp | grep vm-backup-daily
-```
+A Velero `Restore` filters by namespace, resource type and label. It has no filter for an object
+name. The only label this policy relies on is `cluster.open-cluster-management.io/backup-vm`, and its
+value is the schedule name, which every virtual machine on that schedule shares. A `Restore` that
+selects `cluster.open-cluster-management.io/backup-vm: daily` therefore selects every virtual machine
+on the `daily` schedule in the namespaces it includes. The label also sits on the `VirtualMachine`
+only: OpenShift Virtualization does not copy it to the `DataVolume` and `PersistentVolumeClaim`
+resources that hold the disks, so a label-selected restore is not a reliable way to bring the disks back either.
 
-```yaml
-apiVersion: velero.io/v1
-kind: Restore
-metadata:
-  name: restore-my-vm
-  namespace: openshift-adp
-spec:
-  backupName: vm-backup-daily-20260101020000
-  includedNamespaces:
-    - my-vm-namespace
-  labelSelector:
-    matchLabels:
-      cluster.open-cluster-management.io/backup-vm: daily
-```
+AutoShift adds no per-virtual-machine label, so there is no selector this policy can document that
+restores exactly one virtual machine and its disks.
 
-Restore into a different namespace with `namespaceMapping`. Stop the virtual machine first if it is
-running, because restoring over live disks is not safe.
+### Restore one virtual machine through a scratch namespace
+
+Restore everything that backup holds for the namespace into a scratch namespace, keep the virtual
+machine you need, and remove the rest.
+
+1. Find the backup:
+
+   ```bash
+   oc get backups.velero.io -n openshift-adp | grep vm-backup-daily
+   ```
+
+2. Restore the namespace from that backup into a scratch namespace. With no `labelSelector`, the
+   restore brings back each backed-up virtual machine together with its disks:
+
+   ```yaml
+   apiVersion: velero.io/v1
+   kind: Restore
+   metadata:
+     name: restore-my-vm-namespace-scratch
+     namespace: openshift-adp
+   spec:
+     backupName: vm-backup-daily-20260101020000
+     includedNamespaces:
+       - my-vm-namespace
+     namespaceMapping:
+       my-vm-namespace: my-vm-namespace-restore
+   ```
+
+3. Every virtual machine on that schedule in `my-vm-namespace` is now in `my-vm-namespace-restore`.
+   A restored virtual machine whose run strategy starts it can come up next to the original, with the
+   same MAC addresses on any secondary network. Stop or delete every virtual machine you do not need,
+   and its `DataVolume` and `PersistentVolumeClaim` resources, as soon as the restore completes:
+
+   ```bash
+   oc get virtualmachines.kubevirt.io,datavolumes.cdi.kubevirt.io,pvc -n my-vm-namespace-restore
+   ```
+
+4. Run the virtual machine from the scratch namespace, or bring it back to its original namespace.
+   Stop and delete the original first, because restoring over live disks is not safe. A
+   `PersistentVolumeClaim` cannot move between namespaces, so clone each disk with a `DataVolume`
+   whose `source.pvc` names the restored claim in `my-vm-namespace-restore`, then re-create the
+   `VirtualMachine` in `my-vm-namespace` pointing at the clones.
+
+5. Delete the scratch namespace.
+
+When the virtual machine is the only one on that schedule in its namespace, restoring that namespace
+with `includedNamespaces` alone, without `namespaceMapping`, restores just that virtual machine. Stop
+and delete the original first.
 
 ## Nothing is allowed to fail quietly
 
@@ -113,7 +168,10 @@ running, because restoring over live disks is not safe.
 |---|---|
 | `schedules` empty | Template fails: a cluster opted in but nothing would ever be backed up |
 | A schedule with no `name` or no `cron` | Template fails, naming the entry |
+| Two schedules with the same `name` | Template fails, naming the duplicate, rather than applying only the first |
 | No `VolumeSnapshotClass` | `policy-vm-backup-snapshotclass-test` reports it |
+| A `VolumeSnapshotClass` for the wrong driver | Not detected: compare the drivers by hand, as described earlier |
+| Backups that run and fail | Not detected: check `oc get backups.velero.io -n openshift-adp` |
 | Storage not ready | `policy-vm-backup-schedule` stays `Pending` on its dependency rather than creating a schedule that cannot run |
 
 Everything about the object store itself fails in the [`oadp`](../oadp/README.md) policy, which owns

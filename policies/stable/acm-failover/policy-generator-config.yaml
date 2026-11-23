@@ -55,6 +55,10 @@ policies:
         namespace: ${POLICY_NAMESPACE}
     manifests:
       - path: manifests/storage/acm-failover-storage.yaml
+    # The storage template fails on the managed cluster when the staged key pair is incomplete or
+    # caRef is unreadable. This keeps only the fail text, not the template dump around it.
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
   # 1-test-a) Do the credentials Velero opens actually exist? Observation only, no dependents:
   #   gating the storage policy on this would deadlock the obc backend, where that same policy is
   #   what creates the derived Secret. Its value is naming the cause precisely, so a missing Secret

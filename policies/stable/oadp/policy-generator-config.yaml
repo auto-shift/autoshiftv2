@@ -99,6 +99,9 @@ policies:
       - name: policy-oadp-credentials-stage-test
     manifests:
       - path: manifests/credentials-assemble
+    # The missing-key fail runs on the managed cluster; strip the template dump around it.
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
   # 3) The DataProtectionApplication. Depends on the generic credentials check, so it is never
   #    written against credentials that are not there.
   - name: policy-oadp-storage
@@ -120,7 +123,8 @@ policies:
       - path: test/oadp-credentials-ready.yaml
     customMessage:
       noncompliant: >-
-        Velero has no credentials for the object store on this cluster, so no backup can succeed. Set
+        {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}.
+        Velero has no usable credentials for the object store on this cluster, so no backup can succeed. Set
         config.oadp.storage.credentialsFrom to a Secret on the hub and this policy copies it to every
         selected cluster, which is the only approach that scales past a handful of clusters.
         Otherwise create it here and name it in config.oadp.storage.configSecretRef: oc create secret

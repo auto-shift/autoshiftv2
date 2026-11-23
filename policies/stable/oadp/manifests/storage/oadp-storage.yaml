@@ -22,8 +22,11 @@
 object-templates-raw: |
   # INDENTATION ANCHOR — every directive below sits at this indent. A shallower trim marker eats
   # past the newline into the previous line and produces invalid YAML.
-  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- if (empty $raw) hub}}
+  {{hub- fail (printf "oadp: ConfigMap %s.rendered-config in %s has no config key, so the storage configuration is unknown" .ManagedClusterName .PolicyMetadata.namespace) hub}}
+  {{hub- end hub}}
+  {{hub- $rcmConfig := ($raw | fromYaml | default dict) hub}}
   {{hub- $oadp := (index $rcmConfig "oadp" | default dict) hub}}
   {{hub- $store := (index $oadp "storage" | default dict) hub}}
   {{hub- $credRef := (index $store "configSecretRef" | default dict) hub}}
@@ -33,7 +36,15 @@ object-templates-raw: |
   {{hub- $type := (index $store "type" | default "s3") hub}}
   {{hub- $bucket := (index $store "bucket" | default "") hub}}
   {{hub- $prefix := (index $store "prefix" | default "") hub}}
-  {{hub- $nodeAgent := (index $store "nodeAgent" | default true) hub}}
+  # nodeAgent defaults to on. hasKey, not default: Sprig default treats false as empty and would
+  # turn an explicit false back into true.
+  {{hub- $nodeAgent := "true" hub}}
+  {{hub- if hasKey $store "nodeAgent" hub}}
+  {{hub- $nodeAgent = (toString (index $store "nodeAgent")) hub}}
+  {{hub- end hub}}
+  {{hub- if not (has $nodeAgent (list "true" "false")) hub}}
+  {{hub- fail (printf "oadp: config.oadp.storage.nodeAgent must be true or false, got %q" $nodeAgent) hub}}
+  {{hub- end hub}}
   {{hub- $credName := (index $credRef "name" | default "cloud-credentials") hub}}
   {{hub- $credKey := (index $credRef "key" | default "cloud") hub}}
   {{hub- $srcRef := (index $store "sourceSecretRef" | default dict) hub}}
@@ -124,6 +135,13 @@ object-templates-raw: |
   {{hub- if and (index $cfg "s3Url") (not (index $cfg "region")) hub}}
   {{hub- fail "oadp: storage.endpoint is set but storage.region is empty. OpenShift APIs for Data Protection requires a region whenever an S3 URL is configured, and without one it creates no BackupStorageLocation. Set config.oadp.storage.region; an S3-compatible appliance that has no real region still needs a placeholder, and its own documentation usually names one." hub}}
   {{hub- end hub}}
+  # Backup data and request signatures cross this connection, and a trust bundle does not stop
+  # Velero from using plain HTTP. Checked on the final s3Url, after storage.endpoint, the endpoint
+  # key in the sourceSecretRef Secret and storage.config have all merged, so no input path skips it.
+  {{hub- $allowInsecure := (eq (toString (index $store "allowInsecureEndpoint")) "true") hub}}
+  {{hub- if and (index $cfg "s3Url") (not (hasPrefix "https://" (lower (index $cfg "s3Url")))) (not $allowInsecure) hub}}
+  {{hub- fail (printf "oadp: the S3 URL %q does not use https, so backup data would cross the network unencrypted. Use an https endpoint, or set config.oadp.storage.allowInsecureEndpoint: true to accept plain HTTP for an object store on a trusted network." (index $cfg "s3Url")) hub}}
+  {{hub- end hub}}
   {{hub- $caNs := (index $caRef "namespace" | default "openshift-adp") hub}}
   {{hub- $caName := (index $caRef "name" | default "") hub}}
   {{hub- $caKey := (index $caRef "key" | default "ca-bundle.crt") hub}}
@@ -143,7 +161,7 @@ object-templates-raw: |
           velero:
             defaultPlugins:
               {{hub- range $p := $plugins hub}}
-              - {{hub $p hub}}
+              - {{hub $p | quote hub}}
               {{hub- end hub}}
           nodeAgent:
             # Required for a snapshot-based backup to outlive the cluster's own storage system:
@@ -154,12 +172,12 @@ object-templates-raw: |
         backupLocations:
           - name: default
             velero:
-              provider: {{hub $provider hub}}
+              provider: {{hub $provider | quote hub}}
               default: true
               objectStorage:
-                bucket: {{hub $bucket hub}}
+                bucket: {{hub $bucket | quote hub}}
                 {{hub- if $prefix hub}}
-                prefix: {{hub $prefix hub}}
+                prefix: {{hub $prefix | quote hub}}
                 {{hub- end hub}}
                 {{hub- if $caName hub}}
                 {{- $caCM := (lookup "v1" "ConfigMap" "{{hub $caNs hub}}" "{{hub $caName hub}}") | default dict }}
@@ -172,9 +190,9 @@ object-templates-raw: |
               {{hub- if $cfg hub}}
               config:
                 {{hub- range $k, $v := $cfg hub}}
-                {{hub $k hub}}: '{{hub $v hub}}'
+                {{hub $k | quote hub}}: {{hub $v | quote hub}}
                 {{hub- end hub}}
               {{hub- end hub}}
               credential:
-                name: {{hub $credName hub}}
-                key: {{hub $credKey hub}}
+                name: {{hub $credName | quote hub}}
+                key: {{hub $credKey | quote hub}}

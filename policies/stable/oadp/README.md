@@ -81,8 +81,8 @@ is supported and expected, not a misconfiguration.
 | `policy-oadp-credentials-stage-test` | Inform: the `sourceSecretRef` key pair arrived. Renders nothing in other modes |
 | `policy-oadp-credentials-assemble` | Builds the Velero credentials file from the staged key pair |
 | `policy-oadp-storage` | Credentials, and the `DataProtectionApplication` |
-| `policy-oadp-credentials-test` | Inform: the credentials Secret exists here. Existence only, never contents |
-| `policy-oadp-storage-test` | Inform: the `DataProtectionApplication` is Reconciled and the `BackupStorageLocation` Available |
+| `policy-oadp-credentials-test` | Inform: the credentials Secret exists here and holds the key the `DataProtectionApplication` opens. The value is never written anywhere |
+| `policy-oadp-storage-test` | Inform: the `DataProtectionApplication` is Reconciled and the `BackupStorageLocation` named `default` is Available |
 
 ## Credentials: one Secret for the fleet
 
@@ -123,12 +123,16 @@ oc create secret generic oadp-s3 -n policies-<release> \
   --from-literal=endpoint=https://s3.example.com
 ```
 
+The key pair is checked on the managed cluster before the file is written. A Secret missing either
+`access_key_id` or `access_key_secret` fails `policy-oadp-credentials-assemble`, rather than replacing
+a working credentials file with one Velero cannot authenticate with.
+
 `storage.profile` sets the section name when the object store expects a named profile rather than
 `[default]`.
 
 **`sourceSecretRef` and `credentialsFrom` are mutually exclusive.** Both write the Secret Velero
 opens, and two object templates for one object do not conflict visibly: the first wins, the second is
-dead code, and the policy still reports Compliant. So setting both fails the policy instead.
+dead code, and the policy still reports Compliant. Setting both therefore fails the policy instead.
 
 Two precedence details, matching `acm-failover` rather than diverging from it: a `bucketnames` key in
 the Secret overrides `storage.bucket`, while `storage.endpoint` overrides an `endpoint` key in the
@@ -143,12 +147,30 @@ S3-compatible appliance through `endpoint`), `azure`, `gcp`, a `caRef` trust bun
 It is deliberately its own instance rather than a shared value with the hub. Workload backups are far
 larger than hub state and usually want their own bucket, retention and credentials.
 
+### Plain HTTP endpoints
+
+The policy fails when the final S3 URL does not start with `https://`. The check runs after every
+input has merged: `storage.endpoint`, an `endpoint` key in the `sourceSecretRef` Secret, and
+`storage.config.s3Url`. Backup data and request signatures cross that connection, and a `caRef` trust
+bundle does not stop Velero from using plain HTTP.
+
+An object store on a trusted network that only serves HTTP needs an explicit opt-in:
+
+```yaml
+config:
+  oadp:
+    storage:
+      endpoint: http://minio.backup.svc:9000
+      allowInsecureEndpoint: true
+```
+
 There is no `obc` backend. A claim against the cluster's own storage would not survive that cluster,
 which defeats the purpose.
 
 ### The node agent
 
-`storage.nodeAgent` defaults to `true` and runs the Velero node agent. Leave it on. A bare CSI
+`storage.nodeAgent` defaults to `true` and runs the Velero node agent. An explicit `false` turns it
+off, and any value other than `true` or `false` fails the policy. Leave it on. A bare CSI
 snapshot normally lives in the same storage system as the volume it came from, so it is lost along
 with that storage. The node agent is what moves the snapshot contents into the object store, which is
 what makes this disaster recovery rather than a local convenience. It is also what file system backup
@@ -175,14 +197,18 @@ locally, next to the credentials Velero opens.
 
 | Missing or wrong | What happens |
 |---|---|
+| `<cluster>.rendered-config` ConfigMap or its `config` key missing on the hub | Template fails rather than render nothing |
 | `storage.type` not `s3`, `azure` or `gcp` | Template fails, naming the value and pointing at `endpoint` for appliances |
 | `storage.bucket` empty | Template fails rather than configure Velero with no bucket |
 | `storage.endpoint` set but `storage.region` empty | Template fails. OpenShift APIs for Data Protection requires a region whenever an S3 URL is configured, and without one it creates no `BackupStorageLocation` while this policy still reports Compliant |
+| Final S3 URL does not use `https://` and `storage.allowInsecureEndpoint` is not `true` | Template fails, naming the URL |
 | `storage.azure.*` incomplete | Template fails, naming the missing field |
 | `credentialsFrom` set without a name | Template fails |
 | `caRef` set but the ConfigMap is absent | Template fails; a missing trust bundle would leave Velero unable to verify the endpoint |
 | Credentials Secret absent | `policy-oadp-credentials-test` names it |
+| Credentials Secret present without the key the `DataProtectionApplication` opens | `policy-oadp-credentials-test` fails, naming the Secret and the key |
 | `sourceSecretRef` names a Secret that is absent, or has no `data` | Template fails, naming the Secret and the keys it needs |
+| `sourceSecretRef` Secret lacks `access_key_id` or `access_key_secret` | `policy-oadp-credentials-assemble` fails on the managed cluster, naming the missing key |
 | `sourceSecretRef` and `credentialsFrom` both set | Template fails rather than let one silently win |
 | Storage location not reachable | `policy-oadp-storage-test` reports it, and every consumer stays `Pending` rather than scheduling against it |
 

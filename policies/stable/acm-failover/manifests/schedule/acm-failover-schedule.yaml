@@ -9,8 +9,11 @@
 # object on the target cluster.
 object-templates-raw: |
   # INDENTATION ANCHOR
-  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $rcmRaw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- if (empty $rcmRaw) hub}}
+  {{hub- fail (printf "acm-failover: ConfigMap %s.rendered-config in %s has no config key" .ManagedClusterName .PolicyMetadata.namespace) hub}}
+  {{hub- end hub}}
+  {{hub- $rcmConfig := ($rcmRaw | fromYaml | default dict) hub}}
   {{hub- $bk := (index $rcmConfig "acm-failover" | default dict) hub}}
   # The downstream fork nests the same settings under config.acm.failover. They are read when
   # config.acm-failover is absent, so its values files keep working unchanged; config.acm-failover
@@ -32,7 +35,16 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- $active := (index $bk "active" | default dict) hub}}
-  {{hub- $schedule := (index $active "veleroSchedule" | default "0 */2 * * *") hub}}
+  # The default applies only when the key is absent. `default` would also replace an explicit empty
+  # value, and an empty cron must fail rather than quietly become the default.
+  {{hub- $schedule := "0 */2 * * *" hub}}
+  {{hub- if hasKey $active "veleroSchedule" hub}}
+  {{hub- $schedule = (printf "%v" (index $active "veleroSchedule" | default "")) hub}}
+  {{hub- end hub}}
+  {{hub- $useMsa := "true" hub}}
+  {{hub- if and (hasKey $active "useManagedServiceAccount") (eq (printf "%v" (index $active "useManagedServiceAccount")) "false") hub}}
+  {{hub- $useMsa = "false" hub}}
+  {{hub- end hub}}
   {{hub- if (empty $schedule) hub}}
   {{hub- fail "acm-failover: config.acm-failover.active.veleroSchedule is required on an active hub. A BackupSchedule with no cron expression never produces a backup." hub}}
   {{hub- end hub}}
@@ -49,7 +61,7 @@ object-templates-raw: |
         # "did not find expected alphabetic or numeric character".
         veleroSchedule: '{{hub $schedule hub}}'
         veleroTtl: '{{hub index $active "veleroTtl" | default "720h" hub}}'
-        useManagedServiceAccount: {{hub index $active "useManagedServiceAccount" | default "true" hub}}
+        useManagedServiceAccount: {{hub $useMsa hub}}
         # Pausing stops the Velero schedules without removing the BackupSchedule, which is how a
         # collision is resolved on one side while the other keeps its history.
         paused: {{hub index $active "paused" | default false hub}}

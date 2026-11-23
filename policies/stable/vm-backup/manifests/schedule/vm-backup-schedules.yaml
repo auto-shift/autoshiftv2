@@ -23,15 +23,23 @@ object-templates-raw: |
   {{hub- if eq (len $schedules) 0 hub}}
   {{hub- fail "vm-backup: config.vm-backup.schedules is empty, so no virtual machine would ever be backed up on a cluster that opted in. Define at least one entry with name and cron, then label each VirtualMachine cluster.open-cluster-management.io/backup-vm: <name>." hub}}
   {{hub- end hub}}
+  {{hub- $seen := list hub}}
   {{hub- range $s := $schedules hub}}
-  {{hub- $name := (index $s "name" | default "") hub}}
+  {{hub- $name := printf "%v" (index $s "name" | default "") hub}}
   {{hub- if (empty $name) hub}}
   {{hub- fail "vm-backup: every config.vm-backup.schedules entry needs a name. The name is what a VirtualMachine references in its cluster.open-cluster-management.io/backup-vm label." hub}}
   {{hub- end hub}}
+  {{hub- if (has $name $seen) hub}}
+  {{hub- fail (printf "vm-backup: config.vm-backup.schedules has two entries named %s. Both would render the Schedule vm-backup-%s, and only the first would apply." $name $name) hub}}
+  {{hub- end hub}}
+  {{hub- $seen = append $seen $name hub}}
   {{hub- $cron := (index $s "cron" | default "") hub}}
   {{hub- if (empty $cron) hub}}
-  {{hub- fail (printf "vm-backup: config.vm-backup.schedules entry %q needs a cron expression. A Schedule without one never runs." $name) hub}}
+  {{hub- fail (printf "vm-backup: config.vm-backup.schedules entry %s needs a cron expression. A Schedule without one never runs." $name) hub}}
   {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $s := $schedules hub}}
+  {{hub- $name := printf "%v" (index $s "name") hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: velero.io/v1
@@ -42,7 +50,7 @@ object-templates-raw: |
       spec:
         # Quoted: a cron expression beginning with an asterisk is a YAML alias when unquoted, and the
         # whole policy then fails to render.
-        schedule: '{{hub $cron hub}}'
+        schedule: '{{hub index $s "cron" hub}}'
         template:
           ttl: '{{hub index $s "ttl" | default "720h" hub}}'
           snapshotMoveData: {{hub $nodeAgent hub}}
@@ -55,5 +63,7 @@ object-templates-raw: |
             {{hub- end hub}}
           labelSelector:
             matchLabels:
-              cluster.open-cluster-management.io/backup-vm: {{hub $name hub}}
+              # Quoted: a label value is a string, and a schedule name such as 123 would otherwise
+              # render as a number and make the Schedule invalid.
+              cluster.open-cluster-management.io/backup-vm: '{{hub $name hub}}'
   {{hub- end hub}}
