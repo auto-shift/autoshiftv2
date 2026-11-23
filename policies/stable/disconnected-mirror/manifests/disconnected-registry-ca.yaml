@@ -1,5 +1,14 @@
 # fromConfigMap fails the policy when rendered-config or a caRef ConfigMap is missing, and a caRef
 # key that is absent fails explicitly, rather than rendering nothing and reporting Compliant.
+#
+# caRef names a ConfigMap on the HUB that placed this policy, not on the managed cluster: the hub
+# template reads it and this policy copies the CA to the cluster. One ConfigMap serves every cluster
+# the hub manages. Its namespace defaults to the policy namespace; any other namespace is read
+# through the policy service account set in policy-generator-config.yaml.
+#
+# The CA is written twice: under the registry host, which the cluster uses to pull, and under
+# updateservice-registry, the fixed key the OpenShift Update Service operator reads to reach the
+# mirror. A cluster accepts one additionalTrustedCA ConfigMap, so both keys share it.
 object-templates-raw: |
   {{hub $configYaml := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" | fromYaml | default dict) hub}}
   {{hub $disconnected := (index $configYaml "disconnected" | default dict) hub}}
@@ -25,6 +34,8 @@ object-templates-raw: |
         namespace: openshift-config
       data:
         {{hub $registryKey hub}}: |
+          {{hub $ca | autoindent hub}}
+        updateservice-registry: |
           {{hub $ca | autoindent hub}}
   - complianceType: musthave
     objectDefinition:

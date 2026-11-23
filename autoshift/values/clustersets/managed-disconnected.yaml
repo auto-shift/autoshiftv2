@@ -1,0 +1,70 @@
+# Disconnected managed clusterset
+#
+# Spokes at a second site, pulling from that site's own mirror registry rather than the hub's. Pair
+# it with hub-disconnected.yaml; see that file for the deployment order.
+#
+# The spokes read their update graph from the OpenShift Update Service on the hub, found
+# automatically. That service builds the graph from the hub site's mirror, so the release image it
+# offers is registry.hub.example.com:8443/openshift/release-images@sha256:<digest>. The first
+# mirrors entry below redirects that to this site's mirror. Without it, a spoke would pull the
+# release from the hub's registry, which only works if the spoke can reach it and trusts its CA.
+# Drop that entry when spokes share the hub's mirror, or read the graph from an OpenShift Update
+# Service at their own site.
+#
+# Mirror this site with the same ImageSetConfiguration as the hub, so its releases and signatures
+# match. The releaseSignatures list is the same for every site.
+
+managedClusterSets:
+  managed-disconnected:
+    labels:
+      openshift-version: '4.22.18'
+
+      ### Disconnected mirror. Every operator subscribes to <source>-mirror.
+      disconnected-mirror: 'true'
+      mirror-catalog-suffix: 'mirror'
+
+      ### Day 2 upgrades. The graph comes from the hub's OpenShift Update Service.
+      openshift-upgrade: 'false'
+      openshift-upgrade-channel: 'stable-4.22'
+    config:
+      disconnected:
+        mirrorRegistry:
+          host: 'registry.site1.example.com:8443'
+          # A ConfigMap on the HUB that manages these spokes, not on the spokes: the policy reads it
+          # there and copies the CA to each spoke. It holds this site's CA, and sits next to the
+          # hub's own hub-mirror-ca in the policy namespace.
+          caRef:
+            name: 'site1-mirror-ca'
+            key: 'ca-bundle.crt'
+          # source is the image name a spoke pulls, registry included. mirror is only the path under
+          # host; AutoShift adds registry.site1.example.com:8443.
+          mirrors:
+            # The one source on a registry you own. The hub's Update Service names its releases on
+            # the hub's mirror, so that is the image name spokes are told to pull. Redirect it here.
+            - source: 'registry.hub.example.com:8443/openshift/release-images'
+              mirror: 'openshift/release-images'
+            - source: 'quay.io/openshift-release-dev/ocp-release'
+              mirror: 'openshift/release-images'
+            - source: 'quay.io/openshift-release-dev/ocp-v4.0-art-dev'
+              mirror: 'openshift/release'
+            - source: 'registry.redhat.io/openshift4'
+              mirror: 'openshift4'
+            - source: 'registry.redhat.io/rhel9'
+              mirror: 'rhel9'
+            - source: 'registry.redhat.io/multicluster-engine'
+              mirror: 'multicluster-engine'
+          tagMirrors:
+            - source: 'quay.io/openshift-release-dev/ocp-release'
+              mirror: 'openshift/release-images'
+        catalogs:
+          - source: redhat-operators
+            imagePath: redhat/redhat-operator-index
+            tag: v4.22
+            publisher: Red Hat
+        useIDMS: true
+        disableDefaultCatalogs: true
+        releaseSignatures:
+          - version: '4.22.18'
+            digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000001'
+            signatures:
+              - 'ZXhhbXBsZS1zaWduYXR1cmU='
