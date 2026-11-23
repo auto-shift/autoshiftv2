@@ -33,16 +33,25 @@ policyDefaults:
   placement:
     placementPath: placement.yaml
 policies:
-  # 1. Channel (enforce, unconditional) — so availableUpdates recomputes for the desired channel and
-  #    the y-stream case can't deadlock the dependency below.
+  # 1. Channel and upstream (enforce, unconditional) — so availableUpdates recomputes for the
+  #    desired channel and graph, and neither the y-stream case nor a local OpenShift Update Service
+  #    deadlocks the dependency below.
+  #    The service account lets the hub template read the hub's OpenShift Update Service Route.
   - name: policy-openshift-upgrade-channel
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
     manifests:
       - path: manifests/channel.yaml
+    # The graph-source checks fail on the managed cluster; show only their text, not the template.
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
 
   # 2. Version-exists check. The plain-miss gate asks the admin to validate cluster
   #    operators. The conditional gate fails with the Cluster Version Operator reason and
   #    message; customMessage drops the template text so Governance shows that sentence.
-  #    consolidateManifests is false so the two gates can carry different messages.
+  #    The signature gate, on a disconnected cluster, fails when the target release has no
+  #    signature for the Cluster Version Operator to verify.
+  #    consolidateManifests is false so the gates can carry different messages.
   - name: policy-openshift-upgrade-allowed
     consolidateManifests: false
     remediationAction: inform
@@ -57,7 +66,14 @@ policies:
             openshift-version '{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" hub}}'
             is not in ClusterVersion status.availableUpdates with a release image on channel
             '{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-channel" | default "stable-4.22" hub}}'.
-            Validate cluster operators are healthy. policy-openshift-upgrade will not start until this is Compliant.
+            Validate cluster operators are healthy. On a disconnected cluster, also check that
+            config.openshift-upgrade.upgradeGraphUrl points at a reachable OpenShift Update Service
+            whose graph includes this version. policy-openshift-upgrade will not start until this is Compliant.
+      - path: test/openshift-upgrade-signature.yaml
+        name: openshift-upgrade-signature
+        remediationAction: inform
+        customMessage:
+          noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}. The Cluster Version Operator will refuse this update. Add the digest and its signatures from the oc-mirror signature-configmap.json to config.disconnected.releaseSignatures.'
       - path: test/openshift-upgrade-allowed-conditional.yaml
         name: openshift-upgrade-allowed-conditional
         remediationAction: inform
