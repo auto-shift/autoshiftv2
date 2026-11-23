@@ -906,6 +906,23 @@ The managed cluster checks the namespace before rendering anything for the proje
 - It exists without `autoshift.io/project`: the project is rendered only with `adopt: true`. An
   `adopt` value other than `true` or `false` is reported and counts as `false`.
 
+The generated names are checked too. When an object the project would apply already exists
+without the label `autoshift.io/managed-by: project-onboarding`, nothing is rendered for the
+project, with or without `adopt: true`. In an existing namespace that covers the RoleBindings
+`autoshift-admin`, `autoshift-write` and `autoshift-read`, the ResourceQuota `autoshift-quota`, the
+LimitRange `autoshift-limits`, the NetworkPolicies `autoshift-default-deny-<direction>` and
+`autoshift-rule-<rule>`, and the EgressFirewall `default`. For every project, a new namespace
+included, it covers the cluster-scoped AdminNetworkPolicy `autoshift-project-<project>` and EgressIP
+`autoshift-<project>`, whose addresses and selector would otherwise be taken over. `adopt` takes
+over the namespace, never an object someone else created in it: applying the project would replace
+the rules of that EgressFirewall, and a RoleBinding whose `roleRef` differs would be deleted and
+created again. An object that carries the label belongs to onboarding and keeps being updated. To
+hand an existing object over, label it explicitly:
+
+```bash
+oc label egressfirewall default -n <namespace> autoshift.io/managed-by=project-onboarding
+```
+
 A blocked project is reported in the [status](#status).
 
 Setting the deployment `REMEDIATION` to `inform` is a dry run: the enforce ConfigurationPolicy
@@ -961,11 +978,18 @@ off:
 - Nothing is deleted or reported in a declared namespace the project did not render, because the
   namespace is owned by another project or exists without `adopt: true`.
 - An owned object outside its project's declared namespace, for example after the project's
-  `namespace` changed, is a candidate only once the new namespace is live: the project rendered it
-  this run, and it already existed on the cluster. While the new namespace is being created, the
-  old one keeps its default denies and RoleBindings, since it still carries the project label and
-  the project's EgressIP and AdminNetworkPolicy still select it. A project moved to a namespace it
-  cannot take keeps its objects in the old one.
+  `namespace` changed, is a candidate only once the new namespace is ready. The project rendered it
+  this run, and when this evaluation started it already existed with `autoshift.io/project` naming
+  the project and held every RoleBinding `autoshift-<level>` the project declares, owned by
+  onboarding, bound to the declared ClusterRole with the declared group as its only subject. The
+  namespace merely existing is not enough: admission can still refuse a destination binding, and
+  the old binding may be the team's only access. A move therefore takes at least two evaluations:
+  one applies the new namespace's objects, a later one observes them and cleans up the old
+  namespace. While it waits, the project's status says
+  `waiting for destination objects in <namespace>`. Until then the old one keeps its default denies
+  and RoleBindings, since it still carries the project label and the project's EgressIP and
+  AdminNetworkPolicy still select it. A project moved to a namespace it cannot take keeps its
+  objects in the old one.
 - An object of a project that is no longer declared, such as the cluster-scoped AdminNetworkPolicy
   and EgressIP, is never a candidate while a namespace that carries that project's label is
   declared by a current project. That happens after a rename, or when a new project names the
@@ -977,16 +1001,16 @@ off:
 - No admin AdminNetworkPolicy is deleted or reported while the admin tier has errors.
 - No sweep runs when the cluster's rendered configuration cannot be read, or when it has no
   `config.projectOnboarding.projects` map. A missing `projects` key, for example after a values restructure or a
-  misplaced file, sweeps nothing. An explicit `projects: {}` is a deliberate removal and sweeps
-  every owned object. A rendered configuration that cannot be read is also reported in the
-  [status](#status).
+  misplaced file, sweeps nothing and is reported in the [status](#status), as is a rendered
+  configuration that cannot be read. An explicit `projects: {}` is a deliberate removal and sweeps
+  every owned object.
 
 After a project moves to another namespace, the old Namespace still carries `autoshift.io/project:
 <project>`, so the project's EgressIP and AdminNetworkPolicy would keep selecting it. The release
 applies to every namespace that carries the project's label and that no current project declares,
 which includes a namespace someone labeled by hand, but never a platform namespace. Once the
-project's new namespace is live and the project has no errors, such a namespace is released: with
-pruning on, its `autoshift.io/project` and `autoshift.io/managed-by` labels are removed through
+project's new namespace is ready, as described above, and the project has no errors, such a
+namespace is released: with pruning on, its `autoshift.io/project` and `autoshift.io/managed-by` labels are removed through
 `metadataComplianceType: mustonlyhave`, in the ConfigurationPolicy of the project's mode, and its
 other labels and its annotations are kept. With pruning off, the inform ConfigurationPolicy reports
 the release without changing anything. The Namespace itself is never deleted, and an old namespace
@@ -1075,6 +1099,8 @@ data:
 | `namespace <ns> already declared by <project>` | hub | Project skipped |
 | `namespace <ns> is owned by project <owner>` | managed cluster | Nothing rendered for the project |
 | `namespace <ns> exists and is not owned by AutoShift; set adopt: true to take it over`, or `...; adopt is not true or false, so it is not taken over` | managed cluster | Nothing rendered for the project |
+| `RoleBinding autoshift-<level>, EgressFirewall default in namespace <ns> already exist and are not managed by project onboarding (...)`, one or more of the namespaced objects, or `the cluster-scoped AdminNetworkPolicy autoshift-project-<project> already exists ...` | managed cluster | Nothing rendered for the project, see [Mode and adoption](#mode-and-adoption) |
+| `waiting for destination objects in <ns>: ...` | managed cluster | The old namespace keeps its objects and labels until the move completes, see [Pruning](#pruning) |
 
 The admin network policy tier is global, so its errors are listed under one key,
 `projectOnboarding.defaults.adminNetworkPolicies` in the status ConfigMap of shard 0, rather than under a
@@ -1098,12 +1124,21 @@ When a shard Policy would grow past its size limit, the key `project-onboarding.
 shard's status names the projects that are not rendered, see [Size limit](#size-limit).
 
 When the cluster's rendered configuration, `<cluster>.rendered-config`, cannot be read, or its
-`config.projectOnboarding.projects` is not a map, nothing is rendered and the status of every shard holds a single
-key, `rendered-config`, for example `rendered-config: cannot read cluster1.rendered-config`. The
-status is written rather than deleted, so every `-test` Policy stays NonCompliant while nothing can
-be checked. A
-readable configuration without a `projects` key has no projects, so it has nothing to report and
-the status is deleted.
+`config.projectOnboarding.projects` is missing, `null`, or not a map, nothing is rendered and the
+status of every shard holds the key `rendered-config`, for example
+`rendered-config: cannot read cluster1.rendered-config` or
+`rendered-config: config.projectOnboarding.projects is not set in cluster1.rendered-config, so no project is onboarded on this cluster; set it to the projects, or to {} for none`.
+The placement selects only clusters labeled `project-onboarding: 'true'`, so a missing key is a
+broken configuration, never a request to onboard nothing. The status is written rather than
+deleted, so every `-test` Policy stays NonCompliant while nothing can be checked. An explicit
+`projects: {}` is valid: it has no projects and nothing to report.
+
+The checks read the raw values. `projectOnboarding.defaults` or one of its sections, such as
+`groups` or `sizes`, that is set to anything other than a map, for example `false`, `[]`, or `''`,
+fails the hub template for every project, with the key named in the error. Only a missing key or
+`null` counts as unset. A project's `labels`, `annotations`, `groups`, `quota`, and `limitRange` are
+read the same way, so `labels: false` is reported as `labels is not a map` rather than read as no
+labels.
 
 The hub resolves the configuration errors and passes them to the managed cluster, which adds the
 ownership checks that only it can make, then builds the status from both. The ConfigMap exists only
@@ -1112,7 +1147,11 @@ not errors and are not listed.
 
 The status follows the pattern of `eso-secret-stores-status` in the External Secrets Operator
 policy. The enforce ConfigurationPolicy writes the ConfigMap with `mustonlyhave` while there are
-errors, and deletes it with `mustnothave` once there are none. The inform ConfigurationPolicy reports
+errors, and deletes it with `mustnothave` once there are none, but only while it is absent or
+carries the label `autoshift.io/project-onboarding-status: "true"`. A ConfigMap of that name without
+the label belongs to someone else: it is neither written nor deleted, and the collision is reported
+under the key `project-onboarding.status` of the `-test` report. The same check guards shard 0's
+removal of the single policy's `project-onboarding-status`. The inform ConfigurationPolicy reports
 the same entries in its test report, which can never be satisfied. Errors therefore keep the `-test`
 Policy of the shard NonCompliant, and it returns to Compliant on the evaluation after they are
 fixed, unless something else keeps it NonCompliant: with pruning off, a stale object or a dropped
@@ -1176,10 +1215,10 @@ about:
 
 | Project shape | Name length | Pruning on | Pruning off |
 |---|---|---|---|
-| Groups only (three RoleBindings), the shape of most adopted projects | 6 characters | 730 | 567 |
+| Groups only (three RoleBindings), the shape of most adopted projects | 6 characters | 730 | 558 |
 | Groups only | 63 characters | 486 | 406 |
 | Every feature: size, a strict network profile, four rules including an AdminNetworkPolicy deny and EgressFirewall entries, and an egress IP | 6 characters | 278 | 244 |
-| Every feature | 63 characters | 200 | 180 |
+| Every feature | 63 characters | 197 | 180 |
 
 One shard holds about 90 groups-only or 35 fully featured projects with short names, so a set of
 names that happens to fall unevenly into the shards reaches the limit earlier. To see the spread,

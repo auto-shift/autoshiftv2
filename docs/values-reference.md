@@ -1159,9 +1159,9 @@ reports an error or a stale object. It carries no `mustnothave`, so it never del
 and dropped catalog labels also keep the `-test` Policy NonCompliant, without a status ConfigMap. The
 hub keeps each resolved shard Policy below 1 MiB: past that, the remaining projects of the shard in
 name order are not rendered and are listed under the status key `project-onboarding.size` (about
-278 fully featured or 730 groups-only projects per cluster with pruning on, 244 or 567 with it off,
+278 fully featured or 730 groups-only projects per cluster with pruning on, 244 or 558 with it off,
 fewer with long names or names that fall unevenly into the shards). More than 3,200 declared
-projects, or more than a shard can hold even with projects skipped, fail the hub template. After a project moves to a live new namespace, a namespace that still carries its
+projects, or more than a shard can hold even with projects skipped, fail the hub template. After a project moves to a new namespace and that namespace is ready, carrying the project label and every declared RoleBinding owned and matching, a namespace that still carries its
 label, other than a platform namespace, loses its ownership labels with pruning on, and is reported
 with pruning off. A namespace is never deleted. See the [policy README](../policies/stable/project-onboarding/README.md).
 

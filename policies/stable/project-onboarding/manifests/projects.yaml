@@ -143,17 +143,35 @@
 # blocks a project that declares one, like an ownership block. Node labels
 # (k8s.ovn.org/egress-assignable) are a prerequisite, not set here.
 #
+# Ownership of generated names: every object the project would apply is looked up before anything
+# is: in a namespace that exists (adopted or created earlier), the RoleBindings autoshift-<level>,
+# the ResourceQuota autoshift-quota, the LimitRange autoshift-limits, the NetworkPolicies
+# autoshift-default-deny-<direction> and autoshift-rule-<rule>, and the EgressFirewall default; for
+# every project, new namespace included, the cluster-scoped AdminNetworkPolicy
+# autoshift-project-<project> and EgressIP autoshift-<project>. One that exists without
+# autoshift.io/managed-by: project-onboarding is never taken over: its rules, addresses, selector or
+# roleRef would be replaced, and recreateOption IfRequired would delete and re-create a
+# RoleBinding. The project is blocked like an ownership block, nothing of it is applied, and the
+# objects are named in its status. Objects that carry the label are onboarding's and keep updating.
+# Handing an existing object over is explicit: label it autoshift.io/managed-by=project-onboarding.
+#
 # Pruning: owned objects (label autoshift.io/managed-by=project-onboarding) of the kinds in the sweep
 # list that this run does not declare get mustnothave. An object belongs to the project declaring
 # its namespace, else to the project its autoshift.io/project label names, else to no project. It is
 # never a candidate when that project has errors or did not render its currently declared namespace
 # this run (so a project moved to a namespace it cannot take keeps its old objects), and an object
-# outside that namespace (a project moved) is a candidate only once the new namespace is live, that
-# is it existed at this run's lookup ($live). An object of no declared project is never a candidate
+# outside that namespace (a project moved) is a candidate only once the new namespace is ready
+# ($ready): at this run's lookup it existed, already carried autoshift.io/project=<project>, and held
+# every RoleBinding autoshift-<level> the project declares, owned by onboarding, with the declared
+# ClusterRole and group as its only subject. Its existence alone is not enough: the destination's
+# bindings can still be refused, and the source binding may be the team's only access. A move
+# therefore takes at least two evaluations, the first applying the destination, a later one
+# observing it and releasing the source. While it waits, the status says
+# "waiting for destination objects in <namespace>". An object of no declared project is never a candidate
 # while a namespace labeled with its project is declared by a current project ($heldBy: a renamed
 # project, or a takeover blocked by that label; an empty label value holds nothing), since its
 # AdminNetworkPolicy and EgressIP still select that namespace. A labeled namespace no project
-# declares (never a platform namespace), whose project moved to a live namespace and has no errors,
+# declares (never a platform namespace), whose project moved to a ready namespace and has no errors,
 # is released: its ownership labels are removed (prune on, in the ConfigurationPolicy of the
 # project's mode) or the removal is reported (prune off, inform). With prune on, a candidate goes
 # to the ConfigurationPolicy of its project's mode (an inform project is only reported), and an
@@ -176,20 +194,29 @@
 # monitoring peer, or lift Pod Security, SCC, run-level or scheduling guards) that
 # projectOnboarding.defaults.allowedPlatformKeys does not map to true. An unknown mode is reported and the
 # project renders in inform. The managed cluster adds ownership blocks, which render nothing for the
-# project: a namespace another project owns, or an existing unowned one without adopt: true. A
-# rendered config that cannot be read, or whose projectOnboarding or projectOnboarding.projects key is
-# present but not a map (false and [] included), is reported under the key rendered-config and
-# nothing renders; a readable config with no projects key has no projects, so nothing is reported.
-# Malformed projectOnboarding.defaults fails the hub template for every project. A project
+# project: a namespace another project owns, an existing unowned one without adopt: true, or a
+# generated name taken by an object onboarding does not own (see Ownership of generated names). A
+# rendered config that cannot be read, whose projectOnboarding key is present but not a map, or whose
+# projectOnboarding.projects is missing, null or not a map (false and [] included), is reported under
+# the key rendered-config and nothing renders: the placement only selects clusters labelled
+# project-onboarding: 'true', so a missing key is a broken config, never a request to onboard nothing.
+# An explicit projects: {} is valid and onboards nothing. Malformed projectOnboarding.defaults, or a
+# defaults section that is set but not a map, fails the hub template for every project. These checks
+# read the raw values, so false, [] or '' never pass as an empty map; only a missing key or null
+# counts as unset. The same holds for a project's labels, annotations, groups, quota and limitRange,
+# which are reported and skip only their item. A project
 # name that is not a ConfigMap key is reported under the name with each invalid character replaced
 # by "_". The enforce ConfigurationPolicy writes the ConfigMap while there are errors and deletes it
-# when there are none; the inform one reports the same entries in its test report (see the top of
-# this file), so it is NonCompliant while they stand. Under dry-run the write is only reported,
+# when there are none, but only while it is absent or carries its label
+# autoshift.io/project-onboarding-status: "true"; the same holds for shard 0's removal of the single
+# policy's project-onboarding-status. One without its label is left alone and reported under the
+# key project-onboarding.status; the inform one reports the same entries in its test report (see
+# the top of this file), so it is NonCompliant while they stand. Under dry-run the write is only reported,
 # which is NonCompliant too. Errors of
 # projects whose names map to one status key are concatenated.
 #
 # Size, per shard Policy: a base for the static template text ($sizeBase, measured on an empty shard:
-# 11688 bytes at most), then the hub estimates each
+# 14115 bytes at most), then the hub estimates each
 # project's share of the resolved Policy ($est, kept at or above the measured size for every
 # feature; invalid projects pay their status $overhead) and keeps the total below $sizeLimit (1 MiB, well under the 1.5 MiB etcd
 # request limit). Status messages are cut to 400 characters. The total is published as a comment.
@@ -221,16 +248,20 @@ object-templates-raw: |
   {{hub- $cfgErr = printf "cannot read %s.rendered-config" .ManagedClusterName hub}}
   {{hub- else if not (or (kindIs "map" $poRaw) (kindIs "invalid" $poRaw)) hub}}
   {{hub- $cfgErr = printf "config.projectOnboarding in %s.rendered-config is not a map" .ManagedClusterName hub}}
-  {{hub- else if not (or (kindIs "map" $projVal) (kindIs "invalid" $projVal)) hub}}
+  {{hub- else if kindIs "invalid" $projVal hub}}
+  {{hub- $cfgErr = printf "config.projectOnboarding.projects is not set in %s.rendered-config, so no project is onboarded on this cluster; set it to the projects, or to {} for none" .ManagedClusterName hub}}
+  {{hub- else if not (kindIs "map" $projVal) hub}}
   {{hub- $cfgErr = printf "config.projectOnboarding.projects in %s.rendered-config is not a map" .ManagedClusterName hub}}
   {{hub- end hub}}
   {{hub- $projects := dict hub}}
   {{hub- if kindIs "map" $projVal hub}}{{hub- $projects = $projVal hub}}{{hub- end hub}}
-  {{hub- $defaultsRaw := index $po "defaults" | default dict hub}}
+  {{hub- $defaultsRaw := index $po "defaults" hub}}
+  {{hub- if kindIs "invalid" $defaultsRaw hub}}{{hub- $defaultsRaw = dict hub}}{{hub- end hub}}
   {{hub- if not (kindIs "map" $defaultsRaw) hub}}{{hub- fail "config.projectOnboarding.defaults is not a map" hub}}{{hub- end hub}}
   {{hub- $defaults := dict hub}}
   {{hub- range $section := list "labels" "annotations" "groups" "roles" "sizes" "networkProfiles" "allowedPlatformKeys" hub}}
-  {{hub- $sectionCfg := index $defaultsRaw $section | default dict hub}}
+  {{hub- $sectionCfg := index $defaultsRaw $section hub}}
+  {{hub- if kindIs "invalid" $sectionCfg hub}}{{hub- $sectionCfg = dict hub}}{{hub- end hub}}
   {{hub- if not (kindIs "map" $sectionCfg) hub}}{{hub- fail (printf "config.projectOnboarding.defaults.%s is not a map" $section) hub}}{{hub- end hub}}
   {{hub- $_ := set $defaults $section $sectionCfg hub}}
   {{hub- end hub}}
@@ -654,7 +685,7 @@ object-templates-raw: |
   {{hub- $adminMsgs := list hub}}
   {{hub- range $m := $adminErrs hub}}{{hub- $adminMsgs = append $adminMsgs (ternary (printf "%s..." (trunc 400 $m)) $m (gt (len $m) 400)) hub}}{{hub- end hub}}
   {{hub- $sizeLimit := 1048576 hub}}
-  {{hub- $sizeBase := 11950 hub}}
+  {{hub- $sizeBase := 14400 hub}}
   {{hub- $sizeTotal := add $sizeBase (mul 2 (len (toJson $adminANPs))) (mul 4 (len (toJson $adminMsgs))) (mul 2 (len (join "," $otherNs))) hub}}
   {{hub- $sizeAll := $sizeTotal hub}}
   {{hub- $sizeSkipped := list hub}}
@@ -663,7 +694,8 @@ object-templates-raw: |
   {{hub- if gt $sizeTotal $sizeHard hub}}{{hub- fail (printf "project-onboarding: the policy would be about %d bytes from the projectOnboarding.defaults.adminNetworkPolicies errors alone, over the %d bytes that keep it below the etcd request limit; fix projectOnboarding.defaults.adminNetworkPolicies (see Size limit in the project-onboarding README)" $sizeTotal $sizeHard) hub}}{{hub- end hub}}
   {{hub- if gt (len $projects) $maxProjects hub}}{{hub- fail (printf "project-onboarding: %d projects declared, maximum %d per cluster; split the projects across clusters (see Size limit in the project-onboarding README)" (len $projects) $maxProjects) hub}}{{hub- end hub}}
   {{- $rendered := dict }}
-  {{- $live := dict }}
+  {{- $ready := dict }}
+  {{- $waiting := dict }}
   {{- $status := dict }}
   {{- $stale := dict }}
   {{- $labeledNs := (lookup "v1" "Namespace" "" "" "autoshift.io/project").items | default list }}
@@ -777,7 +809,8 @@ object-templates-raw: |
   {{hub- $appliedKeys := list hub}}
   {{hub- $keyFrom := dict "labels" (dict) "annotations" (dict) hub}}
   {{hub- range $kind := list "labels" "annotations" hub}}
-  {{hub- $own := dig $kind dict $fields | default dict hub}}
+  {{hub- $own := index $fields $kind hub}}
+  {{hub- if kindIs "invalid" $own hub}}{{hub- $own = dict hub}}{{hub- end hub}}
   {{hub- if not (kindIs "map" $own) hub}}{{hub- $errs = append $errs (printf "%s is not a map" $kind) hub}}{{hub- $own = dict hub}}{{hub- end hub}}
   {{hub- $base := index $defaults $kind hub}}
   {{hub- range $entryName := keys $base $own | uniq | sortAlpha hub}}
@@ -871,7 +904,8 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- $_ := set $applied.annotations "autoshift.io/project-labels" (join "," (sortAlpha $appliedKeys)) hub}}
-  {{hub- $ownGroups := dig "groups" dict $fields | default dict hub}}
+  {{hub- $ownGroups := index $fields "groups" hub}}
+  {{hub- if kindIs "invalid" $ownGroups hub}}{{hub- $ownGroups = dict hub}}{{hub- end hub}}
   {{hub- if not (kindIs "map" $ownGroups) hub}}{{hub- $errs = append $errs "groups is not a map" hub}}{{hub- $ownGroups = dict hub}}{{hub- end hub}}
   {{hub- $roles := mergeOverwrite (dict "admin" "admin" "write" "edit" "read" "view") (deepCopy $defaults.roles) hub}}
   {{hub- $groups := dict hub}}
@@ -929,8 +963,10 @@ object-templates-raw: |
   {{hub- $valid = false hub}}
   {{hub- else hub}}
   {{hub- range $section := list "quota" "limitRange" hub}}
-  {{hub- $base := index (index $defaults.sizes $size) $section | default dict hub}}
-  {{hub- $own := dig $section dict $fields | default dict hub}}
+  {{hub- $base := index (index $defaults.sizes $size) $section hub}}
+  {{hub- if kindIs "invalid" $base hub}}{{hub- $base = dict hub}}{{hub- end hub}}
+  {{hub- $own := index $fields $section hub}}
+  {{hub- if kindIs "invalid" $own hub}}{{hub- $own = dict hub}}{{hub- end hub}}
   {{hub- if not (kindIs "map" $base) hub}}{{hub- $errs = append $errs (printf "projectOnboarding.defaults.sizes.%s.%s is not a map" $size $section) hub}}{{hub- $_ := set $sizedOk $section false hub}}{{hub- end hub}}
   {{hub- if not (kindIs "map" $own) hub}}{{hub- $errs = append $errs (printf "%s is not a map" $section) hub}}{{hub- $_ := set $sizedOk $section false hub}}{{hub- $own = dict hub}}{{hub- end hub}}
   {{hub- $ownSet := dict hub}}
@@ -1540,9 +1576,67 @@ object-templates-raw: |
   {{- if $blocked }}
   {{- $_ := set $status {{hub $statusKey | toJson hub}} (append (index $status {{hub $statusKey | toJson hub}} | default list) $blocked) }}
   {{- end }}
+  {{- $nsReady := false }}
+  {{- $foreign := list }}
+  {{- $foreignCluster := list }}
+  {{- if and $render $existing }}
+  {{hub- $rbWant := dict hub}}
+  {{hub- range $level, $g := $groups hub}}{{hub- $_ := set $rbWant $level (dict "role" (index $roles $level | printf "%v") "group" $g) hub}}{{hub- end hub}}
+  {{- $nsReady = eq (printf "%v" (index (default dict $existing.metadata.labels) "autoshift.io/project")) {{hub $name | toJson hub}} }}
+  {{- range $level, $w := {{hub $rbWant | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $liveRB := lookup "rbac.authorization.k8s.io/v1" "RoleBinding" {{hub $namespace | toJson hub}} (printf "autoshift-%s" $level) }}
+  {{- $owned := eq (printf "%v" (index (dig "metadata" "labels" dict $liveRB) "autoshift.io/managed-by" | default "")) "project-onboarding" }}
+  {{- if and $liveRB (not $owned) }}{{- $foreign = append $foreign (printf "RoleBinding autoshift-%s" $level) }}{{- end }}
+  {{- $subs := index $liveRB "subjects" | default list }}
+  {{- $rbOk := and $liveRB $owned (eq (printf "%v" (dig "roleRef" "kind" "" $liveRB)) "ClusterRole") (eq (printf "%v" (dig "roleRef" "name" "" $liveRB)) $w.role) (eq (len $subs) 1) }}
+  {{- if $rbOk }}{{- $s := index $subs 0 }}{{- $rbOk = and (kindIs "map" $s) (eq (printf "%v" (index $s "kind")) "Group") (eq (printf "%v" (index $s "name")) $w.group) }}{{- end }}
+  {{- if not $rbOk }}{{- $nsReady = false }}{{- end }}
+  {{- end }}
+  {{hub- $nsObjs := list hub}}
+  {{hub- if and $sizedOk.quota $sized.quota hub}}{{hub- $nsObjs = append $nsObjs (dict "v" "v1" "k" "ResourceQuota" "n" "autoshift-quota") hub}}{{hub- end hub}}
+  {{hub- if and $sizedOk.limitRange $sized.limitRange hub}}{{hub- $nsObjs = append $nsObjs (dict "v" "v1" "k" "LimitRange" "n" "autoshift-limits") hub}}{{hub- end hub}}
+  {{hub- if not $netErrs hub}}
+  {{hub- range $dir := list "ingress" "egress" hub}}{{hub- if index $netDeny $dir hub}}{{hub- $nsObjs = append $nsObjs (dict "v" "networking.k8s.io/v1" "k" "NetworkPolicy" "n" (printf "autoshift-default-deny-%s" $dir)) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- range $r := $netPolicies hub}}{{hub- $nsObjs = append $nsObjs (dict "v" "networking.k8s.io/v1" "k" "NetworkPolicy" "n" (printf "autoshift-rule-%s" $r.name)) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{- range $o := {{hub $nsObjs | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{- $liveO := lookup $o.v $o.k {{hub $namespace | toJson hub}} $o.n }}
+  {{- if and $liveO (ne (printf "%v" (index (dig "metadata" "labels" dict $liveO) "autoshift.io/managed-by" | default "")) "project-onboarding") }}{{- $foreign = append $foreign (printf "%s %s" $o.k $o.n) }}{{- end }}
+  {{- end }}
+  {{hub- if and $efNeeded (not $netErrs) hub}}
+  {{- if $efCrd }}
+  {{- $liveEF := lookup "k8s.ovn.org/v1" "EgressFirewall" {{hub $namespace | toJson hub}} "default" }}
+  {{- if and $liveEF (ne (printf "%v" (index (dig "metadata" "labels" dict $liveEF) "autoshift.io/managed-by" | default "")) "project-onboarding") }}{{- $foreign = append $foreign "EgressFirewall default" }}{{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{- end }}
+  {{- if $render }}
+  {{hub- if and $anpNeeded (not $netErrs) hub}}
+  {{- if $anpCrd }}
+  {{- $liveANP := lookup "policy.networking.k8s.io/v1alpha1" "AdminNetworkPolicy" "" {{hub printf "autoshift-project-%s" $name | toJson hub}} }}
+  {{- if and $liveANP (ne (printf "%v" (index (dig "metadata" "labels" dict $liveANP) "autoshift.io/managed-by" | default "")) "project-onboarding") }}{{- $foreignCluster = append $foreignCluster (printf "AdminNetworkPolicy %v" (dig "metadata" "name" "" $liveANP)) }}{{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- if $eipIPs hub}}
+  {{- if $eipCrd }}
+  {{- $liveEIP := lookup "k8s.ovn.org/v1" "EgressIP" "" {{hub printf "autoshift-%s" $name | toJson hub}} }}
+  {{- if and $liveEIP (ne (printf "%v" (index (dig "metadata" "labels" dict $liveEIP) "autoshift.io/managed-by" | default "")) "project-onboarding") }}{{- $foreignCluster = append $foreignCluster (printf "EgressIP %v" (dig "metadata" "name" "" $liveEIP)) }}{{- end }}
+  {{- end }}
+  {{hub- end hub}}
+  {{- end }}
+  {{- if or $foreign $foreignCluster }}
+  {{- $render = false }}
+  {{- $nsReady = false }}
+  {{- if $foreign }}
+  {{- $_ := set $status {{hub $statusKey | toJson hub}} (append (index $status {{hub $statusKey | toJson hub}} | default list) (printf "%s in namespace %s already %s and %s not managed by project onboarding (no label autoshift.io/managed-by: project-onboarding), so nothing of the project is applied; to hand an object over, label it autoshift.io/managed-by=project-onboarding" (join ", " $foreign) {{hub $namespace | toJson hub}} (ternary "exists" "exist" (eq (len $foreign) 1)) (ternary "is" "are" (eq (len $foreign) 1)))) }}
+  {{- end }}
+  {{- if $foreignCluster }}
+  {{- $_ := set $status {{hub $statusKey | toJson hub}} (append (index $status {{hub $statusKey | toJson hub}} | default list) (printf "the cluster-scoped %s already %s and %s not managed by project onboarding (no label autoshift.io/managed-by: project-onboarding), so nothing of the project is applied; to hand an object over, label it autoshift.io/managed-by=project-onboarding" (join ", " $foreignCluster) (ternary "exists" "exist" (eq (len $foreignCluster) 1)) (ternary "is" "are" (eq (len $foreignCluster) 1)))) }}
+  {{- end }}
+  {{- end }}
   {{- if $render }}
   {{- $_ := set $rendered {{hub $namespace | toJson hub}} true }}
-  {{- if $existing }}{{- $_ := set $live {{hub $namespace | toJson hub}} true }}{{- end }}
+  {{- if $nsReady }}{{- $_ := set $ready {{hub $namespace | toJson hub}} true }}{{- end }}
   {{hub- if and $netDeny.egress (not $netErrs) hub}}
   {{- if not $clusterCidrs }}
   {{- $_ := set $status {{hub $statusKey | toJson hub}} (append (index $status {{hub $statusKey | toJson hub}} | default list) "cannot read the cluster and service network CIDRs, so autoshift-default-deny-egress denies all egress") }}
@@ -1919,7 +2013,10 @@ object-templates-raw: |
   {{- $nsName := printf "%v" (dig "metadata" "name" "" $ns) }}
   {{- $nsProject := printf "%v" (dig "metadata" "labels" "autoshift.io/project" "" $ns) }}
   {{- $owner := index $projOwners $nsProject | default dict }}
-  {{- if and $owner (not (hasKey $nsOwners $nsName)) (not (hasKey $otherNs $nsName)) (not (regexMatch {{hub $platformNs | toJson hub}} $nsName)) (eq (printf "%v" $owner.ok) "true") (hasKey $live (printf "%v" $owner.namespace)) }}
+  {{- if and $owner (not (hasKey $nsOwners $nsName)) (not (hasKey $otherNs $nsName)) (not (regexMatch {{hub $platformNs | toJson hub}} $nsName)) (eq (printf "%v" $owner.ok) "true") (hasKey $rendered (printf "%v" $owner.namespace)) (not (hasKey $ready (printf "%v" $owner.namespace))) }}
+  {{- $_ := set $waiting $nsProject (printf "%v" $owner.namespace) }}
+  {{- end }}
+  {{- if and $owner (not (hasKey $nsOwners $nsName)) (not (hasKey $otherNs $nsName)) (not (regexMatch {{hub $platformNs | toJson hub}} $nsName)) (eq (printf "%v" $owner.ok) "true") (hasKey $ready (printf "%v" $owner.namespace)) }}
   {{- $target := ternary (printf "%v" $owner.mode) "inform" {{hub $pruneOn hub}} }}
   {{- if eq $target "{{hub $want hub}}" }}
   {{- $releasedLabels := dict }}
@@ -1972,7 +2069,7 @@ object-templates-raw: |
   {{- if not $eligible }}
   {{- else if $owner }}
   {{- $eligible = and (eq (printf "%v" $owner.ok) "true") (hasKey $rendered (printf "%v" $owner.namespace)) }}
-  {{- if and $objNs (ne $objNs (printf "%v" $owner.namespace)) (not (hasKey $live (printf "%v" $owner.namespace))) }}{{- $eligible = false }}{{- end }}
+  {{- if and $objNs (ne $objNs (printf "%v" $owner.namespace)) (not (hasKey $ready (printf "%v" $owner.namespace))) }}{{- $eligible = false }}{{- if and $objProject (hasKey $rendered (printf "%v" $owner.namespace)) }}{{- $_ := set $waiting $objProject (printf "%v" $owner.namespace) }}{{- end }}{{- end }}
   {{- $target = printf "%v" $owner.mode }}
   {{- else if hasKey $heldBy $objProject }}
   {{- $eligible = false }}
@@ -2000,8 +2097,25 @@ object-templates-raw: |
   {{- end }}
   {{hub- end hub}}
   {{hub- end hub}}
+  {{- range $wp, $wns := $waiting }}
+  {{- $_ := set $status $wp (append (index $status $wp | default list) (printf "waiting for destination objects in %s: the old namespace keeps its objects and labels until %s carries autoshift.io/project=%s and every declared RoleBinding autoshift-<level> is live and matches" $wns $wns $wp)) }}
+  {{- end }}
+  {{- $statusLabel := "autoshift.io/project-onboarding-status" }}
+  {{- $statusCM := lookup "v1" "ConfigMap" "open-cluster-management-agent-addon" "project-onboarding-status-{{hub $shard hub}}" }}
+  {{- $foreignStatus := and $statusCM (ne (printf "%v" (index (dig "metadata" "labels" dict $statusCM) $statusLabel | default "")) "true") }}
+  {{- if $foreignStatus }}
+  {{- $_ := set $status "project-onboarding.status" (append (index $status "project-onboarding.status" | default list) "ConfigMap open-cluster-management-agent-addon/project-onboarding-status-{{hub $shard hub}} exists without the label autoshift.io/project-onboarding-status: true, so project onboarding neither writes nor deletes it and cannot report there; remove it by hand") }}
+  {{- end }}
+  {{hub- if eq $shard 0 hub}}
+  {{- $legacyCM := lookup "v1" "ConfigMap" "open-cluster-management-agent-addon" "project-onboarding-status" }}
+  {{- $foreignLegacy := and $legacyCM (ne (printf "%v" (index (dig "metadata" "labels" dict $legacyCM) $statusLabel | default "")) "true") }}
+  {{- if $foreignLegacy }}
+  {{- $_ := set $status "project-onboarding.status" (append (index $status "project-onboarding.status" | default list) "ConfigMap open-cluster-management-agent-addon/project-onboarding-status exists without the label autoshift.io/project-onboarding-status: true, so project onboarding does not delete it as the status of the earlier single policy; remove it by hand if it is not used") }}
+  {{- end }}
+  {{hub- end hub}}
   {{hub- if eq $want "enforce" hub}}
-  {{- if $status }}
+  {{- if $foreignStatus }}
+  {{- else if $status }}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: v1
@@ -2025,6 +2139,7 @@ object-templates-raw: |
         namespace: open-cluster-management-agent-addon
   {{- end }}
   {{hub- if eq $shard 0 hub}}
+  {{- if not $foreignLegacy }}
   - complianceType: mustnothave
     objectDefinition:
       apiVersion: v1
@@ -2032,6 +2147,7 @@ object-templates-raw: |
       metadata:
         name: project-onboarding-status
         namespace: open-cluster-management-agent-addon
+  {{- end }}
   {{hub- end hub}}
   {{hub- else hub}}
   {{- /* Always one satisfied assertion, so the -test ConfigurationPolicy is never empty: the agent namespace exists, and naming it changes nothing even if the Policy were set to enforce. */}}
