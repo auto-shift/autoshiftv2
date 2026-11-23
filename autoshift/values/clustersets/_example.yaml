@@ -1185,6 +1185,27 @@ hubClusterSets:
       #   versions:
       #     - 'openshift-external-secrets-operator.vX.Y.Z'
       #   startingCSV: 'openshift-external-secrets-operator.vX.Y.Z'
+      # Vertical Pod Autoscaler rules (policy-vpa-rules), placed where both vertical-pod-autoscaler
+      # and vertical-pod-autoscaler-rules are 'true'. A map keyed by VerticalPodAutoscaler name;
+      # clusters add, override or switch off (enabled: false) single rules. updateMode defaults to
+      # Initial, which sizes pods only when they are created.
+      vertical-pod-autoscaler:
+        rules:
+          example-app:
+            namespace: 'example-app'
+            targetRef:
+              apiVersion: 'apps/v1'
+              kind: 'Deployment'
+              name: 'example-app'
+            updateMode: 'Initial'
+            resourcePolicy:
+              containerPolicies:
+                - containerName: '*'
+                  minAllowed:
+                    memory: '128Mi'
+                  maxAllowed:
+                    memory: '1Gi'
+                  controlledValues: 'RequestsAndLimits'
       far:
         # copy (default): policy copies FAR-shaped Secrets (--username/--password) from
         #                 sharedSecretNamespace into openshift-workload-availability.
@@ -2390,6 +2411,20 @@ hubClusterSets:
       dev-spaces-channel: stable
       dev-spaces-source: redhat-operators
       dev-spaces-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Vertical Pod Autoscaler
+      # =======================================================================
+      # Installs the operator (OwnNamespace only, in openshift-vertical-pod-autoscaler).
+      # vertical-pod-autoscaler-rules places policy-vpa-rules, which creates the
+      # VerticalPodAutoscalers in config.vertical-pod-autoscaler.rules.
+      vertical-pod-autoscaler: 'true'
+      vertical-pod-autoscaler-rules: 'true'
+      vertical-pod-autoscaler-subscription-name: vertical-pod-autoscaler
+      vertical-pod-autoscaler-channel: stable
+      vertical-pod-autoscaler-source: redhat-operators
+      vertical-pod-autoscaler-source-namespace: openshift-marketplace
+      vertical-pod-autoscaler-version: 'vertical-pod-autoscaler.v4.22.0-202611031655'
 
       # =======================================================================
       # Developer Hub

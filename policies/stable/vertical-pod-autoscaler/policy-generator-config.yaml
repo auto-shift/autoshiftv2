@@ -1,0 +1,64 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: vertical-pod-autoscaler
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# The operator-install policy points at manifests/operator-install/, a nested kustomization that
+# renders the shared components/operator-install chart. Add further CRs as new policies[] entries
+# pointing at their own manifests/<dir> (a wildcarded dir picks up drop-in files automatically).
+# Keep placement.yaml OUT of manifests/ (a Placement inside a wildcarded dir would be wrapped in).
+#
+# placementBindingDefaults.name is inert with one policy, but PolicyGenerator requires it as soon as
+# a second policies[] entry binds to the same placement.yaml.
+placementBindingDefaults:
+  name: binding-policy-vertical-pod-autoscaler
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # Consolidate the raw Namespace into one generated ConfigurationPolicy; the first-class
+  # OperatorPolicy stays its own policy-template. Net: one Policy, two policy-templates.
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Placement authored by us (placement.yaml at the dir root, full fidelity); PG includes it and
+  # generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-vpa-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # Readiness: the operator's admission plugin, recommender and updater Deployments are Available.
+  - name: policy-vpa-ready-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-vpa-operator-install
+    customMessage:
+      noncompliant: >-
+        The Vertical Pod Autoscaler Operator has not brought up its admission plugin, recommender and
+        updater (vpa-*-default in openshift-vertical-pod-autoscaler). Check the operator pod and the
+        default VerticalPodAutoscalerController. Without the admission plugin, a VerticalPodAutoscaler
+        in Initial or Auto mode is accepted and changes nothing.
+    manifests:
+      - path: test/vpa-ready.yaml
+  # VerticalPodAutoscaler objects from config.vertical-pod-autoscaler.rules. Placed only where the
+  # vertical-pod-autoscaler-rules label is also set.
+  - name: policy-vpa-rules
+    placement:
+      placementPath: placement-rules.yaml
+    dependencies:
+      - name: policy-vpa-ready-test
+    manifests:
+      - path: manifests/vpa-rules.yaml
