@@ -507,10 +507,25 @@ objects until you remove the old instance:
 
 Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. You may have to increase the number of pods per node in these resource constrained environments.
 
+**Label:**
+
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
-| `master-nodes`                    | bool              | `false`                   |       |
-| `master-max-pods`                 | int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
+| `master-nodes`                    | bool              | `false`                   | Enables the master kubelet override policy |
+
+**Config block** (`config.masterNodes`):
+
+Every field is optional. Set only the settings you want the policy to enforce. When `master-nodes` is `true`, at least one field is required. Clusterset and cluster config deep-merge, so unused keys at the clusterset layer still land on every cluster.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `maxPods` | int | Maximum pods per master node (up to 2500, hardware dependent). Also drives `podsPerCore` when master CPU capacity is known |
+| `autoSizingReserved` | bool | When `true`, lets the kubelet auto-size system and kube reserved resources |
+| `systemReserved.memory` | string | Memory reserved for operating system processes, including etcd (for example `3Gi`) |
+| `systemReserved.cpu` | string | CPU reserved for operating system processes (for example `500m`) |
+| `kubeReserved.memory` | string | Memory reserved for kubelet and CRI-O (for example `1536Mi`) |
+| `kubeReserved.cpu` | string | CPU reserved for kubelet and CRI-O (for example `500m`) |
+| `evictionHard.memoryAvailable` | string | Hard eviction threshold for `memory.available` (for example `500Mi`) |
 
 ### Workload partitioning
 
