@@ -1,8 +1,29 @@
+# AgentServiceConfig for CIM/bare-metal provisioning, with its optional mirror registry ConfigMap.
+#
+# config.acm.provisioning.annotations (optional): annotations for the AgentServiceConfig.
+#
+# config.acm.provisioning.assistedServiceConfig (optional): environment variables for the
+# assisted-service container. They go into the assisted-service-config ConfigMap, and the annotation
+# that makes the operator read it is added here, so neither is applied without the other. The operator
+# owns the assisted-service ConfigMap and overwrites it; this one is read after it, so it wins. The
+# ConfigMap comes first in the list because the operator fails to reconcile the assisted-service
+# Deployment when the annotation names a ConfigMap that does not exist. It has to be in the operator's
+# namespace, multicluster-engine.
+#
+# The ConfigMap is mustonlyhave, not musthave: a ConfigMap merges keys, so a variable removed from
+# values would linger. The AgentServiceConfig is musthave, so an annotation removed from config stays on
+# it, and so do the ConfigMap and its annotation when assistedServiceConfig is removed altogether. Clear
+# those by hand, the annotation before the ConfigMap.
+#
+# Values must be strings: YAML would turn an unquoted true or 1000000 into another type. The Helm
+# validation in autoshift/templates/_validate-cluster-install.tpl reports this for cluster sets and for
+# the clusters AutoShift installs. The checks here cover the merged config, which includes per-cluster
+# overrides on an existing hub that Helm does not validate.
 object-templates-raw: |
   {{hub- $policyNs := .PolicyMetadata.namespace hub}}
-  {{hub- $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $rcData := (index $rcm "data" | default dict) hub}}
-  {{hub- $rcConfig := (index $rcData "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $raw := (fromConfigMap $policyNs (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- if not $raw hub}}{{hub fail (printf "acm-provisioning: ConfigMap %s/%s.rendered-config has no config key" $policyNs .ManagedClusterName) hub}}{{hub- end hub}}
+  {{hub- $rcConfig := ($raw | fromYaml | default dict) hub}}
   {{hub- $disconnected := (index $rcConfig "disconnected" | default dict) hub}}
   {{hub- $prov := (dig "acm" "provisioning" (dict) $rcConfig) hub}}
   {{hub- $provSC := (dig "storageClass" "" $prov) hub}}
@@ -20,6 +41,20 @@ object-templates-raw: |
   {{hub- $provIMG := (dig "imageStorageSize" "" $prov) hub}}
   {{hub- if (empty $provIMG) hub}}
   {{hub- $provIMG = (index .ManagedClusterLabels "autoshift.io/acm-provisioning-image-storage-size" | default "100Gi") hub}}
+  {{hub- end hub}}
+  {{hub- $cmAnnotation := "unsupported.agent-install.openshift.io/assisted-service-configmap" hub}}
+  {{hub- $cmName := "assisted-service-config" hub}}
+  {{hub- $annotations := ((dig "annotations" (dict) $prov) | default dict) hub}}
+  {{hub- $serviceConfig := ((dig "assistedServiceConfig" (dict) $prov) | default dict) hub}}
+  {{hub- range $field, $entries := (dict "annotations" $annotations "assistedServiceConfig" $serviceConfig) hub}}
+  {{hub- if not (hasPrefix "map[" (printf "%T" $entries)) hub}}{{hub fail (printf "config.acm.provisioning.%s must be a map of strings" $field) hub}}{{hub- end hub}}
+  {{hub- range $key, $value := $entries hub}}
+  {{hub- if ne (printf "%T" $value) "string" hub}}{{hub fail (printf "config.acm.provisioning.%s.%s must be a quoted string" $field $key) hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $serviceConfig hub}}
+  {{hub- if ne (dig $cmAnnotation $cmName $annotations) $cmName hub}}{{hub fail (printf "config.acm.provisioning.annotations sets %s to another ConfigMap while assistedServiceConfig is set; remove one" $cmAnnotation) hub}}{{hub- end hub}}
+  {{hub- $annotations = set $annotations $cmAnnotation $cmName hub}}
   {{hub- end hub}}
   {{hub- $mirror := (index $disconnected "mirrorRegistry" | default dict) hub}}
   {{hub- $mirrorHost := (index $mirror "host" | default "") hub}}
@@ -69,12 +104,27 @@ object-templates-raw: |
           {{hub $mirrorCa | autoindent hub}}
         {{hub- end hub}}
   {{hub- end hub}}
+  {{hub- if $serviceConfig hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: {{hub $cmName hub}}
+        namespace: multicluster-engine
+      data:
+        {{hub $serviceConfig | toYaml | autoindent hub}}
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: agent-install.openshift.io/v1beta1
       kind: AgentServiceConfig
       metadata:
         name: agent
+        {{hub- if $annotations hub}}
+        annotations:
+          {{hub $annotations | toYaml | autoindent hub}}
+        {{hub- end hub}}
       spec:
         {{hub- if (gt (len $mirrors) 0) hub}}
         mirrorRegistryRef:

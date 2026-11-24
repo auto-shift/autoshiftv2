@@ -28,6 +28,35 @@ Shared so config.acm.provisioning.osImages and the deprecated disconnected.osIma
   {{- end -}}
 {{- end -}}
 
+{{/*
+Validate acm.provisioning.annotations and acm.provisioning.assistedServiceConfig.
+Called with dict "path" (string prefix for errors) "provisioning" (the acm.provisioning dict).
+Both become string maps on the cluster. An unquoted true or 1000000 would not stay a string.
+*/}}
+{{- define "autoshift.validate-acm-provisioning-maps" -}}
+  {{- $path := .path -}}
+  {{- $provisioning := .provisioning -}}
+  {{- $cmAnnotation := "unsupported.agent-install.openshift.io/assisted-service-configmap" -}}
+  {{- $cmName := "assisted-service-config" -}}
+  {{- range $field := (list "annotations" "assistedServiceConfig") -}}
+    {{- $entries := (index $provisioning $field) -}}
+    {{- if kindIs "map" $entries -}}
+      {{- range $key, $value := $entries -}}
+        {{- if not (kindIs "string" $value) }}
+{{ printf "%s: acm.provisioning.%s.%s must be a quoted string" $path $field $key }}
+        {{- end -}}
+      {{- end -}}
+    {{- else if not (kindIs "invalid" $entries) }}
+{{ printf "%s: acm.provisioning.%s must be a map of strings" $path $field }}
+    {{- end -}}
+  {{- end -}}
+  {{- if and (kindIs "map" $provisioning.annotations) $provisioning.assistedServiceConfig -}}
+    {{- if ne (toString (dig $cmAnnotation $cmName $provisioning.annotations)) $cmName }}
+{{ printf "%s: acm.provisioning.annotations sets %s to another ConfigMap while assistedServiceConfig is set; remove one" $path $cmAnnotation }}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
 {{- define "autoshift.validate-disconnected" -}}
   {{- $path := .path -}}
   {{- $disconnected := .config -}}
@@ -348,6 +377,15 @@ Collects all errors and reports them together.
         {{- range splitList "\n" $acmErrStr }}
           {{- $errors = append $errors . }}
         {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{/* Validate acm.provisioning.annotations and acm.provisioning.assistedServiceConfig */}}
+    {{- $acmProvisioning := (dig "config" "acm" "provisioning" (dict) $cluster) | default dict }}
+    {{- $acmMapsErrStr := (include "autoshift.validate-acm-provisioning-maps" (dict "path" $path "provisioning" $acmProvisioning)) | trim }}
+    {{- if $acmMapsErrStr }}
+      {{- range splitList "\n" $acmMapsErrStr }}
+        {{- $errors = append $errors . }}
       {{- end }}
     {{- end }}
 
@@ -905,6 +943,15 @@ Collects all errors and reports them together.
         {{- range splitList "\n" $csAcmErrStr }}
           {{- $errors = append $errors . }}
         {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{/* Validate acm.provisioning.annotations and acm.provisioning.assistedServiceConfig */}}
+    {{- $csAcmProvisioning := (dig "acm" "provisioning" (dict) $csConfig) | default dict }}
+    {{- $csAcmMapsErrStr := (include "autoshift.validate-acm-provisioning-maps" (dict "path" $csPath "provisioning" $csAcmProvisioning)) | trim }}
+    {{- if $csAcmMapsErrStr }}
+      {{- range splitList "\n" $csAcmMapsErrStr }}
+        {{- $errors = append $errors . }}
       {{- end }}
     {{- end }}
 
