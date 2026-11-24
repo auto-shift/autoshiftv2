@@ -1,7 +1,8 @@
 # Do the configured Namespaces and RoleBindings exist on the cluster?
 #
-# inform-only, musthave: reports a Namespace that is missing or lacks the labels policy-project-onboarding
-# sets, and a RoleBinding that is missing or binds a different ClusterRole or other subjects.
+# inform-only: reports a Namespace that is missing or lacks the labels policy-project-onboarding sets
+# (musthave), and a RoleBinding that is missing or binds a different ClusterRole, or subjects other
+# than exactly the configured ones (mustonlyhave, as the enforcing policy).
 # It changes nothing. A separate policy, because a root remediationAction overrides its children, so
 # an assertion bundled inside the enforcing policy would enforce.
 object-templates-raw: |
@@ -28,7 +29,7 @@ object-templates-raw: |
   {{hub- range $u := ($rb.users | default list) hub}}
   {{hub- $subjects = append $subjects (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "User" "name" $u) hub}}
   {{hub- end hub}}
-  - complianceType: musthave
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: rbac.authorization.k8s.io/v1
       kind: RoleBinding

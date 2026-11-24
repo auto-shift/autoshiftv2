@@ -37,7 +37,7 @@ fields are skipped rather than guessed. Format and type checks still run.
 {{- $labelValue := "^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$" }}
 {{- $reservedNamespace := "^(default|openshift|kube-.*|openshift-.*|open-cluster-management.*)$" }}
 {{- $reservedLabelPrefix := "^((.*\\.)?autoshift\\.io|k8s\\.ovn\\.org|kubernetes\\.io|k8s\\.io|openshift\\.io)$" }}
-{{- $clusterRoleName := "^[a-z0-9]([-a-z0-9.:]*[a-z0-9])?$" }}
+{{- $clusterRoleName := "^[^/%{}\\s]+$" }}
 {{- $subjectName := "^[^/%{}\\s]([^/%{}]*[^/%{}\\s])?$" }}
 {{- $projectKeys := list "displayName" "description" "labels" "roleBindings" "udn" }}
 {{- $bindingKeys := list "clusterRole" "groups" "users" }}
@@ -60,6 +60,37 @@ fields are skipped rather than guessed. Format and type checks still run.
     {{- end }}
   {{- end }}
   {{- if not $typesOk }}{{- continue }}{{- end }}
+  {{- /* merge fills an empty value from a lower layer, so an empty value cannot clear an inherited one */}}
+  {{- range $i, $layer := $t.layers }}
+    {{- $paths := list }}
+    {{- range $name, $p := (dig "projectOnboarding" "projects" (dict) $layer | default dict) }}
+      {{- if not (kindIs "map" $p) }}{{- continue }}{{- end }}
+      {{- range $f := list "displayName" "description" "udn" }}
+        {{- if hasKey $p $f }}{{- $paths = append $paths (list $name $f) }}{{- end }}
+      {{- end }}
+      {{- if kindIs "map" $p.labels }}
+        {{- range $key, $_ := $p.labels }}{{- $paths = append $paths (list $name "labels" $key) }}{{- end }}
+      {{- end }}
+      {{- if kindIs "map" $p.roleBindings }}
+        {{- range $bname, $rb := $p.roleBindings }}
+          {{- if not (kindIs "map" $rb) }}{{- continue }}{{- end }}
+          {{- range $f := $bindingKeys }}
+            {{- if hasKey $rb $f }}{{- $paths = append $paths (list $name "roleBindings" $bname $f) }}{{- end }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- range $path := $paths }}
+      {{- $full := concat (list "projectOnboarding" "projects") $path }}
+      {{- if include "autoshift.project-onboarding.non-empty-at" (dict "root" $layer "path" $full) }}{{- continue }}{{- end }}
+      {{- range $lower := slice $t.layers (add1 $i) }}
+        {{- if include "autoshift.project-onboarding.non-empty-at" (dict "root" $lower "path" $full) }}
+          {{- $errors = append $errors (printf "%s: config.%s is empty but a lower layer sets it, and the merge keeps the inherited value; an empty value cannot clear it, so remove the entry from the lower layer instead" $t.where (join "." $full)) }}
+          {{- break }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
   {{- range $key, $_ := $merged }}
     {{- if ne $key "projects" }}
       {{- $errors = append $errors (printf "%s: config.projectOnboarding.%s is not a recognized field (valid: projects)" $t.where $key) }}
@@ -150,7 +181,7 @@ fields are skipped rather than guessed. Format and type checks still run.
         {{- if $t.complete }}
           {{- $errors = append $errors (printf "%s.clusterRole is required: the name of an existing ClusterRole, such as admin, edit or view" $bat) }}
         {{- end }}
-      {{- else if or (not (kindIs "string" $role)) (gt (len (toString $role)) 253) (not (regexMatch $clusterRoleName (toString $role))) }}
+      {{- else if or (not (kindIs "string" $role)) (gt (len (toString $role)) 253) (not (regexMatch $clusterRoleName (toString $role))) (has (toString $role) (list "." "..")) }}
         {{- $errors = append $errors (printf "%s.clusterRole is not a valid ClusterRole name" $bat) }}
       {{- end }}
       {{- $subjects := 0 }}
@@ -181,4 +212,18 @@ fields are skipped rather than guessed. Format and type checks still run.
 {{- if gt (len $errors) 0 }}
   {{- fail (printf "\n\nProject onboarding validation failed (%d errors):\n  - %s\n\nSee policies/stable/project-onboarding/README.md for the configuration reference.\n" (len $errors) (join "\n  - " (uniq $errors))) }}
 {{- end }}
+{{- end -}}
+
+{{/* Prints "true" when .path walks .root through maps to a non-empty value. */}}
+{{- define "autoshift.project-onboarding.non-empty-at" -}}
+{{- $cur := .root }}
+{{- $found := true }}
+{{- range $key := .path }}
+  {{- if and $found (kindIs "map" $cur) (hasKey $cur $key) }}
+    {{- $cur = index $cur $key }}
+  {{- else }}
+    {{- $found = false }}
+  {{- end }}
+{{- end }}
+{{- if and $found (not (empty $cur)) }}true{{- end }}
 {{- end -}}

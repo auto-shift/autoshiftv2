@@ -59,10 +59,15 @@ Projects and bindings are maps keyed by name, so a cluster can add a project, a 
 to what its clusterset declares without restating the rest. The rendered-config merge is a deep
 merge of maps.
 
-Groups and users are lists, because the merge replaces a list whole. A cluster that restates
-`groups` for a binding gets exactly its own list, which is what revoking access needs. A map of
-`name: true` would look more merge friendly, but the merge cannot override an inherited `true` with
-`false`, so a group could never be removed at a lower level.
+Groups and users are lists, because the merge replaces a non-empty list whole. A cluster that
+restates `groups` for a binding gets exactly its own list, which is what revoking access needs. A
+map of `name: true` would look more merge friendly, but the merge cannot override an inherited
+`true` with `false`, so a group could never be removed at a lower level.
+
+The merge treats an empty value as unset and fills it from the layer below. An empty `groups: []`,
+`clusterRole: ''` or label value therefore cannot clear what a clusterset or the global config sets,
+and the validation rejects one that tries. Layers add to each other: to remove an inherited entry,
+remove it from the layer that declares it.
 
 ## Validation
 
