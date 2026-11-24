@@ -1059,6 +1059,29 @@ Move each to the field shown.
 | `dns-tolerations`                 | bool              |                           | If set, applies DNS operator tolerations for specialized node configurations |
 | `dns-node-placement`              | string            |                           | Node placement configuration for DNS pods |
 
+### Project onboarding
+
+Creates project Namespaces with their labels, RoleBindings to existing ClusterRoles, and optional
+membership of a primary user-defined network by label. Projects are declared under
+`config.projectOnboarding.projects`, keyed by Namespace name, and validated when the `autoshift`
+chart renders. See `policies/stable/project-onboarding/README.md` for the full reference and a
+`ClusterUserDefinedNetwork` example.
+
+| Variable | Type | Default Value | Notes |
+|----------|------|---------------|-------|
+| `project-onboarding` | bool | `false` | Enables the policy. Requires at least one entry in `config.projectOnboarding.projects` |
+
+| Config key | Type | Notes |
+|------------|------|-------|
+| `projectOnboarding.projects.<name>` | map | Namespace name, a DNS-1123 label. Platform namespaces such as `default`, `kube-*` and `openshift-*` are refused |
+| `projectOnboarding.projects.<name>.displayName` | string | Optional `openshift.io/display-name` annotation |
+| `projectOnboarding.projects.<name>.description` | string | Optional `openshift.io/description` annotation |
+| `projectOnboarding.projects.<name>.labels` | map | Namespace labels with string values. The `autoshift.io`, `k8s.ovn.org`, `kubernetes.io`, `k8s.io` and `openshift.io` prefixes are reserved |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.clusterRole` | string | Required. An existing ClusterRole; the RoleBinding is named `autoshift-<binding>` |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.groups` | list | Group subjects. At least one group or user per binding |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.users` | list | User subjects |
+| `projectOnboarding.projects.<name>.udn` | string | Primary `ClusterUserDefinedNetwork` to join, by the label `autoshift.io/udn`. Takes effect only on a newly created Namespace |
+
 ### Kubernetes NMState Operator
 
 The Kubernetes NMState Operator declaratively configures Red Hat CoreOS network settings including bonds, virtual local area networks, static routes, and DNS. Network configuration is defined through structured YAML under `config.networking` in clusterset or cluster values files.
