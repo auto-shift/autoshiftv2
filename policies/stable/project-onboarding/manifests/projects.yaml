@@ -196,9 +196,9 @@
 # project's mode) or the removal is reported (prune off, inform). With prune on, a candidate goes
 # to the ConfigurationPolicy of its project's mode (an inform project is only reported), and an
 # object of no project to the enforce one. With prune off, every candidate goes to the inform one.
-# An object whose autoshift.io/project label names an entry that is not a map ($malformed, found on
-# the hub for every shard) is never a candidate in any shard, also in a namespace another project
-# declares: that project is in error. No sweep runs when the rendered config cannot be read or has
+# An object whose autoshift.io/project label, or the project in its EgressIP or AdminNetworkPolicy
+# name, names an entry that is not a map ($malformed, found on the hub for every shard) is never a
+# candidate in any shard, also in a namespace another project declares: that project is in error. No sweep runs when the rendered config cannot be read or has
 # no projects map, because the hub template fails first (an explicit empty map makes everything a
 # candidate). Namespaces are never pruned. An admin
 # AdminNetworkPolicy (autoshift-admin-*) belongs to no project, and while the admin tier is in error
@@ -2111,7 +2111,8 @@ object-templates-raw: |
   {{- range $obj := $items }}
   {{- $objNs := printf "%v" (dig "metadata" "namespace" "" $obj) }}
   {{- $objName := printf "%v" (dig "metadata" "name" "" $obj) }}
-  {{- $objProject := printf "%v" (dig "metadata" "labels" "autoshift.io/project" "" $obj) }}
+  {{- $objLabel := printf "%v" (dig "metadata" "labels" "autoshift.io/project" "" $obj) }}
+  {{- $objProject := $objLabel }}
   {{- if and (eq $kind.kind "EgressIP") (hasPrefix "autoshift-" $objName) }}{{- $objProject = substr 10 (len $objName) $objName }}{{- end }}
   {{- if and (eq $kind.kind "AdminNetworkPolicy") (hasPrefix "autoshift-project-" $objName) }}{{- $objProject = substr 18 (len $objName) $objName }}{{- end }}
   {{- if and (eq $kind.kind "AdminNetworkPolicy") (hasPrefix "autoshift-admin-" $objName) }}{{- $objProject = "" }}{{- end }}
@@ -2139,7 +2140,7 @@ object-templates-raw: |
   {{- else if hasKey $heldBy $objProject }}
   {{- $eligible = false }}
   {{- end }}
-  {{- if hasKey $malformed $objProject }}{{- $eligible = false }}{{- end }}
+  {{- if or (hasKey $malformed $objProject) (hasKey $malformed $objLabel) }}{{- $eligible = false }}{{- end }}
   {{- if not {{hub $pruneOn hub}} }}{{- $target = "inform" }}{{- end }}
   {{hub- if $adminErrs hub}}
   {{- if and (eq $kind.kind "AdminNetworkPolicy") (hasPrefix "autoshift-admin-" $objName) }}{{- $eligible = false }}{{- end }}
