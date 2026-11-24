@@ -1,0 +1,387 @@
+# The object store the hub backups are written to, and the OADP DataProtectionApplication that
+# points Velero at it. Both sides of an active/passive pair get this: the standby reads the same
+# bucket the active hub writes.
+#
+# WHERE EACH HALF RUNS. Hub templates are resolved by one controller on the hub, which substitutes
+# them into the policy text; the resolved document is then shipped to the target cluster, where the
+# config-policy-controller evaluates the remaining plain templates locally. So each half belongs
+# where its data is:
+#   hub   config.acm-failover, read from <cluster>.rendered-config in the policy namespace. A target
+#         cluster cannot see that ConfigMap. Every backend except obc is pure configuration, so its
+#         whole DataProtectionApplication is emitted here.
+#   local the ObjectBucketClaim, its generated Secret and the service-CA bundle. Those live on the
+#         TARGET cluster, which in a hub-of-hubs is not the cluster that placed the policy. Being
+#         local is also what makes evaluationInterval: watch re-evaluate when the claim binds.
+# Hub values are written straight into the YAML at the point of use. Never hoist one into a local
+# variable through a quoted string literal: a map's quotes and a multi-line value's newlines both
+# break the enclosing literal.
+#
+# config.acm-failover.storage.type names the object store, and the Velero provider and plugin follow:
+#   s3    Amazon Simple Storage Service, or ANY S3-compatible store reached through
+#         storage.endpoint: NetApp StorageGRID, Pure Storage FlashBlade, Dell ECS, MinIO,
+#         Ceph RADOS Gateway, Wasabi. Velero provider aws.
+#   azure Azure Blob Storage. Velero provider azure. Needs storage.azure.
+#   gcp   Google Cloud Storage. Velero provider gcp.
+#   obc   an ObjectBucketClaim against the local ODF NooBaa, which is S3, so provider aws.
+#         Lab and sandbox only: a bucket that lives on the hub cannot survive the hub, which is
+#         the exact failure this policy exists to cover.
+#
+# Enumerating vendors would mean predicting each one's quirks, so it is deliberately not done.
+# storage.config is a free-form map merged LAST into the Velero config, and storage.provider and
+# storage.plugins override the derived values, so an appliance nobody here has seen is still
+# configurable from values alone. The common case: some S3-compatible stores reject Velero's
+# newer checksum headers and need checksumAlgorithm set to an empty string.
+#
+# Credentials are never in values. Every backend except obc reads a Secret created out of band and
+# named through configSecretRef; obc derives its own from the claim.
+object-templates-raw: |
+  # INDENTATION ANCHOR — every directive below sits at this indent. A shallower trim marker eats
+  # past the newline into the previous line and produces invalid YAML.
+  {{hub- $rcmRaw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- if (empty $rcmRaw) hub}}
+  {{hub- fail (printf "acm-failover: ConfigMap %s.rendered-config in %s has no config key, so the backup storage cannot be configured" .ManagedClusterName .PolicyMetadata.namespace) hub}}
+  {{hub- end hub}}
+  {{hub- $rcmConfig := ($rcmRaw | fromYaml | default dict) hub}}
+  {{hub- $bk := (index $rcmConfig "acm-failover" | default dict) hub}}
+  # The downstream fork nests the same settings under config.acm.failover. They are read when
+  # config.acm-failover is absent, so its values files keep working unchanged; config.acm-failover
+  # wins where both exist.
+  {{hub- if (empty $bk) hub}}
+  {{hub- $fo := (dig "acm" "failover" (dict) $rcmConfig) hub}}
+  {{hub- if not (empty $fo) hub}}
+  {{hub- $bk = (dict
+        "storage" (dict
+          "type" "s3"
+          "sourceSecretRef" (dict "name" (index $fo "secretName" | default "") "namespace" (index $fo "secretNamespace" | default ""))
+          "region" (index $fo "region" | default "us-east-1")
+          "prefix" (index $fo "prefix" | default "velero")
+          "profile" "backupStorage")
+        "active" (dict
+          "veleroSchedule" (index $fo "schedule" | default "0 */2 * * *")
+          "veleroTtl" (index $fo "veleroTtl" | default "120h"))
+        "passive" (dict "scope" "hive-secrets")) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $store := (index $bk "storage" | default dict) hub}}
+  {{hub- $credRef := (index $store "configSecretRef" | default dict) hub}}
+  {{hub- $azure := (index $store "azure" | default dict) hub}}
+  {{hub- $caRef := (index $store "caRef" | default dict) hub}}
+  {{hub- $type := (index $store "type" | default "s3") hub}}
+  {{hub- $prefix := (index $store "prefix" | default "") hub}}
+  {{hub- $credName := (index $credRef "name" | default "cloud-credentials") hub}}
+  {{hub- $credKey := (index $credRef "key" | default "cloud") hub}}
+  {{hub- $srcRef := (index $store "sourceSecretRef" | default dict) hub}}
+  {{hub- $srcName := (index $srcRef "name" | default "") hub}}
+  {{hub- $srcNs := (index $srcRef "namespace" | default .PolicyMetadata.namespace) hub}}
+  {{hub- $profile := (index $store "profile" | default "") hub}}
+  {{hub- $sharedCa := (index $rcmConfig "user-ca-bundle" | default "") hub}}
+  {{hub- if not (has $type (list "s3" "obc" "azure" "gcp")) hub}}
+  {{hub- fail (printf "acm-failover: config.acm-failover.storage.type must be 's3', 'obc', 'azure' or 'gcp', got %q. For an S3-compatible appliance use 's3' with storage.endpoint." $type) hub}}
+  {{hub- end hub}}
+  {{- /* Only the REFERENCE is resolved on the hub; the bundle itself is read on the target, the
+         same cluster whose Velero opens the credentials Secret. Both are trust material for one
+         endpoint, so both are provisioned together in open-cluster-management-backup on each hub.
+         Reading the bundle on the hub instead would look on the cluster that PLACED the policy,
+         which in a hub-of-hubs is a different cluster, and would silently render no caCert. */}}
+  {{hub- $caNs := (index $caRef "namespace" | default "open-cluster-management-backup") hub}}
+  {{hub- $caName := (index $caRef "name" | default "") hub}}
+  {{hub- $caKey := (index $caRef "key" | default "ca-bundle.crt") hub}}
+  {{hub- $provider := $type hub}}
+  {{hub- if has $type (list "s3" "obc") hub}}
+  {{hub- $provider = "aws" hub}}
+  {{hub- end hub}}
+  {{hub- if (index $store "provider" | default "") hub}}
+  {{hub- $provider = (index $store "provider") hub}}
+  {{hub- end hub}}
+  {{hub- $plugins := (list "openshift" $provider) hub}}
+  # kubevirt, hypershift and nodeAgent default to on. `default true` cannot be used for them: Sprig
+  # treats false as empty, so it would turn an explicit false back into true.
+  {{hub- if not (and (hasKey $store "kubevirt") (eq (printf "%v" (index $store "kubevirt")) "false")) hub}}
+  {{hub- $plugins = append $plugins "kubevirt" hub}}
+  {{hub- end hub}}
+  {{hub- if not (and (hasKey $store "hypershift") (eq (printf "%v" (index $store "hypershift")) "false")) hub}}
+  {{hub- $plugins = append $plugins "hypershift" hub}}
+  {{hub- end hub}}
+  {{hub- $nodeAgent := "true" hub}}
+  {{hub- if and (hasKey $store "nodeAgent") (eq (printf "%v" (index $store "nodeAgent")) "false") hub}}
+  {{hub- $nodeAgent = "false" hub}}
+  {{hub- end hub}}
+  {{hub- if gt (len (index $store "plugins" | default list)) 0 hub}}
+  {{hub- $plugins = (index $store "plugins") hub}}
+  {{hub- end hub}}
+  #
+  {{hub- if eq $type "obc" hub}}
+  {{- /* LOCAL half. The claim and everything derived from it live on the target cluster, so this
+         block is evaluated there, after the hub has substituted the scalars above. */}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: acm-failover-service-ca
+        namespace: open-cluster-management-backup
+        annotations:
+          service.beta.openshift.io/inject-cabundle: 'true'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: objectbucket.io/v1alpha1
+      kind: ObjectBucketClaim
+      metadata:
+        name: acm-failover
+        namespace: open-cluster-management-backup
+      spec:
+        generateBucketName: acm-failover
+        storageClassName: {{hub index $store "storageClassName" | default "openshift-storage.noobaa.io" hub}}
+  {{- $obcCM := (lookup "v1" "ConfigMap" "open-cluster-management-backup" "acm-failover") | default dict }}
+  {{- $obcCMData := ($obcCM.data | default dict) }}
+  {{- $obcSecret := (lookup "v1" "Secret" "open-cluster-management-backup" "acm-failover") | default dict }}
+  {{- $obcSecData := ($obcSecret.data | default dict) }}
+  {{- $caCM := (lookup "v1" "ConfigMap" "open-cluster-management-backup" "acm-failover-service-ca") | default dict }}
+  {{- $accessKey := (index $obcSecData "AWS_ACCESS_KEY_ID" | default "" | base64dec) }}
+  {{- $secretKey := (index $obcSecData "AWS_SECRET_ACCESS_KEY" | default "" | base64dec) }}
+  {{- $bucket := (index $obcCMData "BUCKET_NAME" | default "") }}
+  {{- $host := (index $obcCMData "BUCKET_HOST" | default "") }}
+  {{- $port := (index $obcCMData "BUCKET_PORT" | default "443") }}
+  {{- $svcCa := (index ($caCM.data | default dict) "service-ca.crt" | default "") }}
+  {{- if and (not (empty $bucket)) (not (empty $accessKey)) }}
+  {{- /* Emitted only once the claim has issued credentials. Before that the claim above keeps the
+         ConfigurationPolicy non-empty, so it cannot report Compliant having done nothing, and
+         policy-acm-failover-storage-test reports the not-ready state. */}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: acm-failover-cloud-credentials
+        namespace: open-cluster-management-backup
+      type: Opaque
+      stringData:
+        cloud: |
+          [default]
+          aws_access_key_id={{ $accessKey }}
+          aws_secret_access_key={{ $secretKey }}
+  # mustonlyhave, so a setting removed from values is removed here too; musthave never deletes a
+  # field. logFormat and disableFsBackup are the API defaults, stated so the two do not fight.
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: oadp.openshift.io/v1alpha1
+      kind: DataProtectionApplication
+      metadata:
+        name: acm-failover
+        namespace: open-cluster-management-backup
+      spec:
+        # Hub backups are Kubernetes resources, never images, so the image-backup registry is off.
+        # This is also required: with backupImages unset, OADP 1.6 refuses to reconcile the
+        # DataProtectionApplication with "BackupLocation must have velero prefix when backupImages
+        # is not set to false", and no BackupStorageLocation is ever created.
+        backupImages: false
+        logFormat: text
+        configuration:
+          velero:
+            disableFsBackup: false
+            defaultPlugins:
+              - openshift
+              - aws
+        backupLocations:
+          - name: default
+            velero:
+              provider: aws
+              default: true
+              objectStorage:
+                bucket: {{ $bucket }}
+                {{hub- if $prefix hub}}
+                prefix: {{hub $prefix hub}}
+                {{hub- end hub}}
+                {{- if $svcCa }}
+                caCert: {{ $svcCa | base64enc }}
+                {{- end }}
+              config:
+                region: {{ index $obcCMData "BUCKET_REGION" | default "noobaa" }}
+                s3ForcePathStyle: 'true'
+                {{- if $host }}
+                s3Url: https://{{ $host }}:{{ $port }}
+                {{- end }}
+              credential:
+                name: acm-failover-cloud-credentials
+                key: cloud
+  {{- end }}
+  {{hub- else hub}}
+  {{- /* HUB half. s3, azure and gcp are pure configuration, so the whole object is built here and
+         arrives at the target cluster already resolved. */}}
+  {{hub- $bucket := (index $store "bucket" | default "") hub}}
+  {{hub- $cfg := dict hub}}
+  {{hub- if $srcName hub}}
+  {{hub- $credName = "cloud-credentials" hub}}
+  {{hub- $credKey = "cloud" hub}}
+  # The source Secret crosses with copySecretData, which carries the whole data map untouched and
+  # encrypted. Its contents are read only on the target cluster, from that staged copy: the hub
+  # never looks the Secret up, and fromSecret on the hub returns an encrypted value, so neither the
+  # key pair nor the bucket name and endpoint can be read there. The obc branch above composes
+  # locally for the same reason.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: acm-failover-s3-source
+        namespace: open-cluster-management-backup
+      type: Opaque
+      data: '{{hub copySecretData $srcNs $srcName hub}}'
+  {{- /* A lookup, not fromSecret: on a fresh target the staged copy does not exist yet, and a
+         fromSecret error would stop the whole template, so the Secret above would never be
+         created. Until it exists only the Secret above is emitted; the lookup is watched, so the
+         policy re-evaluates as soon as it lands. */}}
+  {{- $staged := (lookup "v1" "Secret" "open-cluster-management-backup" "acm-failover-s3-source") | default dict }}
+  {{- $stagedData := ($staged.data | default dict) }}
+  {{- if $stagedData }}
+  {{- $accessKey := (index $stagedData "access_key_id" | default "" | base64dec) }}
+  {{- $secretKey := (index $stagedData "access_key_secret" | default "" | base64dec) }}
+  {{- if or (empty $accessKey) (empty $secretKey) }}
+  {{- fail "acm-failover: the Secret named by config.acm-failover.storage.sourceSecretRef needs both access_key_id and access_key_secret. Refusing to write a credentials file with an empty key." }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: cloud-credentials
+        namespace: open-cluster-management-backup
+      type: Opaque
+      stringData:
+        cloud: |
+          [{{hub $profile | default "default" hub}}]
+          aws_access_key_id={{ $accessKey }}
+          aws_secret_access_key={{ $secretKey }}
+          #
+          [volumeSnapshot]
+          aws_access_key_id={{ $accessKey }}
+          aws_secret_access_key={{ $secretKey }}
+  {{- end }}
+  {{hub- else hub}}
+  {{- $stagedData := dict }}
+  {{hub- end hub}}
+  {{hub- if and (empty $bucket) (not $srcName) hub}}
+  {{hub- fail (printf "acm-failover: no bucket for storage.type %q. Set config.acm-failover.storage.bucket, or supply a bucketnames key in the Secret named by storage.sourceSecretRef. Refusing to configure a DataProtectionApplication with no bucket, which would report Compliant while backing up nothing." $type) hub}}
+  {{hub- end hub}}
+  {{hub- if $profile hub}}
+  {{hub- $_ := set $cfg "profile" $profile hub}}
+  {{hub- end hub}}
+  {{hub- if eq $type "s3" hub}}
+  {{hub- if (index $store "region" | default "") hub}}
+  {{hub- $_ := set $cfg "region" (index $store "region") hub}}
+  {{hub- end hub}}
+  {{hub- if (index $store "endpoint" | default "") hub}}
+  {{hub- $_ := set $cfg "s3Url" (index $store "endpoint") hub}}
+  {{hub- $_ := set $cfg "s3ForcePathStyle" "true" hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if eq $type "azure" hub}}
+  {{hub- range $k := (list "resourceGroup" "storageAccount" "subscriptionId") hub}}
+  {{hub- if not (index $azure $k) hub}}
+  {{hub- fail (printf "acm-failover: config.acm-failover.storage.azure.%s is required when storage.type is 'azure'" $k) hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $cfg $k (index $azure $k) hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $cfg "storageAccountKeyEnvVar" "AZURE_STORAGE_ACCOUNT_ACCESS_KEY" hub}}
+  {{hub- end hub}}
+  {{hub- range $k, $v := (index $store "config" | default dict) hub}}
+  {{hub- $_ := set $cfg $k (printf "%v" $v) hub}}
+  {{hub- end hub}}
+  # OADP refuses to reconcile an AWS-provider location that has an s3Url but no region: "region for
+  # AWS backupstoragelocation is required when s3Url is configured". It creates no
+  # BackupStorageLocation and the DataProtectionApplication sits at Reconciled=False, while this
+  # policy still reports Compliant because the object it wrote matches. Checked after the config
+  # merge so a region supplied through storage.config counts too.
+  {{hub- if and (index $cfg "s3Url") (not (index $cfg "region")) hub}}
+  {{hub- fail "acm-failover: storage.endpoint is set but storage.region is empty. OpenShift APIs for Data Protection requires a region whenever an S3 URL is configured, and without one it creates no BackupStorageLocation. Set config.acm-failover.storage.region; an S3-compatible appliance that has no real region still needs a placeholder, and its own documentation usually names one." hub}}
+  {{hub- end hub}}
+  {{- /* The bucket and endpoint resolve here, on the target: configuration wins, and the Secret
+         named by sourceSecretRef fills them in from its bucketnames and endpoint keys, read off the
+         staged copy. With a sourceSecretRef the DataProtectionApplication waits for that copy, so it
+         never points Velero at credentials that do not exist yet. */}}
+  {{- $dpaBucket := "{{hub $bucket hub}}" }}
+  {{- if and (empty $dpaBucket) (index $stagedData "bucketnames") }}
+  {{- $dpaBucket = (index $stagedData "bucketnames" | base64dec) }}
+  {{- end }}
+  {{- $s3Url := "{{hub index $cfg "s3Url" | default "" hub}}" }}
+  {{- $pathStyle := "{{hub index $cfg "s3ForcePathStyle" | default "" hub}}" }}
+  {{- if and (empty $s3Url) (index $stagedData "endpoint") }}
+  {{- $s3Url = (index $stagedData "endpoint" | base64dec) }}
+  {{- end }}
+  {{- if and $s3Url (empty $pathStyle) }}
+  {{- $pathStyle = "true" }}
+  {{- end }}
+  {{- $emitDpa := true }}
+  {{hub- if $srcName hub}}
+  {{- $emitDpa = not (empty $stagedData) }}
+  {{hub- end hub}}
+  {{- if and $emitDpa (empty $dpaBucket) }}
+  {{- fail "acm-failover: no bucket. Set config.acm-failover.storage.bucket, or add a bucketnames key to the Secret named by storage.sourceSecretRef. Refusing to configure a DataProtectionApplication with no bucket, which would report Compliant while backing up nothing." }}
+  {{- end }}
+  {{- if and $emitDpa $s3Url (empty "{{hub index $cfg "region" | default "" hub}}") }}
+  {{- fail "acm-failover: the Secret named by storage.sourceSecretRef supplies an endpoint but config.acm-failover.storage.region is empty. OpenShift APIs for Data Protection requires a region whenever an S3 URL is configured, and without one it creates no BackupStorageLocation." }}
+  {{- end }}
+  {{- if $emitDpa }}
+  # mustonlyhave with the API defaults stated, as in the obc branch.
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: oadp.openshift.io/v1alpha1
+      kind: DataProtectionApplication
+      metadata:
+        name: acm-failover
+        namespace: open-cluster-management-backup
+      spec:
+        # See the note in the obc branch: without this OADP 1.6 refuses to reconcile and no
+        # BackupStorageLocation is ever created.
+        backupImages: false
+        logFormat: text
+        configuration:
+          velero:
+            disableFsBackup: false
+            defaultPlugins:
+              {{hub- range $p := $plugins hub}}
+              - {{hub $p hub}}
+              {{hub- end hub}}
+          nodeAgent:
+            enable: {{hub $nodeAgent hub}}
+            uploaderType: kopia
+        backupLocations:
+          - name: default
+            velero:
+              provider: {{hub $provider hub}}
+              default: true
+              objectStorage:
+                bucket: {{ $dpaBucket | quote }}
+                {{hub- if $prefix hub}}
+                prefix: {{hub $prefix hub}}
+                {{hub- end hub}}
+                {{hub- if and $sharedCa (not $caName) hub}}
+                caCert: {{hub $sharedCa | b64enc hub}}
+                {{hub- end hub}}
+                {{hub- if $caName hub}}
+                {{- $caCM := (lookup "v1" "ConfigMap" "{{hub $caNs hub}}" "{{hub $caName hub}}") | default dict }}
+                {{- $ca := (index ($caCM.data | default dict) "{{hub $caKey hub}}" | default "") }}
+                {{- if not $ca }}
+                {{- /* Configured but unreadable. Omitting caCert would leave Velero unable to
+                       verify the endpoint at runtime while this policy reported Compliant. */ -}}
+                {{- fail "acm-failover: config.acm-failover.storage.caRef names ConfigMap {{hub $caNs hub}}/{{hub $caName hub}} key {{hub $caKey hub}}, but it is missing or empty ON THIS CLUSTER. The trust bundle is read locally, next to the credentials Secret Velero opens." }}
+                {{- end }}
+                caCert: {{ $ca | base64enc }}
+                {{hub- end hub}}
+              {{hub- if $cfg hub}}
+              config:
+                {{hub- range $k, $v := $cfg hub}}
+                {{hub- if not (has $k (list "s3Url" "s3ForcePathStyle")) hub}}
+                {{hub $k hub}}: '{{hub $v hub}}'
+                {{hub- end hub}}
+                {{hub- end hub}}
+                {{- if $s3Url }}
+                s3Url: {{ $s3Url | quote }}
+                s3ForcePathStyle: {{ $pathStyle | quote }}
+                {{- end }}
+              {{hub- end hub}}
+              credential:
+                name: {{hub $credName hub}}
+                key: {{hub $credKey hub}}
+  {{- end }}
+  {{hub- end hub}}

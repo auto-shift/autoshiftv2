@@ -1,0 +1,95 @@
+# Continuous passive sync, on a STANDBY hub only.
+#
+# veleroManagedClustersBackupName: skip is the whole point of this resource. The standby keeps
+# pulling credentials and hub resources so it stays warm, but it never restores the
+# managed-cluster activation data, so it never tries to take the fleet from a healthy active hub.
+#
+# Promotion to active is a deliberate human act and is NOT automated here: an operator sets
+# acm-failover to 'active' on the standby and 'false' on the failed hub. See the policy README.
+#
+# passive.scope picks how much the standby keeps warm:
+#   full         credentials and hub resources, so the standby mirrors the active hub's state
+#   hive-secrets only the Hive cluster secrets, on the view that importing clusters is the failover
+#                action itself and not something an idle standby should prepare
+# Managed cluster activation data is skipped in both, so a standby never takes a healthy hub's fleet.
+#
+# Every value comes from config.acm-failover.passive on the hub. The one local read is the live
+# Restore, for the fields the cluster-backup controller adds to it.
+object-templates-raw: |
+  # INDENTATION ANCHOR
+  {{hub- $rcmRaw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- if (empty $rcmRaw) hub}}
+  {{hub- fail (printf "acm-failover: ConfigMap %s.rendered-config in %s has no config key" .ManagedClusterName .PolicyMetadata.namespace) hub}}
+  {{hub- end hub}}
+  {{hub- $rcmConfig := ($rcmRaw | fromYaml | default dict) hub}}
+  {{hub- $bk := (index $rcmConfig "acm-failover" | default dict) hub}}
+  # The downstream fork nests the same settings under config.acm.failover. They are read when
+  # config.acm-failover is absent, so its values files keep working unchanged; config.acm-failover
+  # wins where both exist.
+  {{hub- if (empty $bk) hub}}
+  {{hub- $fo := (dig "acm" "failover" (dict) $rcmConfig) hub}}
+  {{hub- if not (empty $fo) hub}}
+  {{hub- $bk = (dict
+        "storage" (dict
+          "type" "s3"
+          "sourceSecretRef" (dict "name" (index $fo "secretName" | default "") "namespace" (index $fo "secretNamespace" | default ""))
+          "region" (index $fo "region" | default "us-east-1")
+          "prefix" (index $fo "prefix" | default "velero")
+          "profile" "backupStorage")
+        "active" (dict
+          "veleroSchedule" (index $fo "schedule" | default "0 */2 * * *")
+          "veleroTtl" (index $fo "veleroTtl" | default "120h"))
+        "passive" (dict "scope" "hive-secrets")) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $passive := (index $bk "passive" | default dict) hub}}
+  {{hub- $scope := (index $passive "scope" | default "full") hub}}
+  {{hub- if not (has $scope (list "full" "hive-secrets")) hub}}
+  {{hub- fail (printf "acm-failover: config.acm-failover.passive.scope must be 'full' or 'hive-secrets', got %q" $scope) hub}}
+  {{hub- end hub}}
+  # A filtered restore must not clean up. CleanupRestored and CleanupAll delete hub resources that
+  # are not in the restored set, and a hive-secrets restore leaves out everything except the Hive
+  # Secrets, so cleanup would delete what an earlier full restore created. None is the default for
+  # that scope and the only value accepted with it.
+  {{hub- $cleanup := (index $passive "cleanupBeforeRestore" | default (ternary "None" "CleanupRestored" (eq $scope "hive-secrets"))) hub}}
+  {{hub- if not (has $cleanup (list "None" "CleanupRestored" "CleanupAll")) hub}}
+  {{hub- fail (printf "acm-failover: config.acm-failover.passive.cleanupBeforeRestore must be 'None', 'CleanupRestored' or 'CleanupAll', got %q" $cleanup) hub}}
+  {{hub- end hub}}
+  {{hub- if and (eq $scope "hive-secrets") (ne $cleanup "None") hub}}
+  {{hub- fail (printf "acm-failover: config.acm-failover.passive.cleanupBeforeRestore is %q with scope 'hive-secrets'. A filtered restore must use 'None': cleanup would delete every hub resource outside the Hive Secrets it restores." $cleanup) hub}}
+  {{hub- end hub}}
+  # mustonlyhave, so switching scope from hive-secrets to full removes includedResources and
+  # orLabelSelectors; musthave never deletes a field, and the filter would stay in force. The
+  # cluster-backup controller writes fields of its own (spec.hooks: {}), so any key this policy does
+  # not set is carried over from the live object rather than fought over.
+  {{- $managed := (list "syncRestoreWithNewBackups" "restoreSyncInterval" "cleanupBeforeRestore" "veleroManagedClustersBackupName" "veleroCredentialsBackupName" "veleroResourcesBackupName" "includedResources" "orLabelSelectors") }}
+  {{- $live := (lookup "cluster.open-cluster-management.io/v1beta1" "Restore" "open-cluster-management-backup" "acm-failover-restore-passive-sync") | default dict }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: cluster.open-cluster-management.io/v1beta1
+      kind: Restore
+      metadata:
+        name: acm-failover-restore-passive-sync
+        namespace: open-cluster-management-backup
+      spec:
+        {{- range $k, $v := (index $live "spec" | default dict) }}
+        {{- if not (has $k $managed) }}
+        {{ $k }}: {{ $v | toRawJson }}
+        {{- end }}
+        {{- end }}
+        syncRestoreWithNewBackups: true
+        restoreSyncInterval: '{{hub index $passive "restoreSyncInterval" | default "30m" hub}}'
+        cleanupBeforeRestore: {{hub $cleanup hub}}
+        veleroManagedClustersBackupName: skip
+        veleroCredentialsBackupName: latest
+        veleroResourcesBackupName: latest
+        {{hub- if eq $scope "hive-secrets" hub}}
+        # Narrow scope: sync only the Hive cluster secrets, so the standby has credentials in place
+        # without reproducing the active hub's resources while it sits idle.
+        includedResources:
+          - secrets
+        orLabelSelectors:
+          - matchExpressions:
+              - key: hive.openshift.io/secret-type
+                operator: Exists
+        {{hub- end hub}}

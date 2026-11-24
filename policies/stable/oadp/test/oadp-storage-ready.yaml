@@ -1,0 +1,27 @@
+# Storage readiness. Wrapped by PolicyGenerator into a musthave ConfigurationPolicy; its PG entry is
+# remediationAction: inform, because a status can only be observed.
+#
+# The BackupStorageLocation is matched by name. OpenShift APIs for Data Protection names it after
+# backupLocations[].name, which manifests/storage/oadp-storage.yaml sets to default. Matching by kind
+# alone would accept any Available location in the namespace while this one is Unavailable. Without
+# this check a cluster with an unreachable bucket looks healthy until a restore is attempted.
+#
+# Consumers depend on this policy rather than on the storage policy, so a Schedule is only created
+# once Velero can actually reach the object store.
+apiVersion: oadp.openshift.io/v1alpha1
+kind: DataProtectionApplication
+metadata:
+  name: oadp
+  namespace: openshift-adp
+status:
+  conditions:
+    - status: 'True'
+      type: Reconciled
+---
+apiVersion: velero.io/v1
+kind: BackupStorageLocation
+metadata:
+  name: default
+  namespace: openshift-adp
+status:
+  phase: Available
