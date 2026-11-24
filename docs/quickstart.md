@@ -126,8 +126,15 @@ open-cluster-management   multiclusterhub   Running      6m28s   2.13.2         
 >   tool: do not run the following command. Follow
 >   [If Red Hat OpenShift GitOps is already installed](#if-red-hat-openshift-gitops-is-already-installed)
 >   instead.
-> - An `openshift-gitops` release is listed: upgrade that release with its own values instead of
->   adopting the operator again. Save the values it was installed with:
+> - An `openshift-gitops` release is listed, and the AutoShift `openshift-gitops` policy already
+>   enforces the operator `Subscription`: do not run the following command. The policy owns the
+>   `Subscription` environment variables, so the bootstrap release does not need an upgrade to change
+>   them. Complete steps 1 to 3 of
+>   [If Red Hat OpenShift GitOps is already installed](#if-red-hat-openshift-gitops-is-already-installed),
+>   make the changes in AutoShift with step 6, then verify the result with step 5.
+> - An `openshift-gitops` release is listed, and AutoShift has not taken over yet: upgrade that
+>   release with its own values instead of adopting the operator again. Save the values it was
+>   installed with:
 >   `helm get values openshift-gitops -n <release-namespace> -o yaml > openshift-gitops-values.yaml`.
 >   Complete steps 1 to 3 of
 >   [If Red Hat OpenShift GitOps is already installed](#if-red-hat-openshift-gitops-is-already-installed),
@@ -135,8 +142,11 @@ open-cluster-management   multiclusterhub   Running      6m28s   2.13.2         
 >   `-f openshift-gitops-values.yaml` after the existing `-f` option, and add `--set` options for the
 >   `gitops.clusterScopedNamespaces` and `gitops.disableDefaultArgoCD` values chosen there. The
 >   saved values keep the release's other settings, including `gitops.argoNamespace` and
->   `skipOperatorInstall`. Do not add `--take-ownership`. Verify the result with step 5 and carry the
->   choices into AutoShift with step 6. If the saved values set `gitops.name` or `gitops.namespace`,
+>   `skipOperatorInstall`. Do not add `--take-ownership`. If the upgrade fails with a conflict on
+>   `.spec.config.env`, another field manager also owns that list: run the same command again with
+>   `--force-conflicts`. Helm accepts that option only for a release it applies with server-side
+>   apply, so do not add it otherwise. Verify the result with step 5 and carry the choices into
+>   AutoShift with step 6. If the saved values set `gitops.name` or `gitops.namespace`,
 >   use those values in the step 1 and step 5 commands.
 
 Using helm, install OpenShift GitOps:
@@ -205,8 +215,14 @@ through the `openshift-gitops` policy. Make every decision in steps 1 to 3 befor
      --set gitops.argoNamespace=<argo-namespace> \
      --set 'gitops.clusterScopedNamespaces={<namespace>,<namespace>}' \
      --set gitops.disableDefaultArgoCD=<true-or-false> \
-     --take-ownership
+     --take-ownership \
+     --force-conflicts
    ```
+
+   `--force-conflicts` is required because server-side apply otherwise stops with a conflict on
+   `.spec.config.env` when anything other than Helm, such as a manual edit or a policy, already set
+   environment variables on the `Subscription`. It makes Helm replace that list with the values from
+   steps 2 and 3, which is why step 1 checks it first.
 
    Run this step only when no `openshift-gitops` Helm release exists yet. Never change the
    `skipOperatorInstall` setting of an existing release in either direction: switching it on makes
