@@ -30,7 +30,9 @@
 # always the project name. A placeholder is any {...} without nested braces. Filling is one pass
 # over the template's own placeholders, so a value is inserted as written and never expanded again.
 # A placeholder is unresolved when no field of that name holds a scalar with a non-space character.
-# A label or annotation whose key or value has an unresolved placeholder is skipped. A group level
+# A label or annotation whose key or value has an unresolved placeholder is skipped. An explicitly
+# empty value (value: '', as k8s.ovn.org/primary-user-defined-network takes) is kept; an entry
+# without a value, or with value: null, renders no empty value. A group level
 # with one, or whose name is blank, gets no RoleBinding; for a project override of write or read
 # that is reported in the status as a note, which does not count as an error (pruning stays on).
 #
@@ -123,7 +125,11 @@
 #
 # Admin network policies: each enabled projectOnboarding.defaults.adminNetworkPolicies entry renders the
 # AdminNetworkPolicy autoshift-admin-<entry>, once and in the enforce ConfigurationPolicy only (drift
-# is corrected there; under dry-run that one is inform and reports it), independent of projects.
+# is corrected there; under dry-run that one is inform and reports it), independent of projects,
+# but never while the rendered config cannot be used ($cfgErr, a missing projects key included):
+# the tier is then left as it is, and rendered-config reports why. An autoshift-admin-<entry> that exists
+# without autoshift.io/managed-by: project-onboarding is not changed and is reported; the other
+# entries still apply.
 # Priority 10 upward in entry-name order, so at most 40 entries (10 to 49) and all ahead of the
 # project AdminNetworkPolicies at 50. Subject: allProjects is namespaces with autoshift.io/project
 # (Exists); labels adds those matchLabels to it; namespaceSelector is passed through after validation.
@@ -154,6 +160,15 @@
 # RoleBinding. The project is blocked like an ownership block, nothing of it is applied, and the
 # objects are named in its status. Objects that carry the label are onboarding's and keep updating.
 # Handing an existing object over is explicit: label it autoshift.io/managed-by=project-onboarding.
+# The admin tier's autoshift-admin-<entry> is checked the same way (see Admin network policies).
+#
+# Roles: the RoleBinding autoshift-<level> binds the ClusterRole projectOnboarding.defaults.roles.<level>
+# (admin, edit and view by default). Its roleRef is immutable, so only the enforce ConfigurationPolicy
+# carries recreateOption IfRequired, which re-creates a binding whose role changed; the inform one
+# reports the mismatch and never deletes. A role that is not a string, is longer than 253
+# characters, or is not a valid name for the API server (. or .., or containing / or %) is reported
+# for every project that binds that level, and the binding is not rendered but stays declared: the
+# live one is kept, never re-created into a name the API server refuses.
 #
 # Pruning: owned objects (label autoshift.io/managed-by=project-onboarding) of the kinds in the sweep
 # list that this run does not declare get mustnothave. An object belongs to the project declaring
@@ -167,7 +182,11 @@
 # bindings can still be refused, and the source binding may be the team's only access. A move
 # therefore takes at least two evaluations, the first applying the destination, a later one
 # observing it and releasing the source. While it waits, the status says
-# "waiting for destination objects in <namespace>". An object of no declared project is never a candidate
+# "waiting for destination objects in <namespace>". The cluster-scoped EgressIP and
+# AdminNetworkPolicy of a project select its namespaces by the project label, so one the project no
+# longer declares is held the same way while another namespace still carries
+# autoshift.io/project=<project> ($projNs) and the declared one is not ready; without such a
+# namespace it is pruned as usual. An object of no declared project is never a candidate
 # while a namespace labeled with its project is declared by a current project ($heldBy: a renamed
 # project, or a takeover blocked by that label; an empty label value holds nothing), since its
 # AdminNetworkPolicy and EgressIP still select that namespace. A labeled namespace no project
@@ -184,7 +203,9 @@
 # Status: a project that is invalid or blocked is reported in its shard's ConfigMap
 # project-onboarding-status-<shard> (open-cluster-management-agent-addon), one data key per project, its
 # errors joined by "; ". The hub finds config errors. These skip the project: an entry that is not a
-# map, a project name or namespace that is not a DNS-1123 label, a platform namespace ($platformNs:
+# map (it claims no namespace, so it never takes one from a valid project; an object outside the
+# namespaces other projects declare that carries its autoshift.io/project label belongs to it, and
+# since it has errors that object is never pruned), a project name or namespace that is not a DNS-1123 label, a platform namespace ($platformNs:
 # kube-*, openshift-*, openshift, default, open-cluster-management* including this policy's add-on
 # namespace, multicluster-engine, hive; no override), no resolvable admin group, and a namespace
 # another project declares ($nsDeclarer: the project named after the namespace keeps it, else the
@@ -216,9 +237,11 @@
 # projects whose names map to one status key are concatenated.
 #
 # Size, per shard Policy: a base for the static template text ($sizeBase, measured on an empty shard:
-# 14115 bytes at most), then the hub estimates each
+# 14855 bytes at most), then the hub estimates each
 # project's share of the resolved Policy ($est, kept at or above the measured size for every
-# feature; invalid projects pay their status $overhead) and keeps the total below $sizeLimit (1 MiB, well under the 1.5 MiB etcd
+# feature; invalid projects pay their status $overhead; the role names are charged for both places
+# they are encoded, the readiness check and the RoleBinding, and each admin entry for its ownership
+# lookup) and keeps the total below $sizeLimit (1 MiB, well under the 1.5 MiB etcd
 # request limit). Status messages are cut to 400 characters. The total is published as a comment.
 # Backstops that fail the hub template, so nothing is applied: more than $maxProjects (3200) projects in total,
 # or a total with the bookkeeping of skipped projects (charged per JSON-encoded name length) over
@@ -306,10 +329,10 @@ object-templates-raw: |
   {{hub- $_ := set $projShard $name (mod (atoi (adler32sum $name)) $shards) hub}}
   {{hub- $eipList := list hub}}
   {{hub- $eipBad := list hub}}
-  {{hub- $claimNs := $name hub}}
-  {{hub- if kindIs "map" $p hub}}{{hub- $nsRaw := index $p "namespace" hub}}{{hub- if and (kindIs "string" $nsRaw) (ne $nsRaw "") hub}}{{hub- $claimNs = $nsRaw hub}}{{hub- end hub}}{{hub- end hub}}
-  {{hub- $_ := set $nsClaims $claimNs (append (index $nsClaims $claimNs | default list) $name) hub}}
   {{hub- if kindIs "map" $p hub}}
+  {{hub- $claimNs := $name hub}}
+  {{hub- $nsRaw := index $p "namespace" hub}}{{hub- if and (kindIs "string" $nsRaw) (ne $nsRaw "") hub}}{{hub- $claimNs = $nsRaw hub}}{{hub- end hub}}
+  {{hub- $_ := set $nsClaims $claimNs (append (index $nsClaims $claimNs | default list) $name) hub}}
   {{hub- $raw := index $p "egressIP" hub}}
   {{hub- if kindIs "slice" $raw hub}}
   {{hub- $seen := dict hub}}
@@ -682,11 +705,12 @@ object-templates-raw: |
   {{hub- $adminErrs = append $adminErrs (printf "%d enabled entries, more than the 40 that fit at priorities 10 to 49 (below the project AdminNetworkPolicies at 50)" (len $adminANPs)) hub}}
   {{hub- end hub}}
   {{hub- if $adminErrs hub}}{{hub- $adminANPs = list hub}}{{hub- end hub}}
+  {{hub- if $cfgErr hub}}{{hub- $adminANPs = list hub}}{{hub- end hub}}
   {{hub- $adminMsgs := list hub}}
   {{hub- range $m := $adminErrs hub}}{{hub- $adminMsgs = append $adminMsgs (ternary (printf "%s..." (trunc 400 $m)) $m (gt (len $m) 400)) hub}}{{hub- end hub}}
   {{hub- $sizeLimit := 1048576 hub}}
-  {{hub- $sizeBase := 14400 hub}}
-  {{hub- $sizeTotal := add $sizeBase (mul 2 (len (toJson $adminANPs))) (mul 4 (len (toJson $adminMsgs))) (mul 2 (len (join "," $otherNs))) hub}}
+  {{hub- $sizeBase := 15200 hub}}
+  {{hub- $sizeTotal := add $sizeBase (mul 2 (len (toJson $adminANPs))) (mul 900 (len $adminANPs)) (mul 4 (len (toJson $adminMsgs))) (mul 2 (len (join "," $otherNs))) hub}}
   {{hub- $sizeAll := $sizeTotal hub}}
   {{hub- $sizeSkipped := list hub}}
   {{hub- $sizeHard := 1415577 hub}}
@@ -851,7 +875,8 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- $k := index $filled 0 hub}}
   {{hub- $v := index $filled 1 hub}}
-  {{hub- if and $k $v (not $unresolved) hub}}
+  {{hub- $vSet := and (hasKey $entry "value") (not (kindIs "invalid" (index $entry "value"))) hub}}
+  {{hub- if and $k (or $v $vSet) (not $unresolved) hub}}
   {{hub- $ok := true hub}}
   {{hub- $kparts := splitList "/" $k hub}}
   {{hub- $kname := last $kparts hub}}
@@ -908,6 +933,14 @@ object-templates-raw: |
   {{hub- if kindIs "invalid" $ownGroups hub}}{{hub- $ownGroups = dict hub}}{{hub- end hub}}
   {{hub- if not (kindIs "map" $ownGroups) hub}}{{hub- $errs = append $errs "groups is not a map" hub}}{{hub- $ownGroups = dict hub}}{{hub- end hub}}
   {{hub- $roles := mergeOverwrite (dict "admin" "admin" "write" "edit" "read" "view") (deepCopy $defaults.roles) hub}}
+  {{hub- $roleBad := dict hub}}
+  {{hub- range $level := list "admin" "write" "read" hub}}
+  {{hub- $rv := index $roles $level hub}}
+  {{hub- if not (kindIs "string" $rv) hub}}{{hub- $_ := set $roleBad $level "is not a string" hub}}
+  {{hub- else if gt (len $rv) 253 hub}}{{hub- $_ := set $roleBad $level "is longer than 253 characters" hub}}
+  {{hub- else if or (eq $rv ".") (eq $rv "..") (contains "/" $rv) (contains "%" $rv) hub}}{{hub- $_ := set $roleBad $level (printf "%s is not a valid ClusterRole name: it cannot be . or .., or contain / or %%" ($rv | toJson)) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
   {{hub- $groups := dict hub}}
   {{hub- range $lv := keys $ownGroups | sortAlpha hub}}{{hub- if not (has $lv (list "admin" "write" "read")) hub}}{{hub- $errs = append $errs (printf "group %s is not admin, write or read" $lv) hub}}{{hub- end hub}}{{hub- end hub}}
   {{hub- range $level := list "admin" "write" "read" hub}}
@@ -947,6 +980,14 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- if and $valid (not (hasKey $groups "admin")) hub}}{{hub- $errs = append $errs "no resolvable admin group" hub}}{{hub- end hub}}
+  {{hub- $roleRefs := dict hub}}
+  {{hub- range $level := keys $groups | sortAlpha hub}}
+  {{hub- if hasKey $roleBad $level hub}}
+  {{hub- $errs = append $errs (printf "projectOnboarding.defaults.roles.%s %s, so the RoleBinding autoshift-%s is not changed" $level (index $roleBad $level) $level) hub}}
+  {{hub- else hub}}
+  {{hub- $_ := set $roleRefs $level (index $roles $level) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
   {{hub- $sized := dict "quota" (dict) "limitRange" (dict) hub}}
   {{hub- $sizedOk := dict "quota" true "limitRange" true hub}}
   {{hub- $sizeRaw := index $fields "size" hub}}
@@ -1399,7 +1440,7 @@ object-templates-raw: |
   {{hub- if $others hub}}{{hub- $eipErrs = append $eipErrs (printf "egressIP %s is also declared by project %s" $e.ip (join ", " $others)) hub}}{{hub- end hub}}
   {{hub- end hub}}
   {{hub- if $eipErrs hub}}{{hub- $errs = concat $errs $eipErrs hub}}{{hub- $valid = false hub}}{{hub- end hub}}
-  {{hub- $dup := ne (index $nsDeclarer $namespace) $name hub}}
+  {{hub- $dup := and (kindIs "map" $p) (ne (index $nsDeclarer $namespace | default "") $name) hub}}
   {{hub- if $dup hub}}{{hub- $errs = append $errs (printf "namespace %s already declared by %s" $namespace (index $nsDeclarer $namespace)) hub}}{{hub- end hub}}
   {{hub- $msgs := list hub}}
   {{hub- range $m := concat $errs $notes hub}}{{hub- $msgs = append $msgs (ternary (printf "%s..." (trunc 400 $m)) $m (gt (len $m) 400)) hub}}{{hub- end hub}}
@@ -1423,7 +1464,7 @@ object-templates-raw: |
   {{hub- if $anpNeeded hub}}{{hub- $checkBytes = add $checkBytes 600 hub}}{{hub- end hub}}
   {{hub- if $eipIPs hub}}{{hub- $checkBytes = add $checkBytes 1000 hub}}{{hub- end hub}}
   {{hub- if $inNets hub}}{{hub- $checkBytes = add $checkBytes 1500 hub}}{{hub- end hub}}
-  {{hub- $small := dict "a" $applied "g" $groups "q" $sized "anp" $anp "e" $eipNets hub}}
+  {{hub- $small := dict "a" $applied "g" $groups "r" $roleRefs "q" $sized "anp" $anp "e" $eipNets hub}}
   {{hub- $est = add $overhead (ternary 6000 9200 $pruneOn) (mul 800 $objCount) $checkBytes (mul 1200 $ingressNetRules) (mul 80 $portCount) (mul 2 $peerBytes) (mul (add 20 (mul 4 $objCount)) $nameLen) (div (mul 8 (len (toJson $efEntries))) 5) (mul 4 (len (toJson (concat $efNets $inNets)))) (mul 3 (len (toJson $small))) (div (len (toJson $netPolicies)) 2) hub}}
   {{hub- end hub}}
   {{hub- $sizeAll = add $sizeAll $est hub}}
@@ -1442,7 +1483,7 @@ object-templates-raw: |
   {{hub- $owner := dict "mode" $mode "ok" (and (eq (len $errs) 0) (not $sizeSkip)) "namespace" $namespace hub}}
   {{hub- $_ := set $projOwners $name $owner hub}}
   {{hub- if gt (len (index $nsClaims $namespace | default list)) 1 hub}}{{hub- $owner = dict "mode" $mode "ok" false "namespace" $namespace hub}}{{hub- end hub}}
-  {{hub- $_ := set $nsOwners $namespace $owner hub}}
+  {{hub- if kindIs "map" $p hub}}{{hub- $_ := set $nsOwners $namespace $owner hub}}{{hub- end hub}}
   {{hub- if not $sizeSkip hub}}
   {{hub- range $level := keys $groups hub}}{{hub- $_ := set $declared (printf "RoleBinding|%s|autoshift-%s" $namespace $level) true hub}}{{hub- end hub}}
   {{hub- if or (not $sizedOk.quota) $sized.quota hub}}{{hub- $_ := set $declared (printf "ResourceQuota|%s|autoshift-quota" $namespace) true hub}}{{hub- end hub}}
@@ -1581,7 +1622,7 @@ object-templates-raw: |
   {{- $foreignCluster := list }}
   {{- if and $render $existing }}
   {{hub- $rbWant := dict hub}}
-  {{hub- range $level, $g := $groups hub}}{{hub- $_ := set $rbWant $level (dict "role" (index $roles $level | printf "%v") "group" $g) hub}}{{hub- end hub}}
+  {{hub- range $level, $g := $groups hub}}{{hub- $_ := set $rbWant $level (dict "role" (index $roleRefs $level | default "") "group" $g) hub}}{{hub- end hub}}
   {{- $nsReady = eq (printf "%v" (index (default dict $existing.metadata.labels) "autoshift.io/project")) {{hub $name | toJson hub}} }}
   {{- range $level, $w := {{hub $rbWant | toJson | base64enc | quote hub}} | base64dec | fromJson }}
   {{- $liveRB := lookup "rbac.authorization.k8s.io/v1" "RoleBinding" {{hub $namespace | toJson hub}} (printf "autoshift-%s" $level) }}
@@ -1700,10 +1741,12 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- if or (eq $mode $want) (eq $want "inform") hub}}
   {{hub- range $level := list "admin" "write" "read" hub}}
-  {{hub- if hasKey $groups $level hub}}
-  {{- $binding := {{hub dict "role" (index $roles $level | printf "%v") "group" (index $groups $level) | toJson | base64enc | quote hub}} | base64dec | fromJson }}
+  {{hub- if hasKey $roleRefs $level hub}}
+  {{- $binding := {{hub dict "role" (index $roleRefs $level) "group" (index $groups $level) | toJson | base64enc | quote hub}} | base64dec | fromJson }}
   - complianceType: mustonlyhave
+    {{hub- if eq $want "enforce" hub}}
     recreateOption: IfRequired
+    {{hub- end hub}}
     objectDefinition:
       apiVersion: rbac.authorization.k8s.io/v1
       kind: RoleBinding
@@ -1973,6 +2016,10 @@ object-templates-raw: |
   {{hub- if $adminANPs hub}}
   {{- if $anpCrd }}
   {{hub- range $i, $a := $adminANPs hub}}
+  {{- $liveAdmin := lookup "policy.networking.k8s.io/v1alpha1" "AdminNetworkPolicy" "" {{hub printf "autoshift-admin-%s" $a.name | toJson hub}} }}
+  {{- if and $liveAdmin (ne (printf "%v" (index (dig "metadata" "labels" dict $liveAdmin) "autoshift.io/managed-by" | default "")) "project-onboarding") }}
+  {{- $_ := set $status "projectOnboarding.defaults.adminNetworkPolicies" (append (index $status "projectOnboarding.defaults.adminNetworkPolicies" | default list) (printf "the AdminNetworkPolicy %v already exists and is not managed by project onboarding (no label autoshift.io/managed-by: project-onboarding), so it is not changed; to hand it over, label it autoshift.io/managed-by=project-onboarding" (dig "metadata" "name" "" $liveAdmin))) }}
+  {{- else }}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: policy.networking.k8s.io/v1alpha1
@@ -1988,6 +2035,7 @@ object-templates-raw: |
           {{hub- range $e := $a.rules hub}}
           - {{hub $e | toJson hub}}
           {{hub- end hub}}
+  {{- end }}
   {{hub- end hub}}
   {{- end }}
   {{hub- end hub}}
@@ -2008,6 +2056,11 @@ object-templates-raw: |
   {{- if and $nsProject (or (hasKey $nsOwners $nsName) (hasKey $otherNs $nsName)) }}
   {{- $_ := set $heldBy $nsProject true }}
   {{- end }}
+  {{- end }}
+  {{- $projNs := dict }}
+  {{- range $ns := $labeledNs }}
+  {{- $nsProject := printf "%v" (dig "metadata" "labels" "autoshift.io/project" "" $ns) }}
+  {{- if $nsProject }}{{- $_ := set $projNs $nsProject (append (index $projNs $nsProject | default list) (printf "%v" (dig "metadata" "name" "" $ns))) }}{{- end }}
   {{- end }}
   {{- range $ns := $labeledNs }}
   {{- $nsName := printf "%v" (dig "metadata" "name" "" $ns) }}
@@ -2070,6 +2123,9 @@ object-templates-raw: |
   {{- else if $owner }}
   {{- $eligible = and (eq (printf "%v" $owner.ok) "true") (hasKey $rendered (printf "%v" $owner.namespace)) }}
   {{- if and $objNs (ne $objNs (printf "%v" $owner.namespace)) (not (hasKey $ready (printf "%v" $owner.namespace))) }}{{- $eligible = false }}{{- if and $objProject (hasKey $rendered (printf "%v" $owner.namespace)) }}{{- $_ := set $waiting $objProject (printf "%v" $owner.namespace) }}{{- end }}{{- end }}
+  {{- if and (not $objNs) $objProject (not (hasKey $ready (printf "%v" $owner.namespace))) }}
+  {{- range $pn := index $projNs $objProject | default list }}{{- if ne $pn (printf "%v" $owner.namespace) }}{{- $eligible = false }}{{- if hasKey $rendered (printf "%v" $owner.namespace) }}{{- $_ := set $waiting $objProject (printf "%v" $owner.namespace) }}{{- end }}{{- end }}{{- end }}
+  {{- end }}
   {{- $target = printf "%v" $owner.mode }}
   {{- else if hasKey $heldBy $objProject }}
   {{- $eligible = false }}

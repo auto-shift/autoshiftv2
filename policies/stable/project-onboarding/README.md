@@ -168,7 +168,10 @@ Every key of `config.projectOnboarding.projects.<project>`. An invalid project i
 The project key and the namespace must be DNS-1123 labels: lowercase letters, digits, and `-`,
 starting and ending with a letter or digit, at most 63 characters. A project whose key or namespace
 is not, or whose entry is not a map, is skipped whole and reported. A project entry that is
-malformed never affects the other projects.
+malformed never affects the other projects. An entry that is not a map claims no namespace, so a
+valid project can declare the namespace of its key. Its live objects outside the namespaces other
+projects declare still carry its `autoshift.io/project` label, so they belong to a project in error
+and are never pruned.
 
 The policy never manages a platform namespace. A project whose namespace, the project key by
 default, is `openshift`, `default`, `multicluster-engine`, or `hive`, or starts with `kube-`,
@@ -192,7 +195,9 @@ braces are not placeholders: in `{a{b}}` only `{b}` is one, and the braces aroun
 written. A label cannot contain braces, so such a label is reported as invalid, and an annotation
 value or a group name keeps them literally.
 
-- A label or annotation is skipped when a placeholder in its key or value is unresolved.
+- A label or annotation is skipped when a placeholder in its key or value is unresolved. An
+  explicitly empty value, `value: ''`, is kept: `k8s.ovn.org/primary-user-defined-network` takes an
+  empty value. An entry without `value`, or with `value: null`, renders no empty value.
 - An access level whose group name has an unresolved placeholder, or is blank, gets no RoleBinding.
   When that name is a project override of `write` or `read`, the status lists it as a note, for
   example `group read name "K8S_{tem}_AUDIT" has an unresolved placeholder, so the level gets no
@@ -308,6 +313,15 @@ maps levels to ClusterRoles and defaults to `admin`, `edit`, and `view`.
 
 A role change re-creates the RoleBinding, because Kubernetes does not allow `roleRef` to change in
 place. The RoleBindings are exact (`mustonlyhave`), so labels another tool adds to them are removed.
+Only the enforcing shard Policy carries `recreateOption: IfRequired`: the `-test` Policy asserts the
+same binding without it, so an Enforce set on a `-test` Policy by hand reports the mismatch and
+never deletes a binding.
+
+A role must be a string of at most 253 characters that the API server accepts as a name: not `.`
+or `..`, and without `/` or `%`. Any other role is reported for every project that binds that level,
+for example `projectOnboarding.defaults.roles.admin "team/admin" is not a valid ClusterRole name`.
+That level's RoleBinding is not rendered and stays declared, so the live binding is kept as it is
+and is never deleted to be created under a name the API server refuses.
 
 A project can drop a level that `projectOnboarding.defaults.groups` defines by setting it to `''`, `null`, or
 `false`, for example `groups: {write: ''}` for a read-only project. The level gets no RoleBinding,
@@ -711,6 +725,16 @@ never shift under a partial set. The errors are listed under the status key
 `projectOnboarding.defaults.adminNetworkPolicies`, see [Status](#status). Projects are not affected and still
 render.
 
+The admin tier also needs a usable rendered config. When `projects` is missing, null, or not a
+map, the config is broken and the status key `rendered-config` reports it: no admin
+AdminNetworkPolicy is rendered or pruned, and the live ones stay as they were. An explicit
+`projects: {}` is a valid empty set and keeps the tier.
+
+An `autoshift-admin-<entry>` that already exists without `autoshift.io/managed-by:
+project-onboarding` belongs to someone else. It is not changed, and it is reported under
+`projectOnboarding.defaults.adminNetworkPolicies`, while the other entries still apply. To hand it
+over, label it `autoshift.io/managed-by=project-onboarding`.
+
 The admin AdminNetworkPolicies are rendered by the enforce ConfigurationPolicy only, which corrects
 any drift. Under a dry run that ConfigurationPolicy is inform and reports the drift instead. They
 carry `autoshift.io/managed-by: project-onboarding` but no `autoshift.io/project` label, are exact
@@ -990,6 +1014,11 @@ off:
   and RoleBindings, since it still carries the project label and the project's EgressIP and
   AdminNetworkPolicy still select it. A project moved to a namespace it cannot take keeps its
   objects in the old one.
+- The same wait holds the project's cluster-scoped objects. A project that moves and drops its
+  `egressIP`, or its in-cluster deny, in the same edit keeps the stale EgressIP or
+  AdminNetworkPolicy while another namespace still carries its `autoshift.io/project` label and the
+  new namespace is not ready, because that object still selects the old namespace. Without a move,
+  the stale object is pruned as usual.
 - An object of a project that is no longer declared, such as the cluster-scoped AdminNetworkPolicy
   and EgressIP, is never a candidate while a namespace that carries that project's label is
   declared by a current project. That happens after a rename, or when a new project names the
@@ -1093,6 +1122,7 @@ data:
 | `egressIP <address> is also declared by project <project>` (each other project, comma-separated) | hub | Project skipped, on every project that declares the address |
 | `the EgressIP CRD (egressips.k8s.ovn.org) is not installed, so the egress IP addresses cannot be assigned` | managed cluster | Nothing rendered for the project |
 | `no resolvable admin group` | hub | Project skipped |
+| `projectOnboarding.defaults.roles.<level> <problem>, so the RoleBinding autoshift-<level> is not changed`, where the problem is `is not a string`, `is longer than 253 characters`, or `"<role>" is not a valid ClusterRole name: ...` | hub | That RoleBinding not rendered, the live one kept, nothing of the project pruned |
 | `label <key>=<value> is not a valid Kubernetes label` | hub | Label skipped |
 | `label <key> is reserved for project ownership`, `annotation <key> is reserved for project ownership` | hub | Label or annotation skipped |
 | `label <key> is reserved for the platform; list it in projectOnboarding.defaults.allowedPlatformKeys to set it`, `annotation <key> is reserved ...` | hub | Label or annotation skipped |
@@ -1114,6 +1144,10 @@ tier, see [Admin network policies](#admin-network-policies):
 | `entry <entry>: <problem>`, for example `appliesTo is not set` or `peer pods is not supported here: ...` | hub |
 | `<n> enabled entries, more than the 40 that fit at priorities 10 to 49 (below the project AdminNetworkPolicies at 50)` | hub |
 | `the AdminNetworkPolicy CRD (adminnetworkpolicies.policy.networking.k8s.io) is not installed, so the admin network policies cannot be enforced` | managed cluster |
+
+Under the same key, `the AdminNetworkPolicy autoshift-admin-<entry> already exists and is not
+managed by project onboarding (...)` is found on the managed cluster. It holds only that entry: the
+foreign object is not changed, and the other entries still apply.
 
 A project key that is not a valid ConfigMap key is listed under the key with each character other
 than letters, digits, `-`, `_`, and `.` replaced by `_`. When two project keys map to the same

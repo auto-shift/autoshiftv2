@@ -55,7 +55,9 @@
 #
 # Every object is labelled autoshift.io/managed-by: namespace-rbac. Roles and RoleBindings are
 # mustonlyhave, so rules and subjects are replaced, never merged; a RoleBinding whose role changes is
-# re-created (recreateOption: IfRequired), because roleRef is immutable. ServiceAccounts are
+# re-created (recreateOption: IfRequired), because roleRef is immutable. Only the enforce
+# ConfigurationPolicy carries recreateOption, so a -test Policy set to Enforce by hand reports the
+# mismatch and never deletes a binding. ServiceAccounts are
 # musthave: they carry only metadata here, and OpenShift adds image pull secrets to them that
 # mustonlyhave would fight over. Tokens come from the TokenRequest API.
 #
@@ -84,8 +86,10 @@
 # that creates workloads is held while its namespace has a live labelled token Secret. Token Secrets
 # are rendered last ($pending): each is refused while any live ClusterRoleBinding names its
 # ServiceAccount, any live RoleBinding names it without pointing to a minter-only Role rendered in
-# this evaluation ($renderedMinters), or a live Role in its namespace creates workloads or can read
-# it. A subject names a ServiceAccount as kind ServiceAccount or as kind User
+# this evaluation ($renderedMinters) whose live rules are already among those rendered rules (a
+# rendered Role is only the desired state: an update that narrows it can be refused, so while the
+# live Role is missing or still holds another rule the token waits for a later evaluation), or a
+# live Role in its namespace creates workloads or can read it. A subject names a ServiceAccount as kind ServiceAccount or as kind User
 # system:serviceaccount:<namespace>:<name>; groups are not matched.
 #
 # Errors are found on the hub (the shape of the config, the safety gate) and on the managed cluster
@@ -865,7 +869,7 @@ object-templates-raw: |
   {{- $_ := set $heldRoles $r.name true }}
   {{- $_ := set $status $e.key (append (index $status $e.key | default list) (printf "Role %s/%s is not created or changed: serviceaccounts/token resourceNames %s name ServiceAccounts that are not managed by namespace-rbac" $e.ns $r.name (join ", " $foreignSAs))) }}
   {{- else }}
-  {{- if $r.minter }}{{- $_ := set $renderedMinters (printf "%s|%s" $e.ns $r.name) true }}{{- end }}
+  {{- if $r.minter }}{{- $mj := list }}{{- range $x := $r.rules }}{{- $mj = append $mj ($x | toJson) }}{{- end }}{{- $_ := set $renderedMinters (printf "%s|%s" $e.ns $r.name) $mj }}{{- end }}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: rbac.authorization.k8s.io/v1
@@ -952,7 +956,9 @@ object-templates-raw: |
   {{- else }}
   {{- if and (eq $b.kind "ClusterRole") (has $b.role $secretReaders) (not (and $live (eq (printf "%v" (dig "roleRef" "kind" "" $live)) "ClusterRole") (has (printf "%v" (dig "roleRef" "name" "" $live)) $secretReaders))) }}{{- $_ := set $readerRBs $e.ns (append (index $readerRBs $e.ns | default list) (dict "name" $b.name "role" $b.role)) }}{{- end }}
   - complianceType: mustonlyhave
+    {{hub- if eq $want "enforce" hub}}
     recreateOption: IfRequired
+    {{hub- end hub}}
     objectDefinition:
       apiVersion: rbac.authorization.k8s.io/v1
       kind: RoleBinding
@@ -1010,7 +1016,15 @@ object-templates-raw: |
   {{- $sk := printf "%v" (index $ls "kind" | default "") }}
   {{- $sn := printf "%v" (index $ls "name" | default "") }}
   {{- if or (and (eq $sk "ServiceAccount") (eq $sn $tk.sa) (eq (printf "%v" (index $ls "namespace" | default $rbNs)) $tk.ns)) (and (eq $sk "User") (eq $sn $uName)) }}
-  {{- if not (and (eq (printf "%v" (dig "roleRef" "kind" "" $lrb)) "Role") (hasKey $renderedMinters (printf "%s|%v" $rbNs (dig "roleRef" "name" "" $lrb)))) }}
+  {{- $mk := printf "%s|%v" $rbNs (dig "roleRef" "name" "" $lrb) }}
+  {{- if and (eq (printf "%v" (dig "roleRef" "kind" "" $lrb)) "Role") (hasKey $renderedMinters $mk) }}
+  {{- $lRole := lookup "rbac.authorization.k8s.io/v1" "Role" $rbNs (printf "%v" (dig "roleRef" "name" "" $lrb)) }}
+  {{- $liveMinter := gt (len ($lRole | default dict)) 0 }}
+  {{- range $x := (index ($lRole | default dict) "rules" | default list) }}{{- if not (has ($x | toJson) (index $renderedMinters $mk)) }}{{- $liveMinter = false }}{{- end }}{{- end }}
+  {{- if not $liveMinter }}
+  {{- $wide = append $wide (printf "RoleBinding %s/%v (Role %v, whose live rules are not yet the minter-only rules rendered here; a later evaluation that observes them issues the token)" $rbNs (dig "metadata" "name" "" $lrb) (dig "roleRef" "name" "" $lrb)) }}
+  {{- end }}
+  {{- else }}
   {{- $wide = append $wide (printf "RoleBinding %s/%v (%v %v)" $rbNs (dig "metadata" "name" "" $lrb) (dig "roleRef" "kind" "" $lrb) (dig "roleRef" "name" "" $lrb)) }}
   {{- end }}
   {{- end }}

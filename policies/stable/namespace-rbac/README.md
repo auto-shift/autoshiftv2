@@ -120,7 +120,9 @@ still applies.
 Roles and RoleBindings are enforced with `mustonlyhave`, so the rules and the subjects are replaced,
 not merged: a rule or a subject removed from the values is removed from the cluster. The `roleRef`
 of a RoleBinding cannot change, so a RoleBinding whose `role` or `clusterRole` changes is deleted
-and created again (`recreateOption: IfRequired`). ServiceAccounts are enforced with `musthave`, because OpenShift adds
+and created again (`recreateOption: IfRequired`). Only `policy-namespace-rbac` carries that option: the
+`policy-namespace-rbac-test` copy of the binding has none, so a `-test` Policy set to Enforce by hand
+reports the mismatch and never deletes a binding. ServiceAccounts are enforced with `musthave`, because OpenShift adds
 image pull secrets to them that `mustonlyhave` would remove.
 
 A RoleBinding binds its subjects to the Role whatever the owner of the ServiceAccount, so a subject
@@ -326,7 +328,10 @@ On the managed cluster:
   ServiceAccount, when a RoleBinding names it without pointing to a minter-only Role that the
   policy renders in that evaluation (a held Role, a ClusterRole, and a RoleBinding created by hand
   all count), or when a live Role in that namespace creates workloads or can read the Secret. A
-  subject names the ServiceAccount as `kind: ServiceAccount` or as `kind: User` with the name
+  rendered minter-only Role only exempts the binding once the live Role holds no rule other than
+  the rendered ones: the policy renders the Role it wants, and the API server can still refuse the
+  update that narrows it. While the live Role is missing or holds another rule, the Secret waits
+  for a later evaluation that observes the narrowed Role. A subject names the ServiceAccount as `kind: ServiceAccount` or as `kind: User` with the name
   `system:serviceaccount:<namespace>:<name>`;
 - a RoleBinding to a Role that is not minter-only is held, and reported, when one of its subjects
   has a live Secret of type `kubernetes.io/service-account-token` labeled
