@@ -19,6 +19,8 @@
 # validation in autoshift/templates/_validate-cluster-install.tpl reports this for cluster sets and for
 # the clusters AutoShift installs. The checks here cover the merged config, which includes per-cluster
 # overrides on an existing hub that Helm does not validate.
+# A blank key is null and counts as unset. Any other value that is not a map fails, including false, 0,
+# '' and [], which `default dict` would turn into an empty map.
 object-templates-raw: |
   {{hub- $policyNs := .PolicyMetadata.namespace hub}}
   {{hub- $raw := (fromConfigMap $policyNs (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
@@ -44,8 +46,10 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- $cmAnnotation := "unsupported.agent-install.openshift.io/assisted-service-configmap" hub}}
   {{hub- $cmName := "assisted-service-config" hub}}
-  {{hub- $annotations := ((dig "annotations" (dict) $prov) | default dict) hub}}
-  {{hub- $serviceConfig := ((dig "assistedServiceConfig" (dict) $prov) | default dict) hub}}
+  {{hub- $annotations := (dig "annotations" (dict) $prov) hub}}
+  {{hub- if eq (printf "%T" $annotations) "<nil>" hub}}{{hub- $annotations = dict hub}}{{hub- end hub}}
+  {{hub- $serviceConfig := (dig "assistedServiceConfig" (dict) $prov) hub}}
+  {{hub- if eq (printf "%T" $serviceConfig) "<nil>" hub}}{{hub- $serviceConfig = dict hub}}{{hub- end hub}}
   {{hub- range $field, $entries := (dict "annotations" $annotations "assistedServiceConfig" $serviceConfig) hub}}
   {{hub- if not (hasPrefix "map[" (printf "%T" $entries)) hub}}{{hub fail (printf "config.acm.provisioning.%s must be a map of strings" $field) hub}}{{hub- end hub}}
   {{hub- range $key, $value := $entries hub}}
