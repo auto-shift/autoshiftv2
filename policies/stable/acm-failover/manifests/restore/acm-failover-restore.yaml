@@ -13,7 +13,8 @@
 #                action itself and not something an idle standby should prepare
 # Managed cluster activation data is skipped in both, so a standby never takes a healthy hub's fleet.
 #
-# Entirely hub-side, like the schedule: every value comes from config.acm-failover.passive.
+# Every value comes from config.acm-failover.passive on the hub. The one local read is the live
+# Restore, for the fields the cluster-backup controller adds to it.
 object-templates-raw: |
   # INDENTATION ANCHOR
   {{hub- $rcmRaw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
@@ -57,7 +58,13 @@ object-templates-raw: |
   {{hub- if and (eq $scope "hive-secrets") (ne $cleanup "None") hub}}
   {{hub- fail (printf "acm-failover: config.acm-failover.passive.cleanupBeforeRestore is %q with scope 'hive-secrets'. A filtered restore must use 'None': cleanup would delete every hub resource outside the Hive Secrets it restores." $cleanup) hub}}
   {{hub- end hub}}
-  - complianceType: musthave
+  # mustonlyhave, so switching scope from hive-secrets to full removes includedResources and
+  # orLabelSelectors; musthave never deletes a field, and the filter would stay in force. The
+  # cluster-backup controller writes fields of its own (spec.hooks: {}), so any key this policy does
+  # not set is carried over from the live object rather than fought over.
+  {{- $managed := (list "syncRestoreWithNewBackups" "restoreSyncInterval" "cleanupBeforeRestore" "veleroManagedClustersBackupName" "veleroCredentialsBackupName" "veleroResourcesBackupName" "includedResources" "orLabelSelectors") }}
+  {{- $live := (lookup "cluster.open-cluster-management.io/v1beta1" "Restore" "open-cluster-management-backup" "acm-failover-restore-passive-sync") | default dict }}
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: cluster.open-cluster-management.io/v1beta1
       kind: Restore
@@ -65,6 +72,11 @@ object-templates-raw: |
         name: acm-failover-restore-passive-sync
         namespace: open-cluster-management-backup
       spec:
+        {{- range $k, $v := (index $live "spec" | default dict) }}
+        {{- if not (has $k $managed) }}
+        {{ $k }}: {{ $v | toRawJson }}
+        {{- end }}
+        {{- end }}
         syncRestoreWithNewBackups: true
         restoreSyncInterval: '{{hub index $passive "restoreSyncInterval" | default "30m" hub}}'
         cleanupBeforeRestore: {{hub $cleanup hub}}

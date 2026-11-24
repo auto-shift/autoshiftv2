@@ -49,7 +49,6 @@ object-templates-raw: |
   {{hub- $credKey := (index $credRef "key" | default "cloud") hub}}
   {{hub- $srcRef := (index $store "sourceSecretRef" | default dict) hub}}
   {{hub- $srcSecretName := (index $srcRef "name" | default "") hub}}
-  {{hub- $srcSecretNs := (index $srcRef "namespace" | default .PolicyMetadata.namespace) hub}}
   {{hub- $profile := (index $store "profile" | default "") hub}}
   {{hub- if not (has $type (list "s3" "azure" "gcp")) hub}}
   {{hub- fail (printf "oadp: config.oadp.storage.type must be 's3', 'azure' or 'gcp', got %q. There is no obc backend here: a claim against this cluster's own storage would not survive it. For an S3-compatible appliance use 's3' with storage.endpoint." $type) hub}}
@@ -74,22 +73,17 @@ object-templates-raw: |
   {{hub- end hub}}
   #
   {{hub- $cfg := dict hub}}
+  # The sourceSecretRef Secret is never read on the hub. Its bucketnames and endpoint keys are read
+  # here, on the managed cluster, from oadp-s3-source, the copy policy-oadp-credentials-copy makes.
+  # That copy exists by the time this policy runs: it depends on policy-oadp-credentials-test, which
+  # asserts the credentials -assemble builds from the same copy.
+  {{- $staged := dict }}
   {{hub- if $srcSecretName hub}}
-  {{hub- $src := (lookup "v1" "Secret" $srcSecretNs $srcSecretName) | default dict hub}}
-  {{hub- if not (index $src "data") hub}}
-  {{hub- fail (printf "oadp: config.oadp.storage.sourceSecretRef names Secret %s/%s, which does not exist ON THE HUB. It supplies access_key_id and access_key_secret, and optionally bucketnames and endpoint." $srcSecretNs $srcSecretName) hub}}
-  {{hub- end hub}}
-  {{hub- $srcData := (index $src "data") hub}}
-  # A bucket name and an endpoint URL are not credentials, so they are read off the looked-up object.
-  # fromSecret is not used for them: on the hub its output is encrypted, so piping it through
-  # base64dec writes base64dec's error text in as the value.
-  {{hub- if (index $srcData "bucketnames") hub}}
-  {{hub- $bucket = (index $srcData "bucketnames" | base64dec) hub}}
-  {{hub- end hub}}
-  {{hub- if (index $srcData "endpoint") hub}}
-  {{hub- $_ := set $cfg "s3Url" (index $srcData "endpoint" | base64dec) hub}}
-  {{hub- $_ := set $cfg "s3ForcePathStyle" "true" hub}}
-  {{hub- end hub}}
+  {{- $stagedSecret := (lookup "v1" "Secret" "openshift-adp" "oadp-s3-source") | default dict }}
+  {{- $staged = ($stagedSecret.data | default dict) }}
+  {{- if not $staged }}
+  {{- fail "oadp: config.oadp.storage.sourceSecretRef is set but Secret openshift-adp/oadp-s3-source, which policy-oadp-credentials-copy copies from it, is missing ON THIS CLUSTER." }}
+  {{- end }}
   {{hub- $credName = "cloud-credentials" hub}}
   {{hub- $credKey = "cloud" hub}}
   {{hub- end hub}}
@@ -99,8 +93,9 @@ object-templates-raw: |
   {{hub- $credKey = (index $credFrom "key" | default "cloud") hub}}
   {{hub- end hub}}
   #
-  # Checked here rather than with the other inputs: sourceSecretRef may supply the bucket.
-  {{hub- if (empty $bucket) hub}}
+  # Checked here rather than with the other inputs. With a sourceSecretRef its bucketnames key may
+  # supply the bucket, which is checked on the managed cluster below.
+  {{hub- if and (empty $bucket) (not $srcSecretName) hub}}
   {{hub- fail "oadp: no bucket. Set config.oadp.storage.bucket, or supply a bucketnames key in the Secret named by storage.sourceSecretRef. Refusing to configure a DataProtectionApplication with no bucket, which would report Compliant while backing up nothing." hub}}
   {{hub- end hub}}
   {{hub- if $profile hub}}
@@ -135,17 +130,38 @@ object-templates-raw: |
   {{hub- if and (index $cfg "s3Url") (not (index $cfg "region")) hub}}
   {{hub- fail "oadp: storage.endpoint is set but storage.region is empty. OpenShift APIs for Data Protection requires a region whenever an S3 URL is configured, and without one it creates no BackupStorageLocation. Set config.oadp.storage.region; an S3-compatible appliance that has no real region still needs a placeholder, and its own documentation usually names one." hub}}
   {{hub- end hub}}
+  # The bucket and endpoint resolve here, on the managed cluster: configuration wins, and the staged
+  # sourceSecretRef copy fills in its bucketnames and endpoint keys.
+  {{- $dpaBucket := "{{hub $bucket hub}}" }}
+  {{- if and (empty $dpaBucket) (index $staged "bucketnames") }}
+  {{- $dpaBucket = (index $staged "bucketnames" | base64dec) }}
+  {{- end }}
+  {{- if empty $dpaBucket }}
+  {{- fail "oadp: no bucket. Set config.oadp.storage.bucket, or add a bucketnames key to the Secret named by storage.sourceSecretRef. Refusing to configure a DataProtectionApplication with no bucket, which would report Compliant while backing up nothing." }}
+  {{- end }}
+  {{- $s3Url := "{{hub index $cfg "s3Url" | default "" hub}}" }}
+  {{- $pathStyle := "{{hub index $cfg "s3ForcePathStyle" | default "" hub}}" }}
+  {{- if and (empty $s3Url) (index $staged "endpoint") }}
+  {{- $s3Url = (index $staged "endpoint" | base64dec) }}
+  {{- end }}
+  {{- if and $s3Url (empty $pathStyle) }}
+  {{- $pathStyle = "true" }}
+  {{- end }}
+  {{- if and $s3Url (empty "{{hub index $cfg "region" | default "" hub}}") }}
+  {{- fail "oadp: the Secret named by storage.sourceSecretRef supplies an endpoint but config.oadp.storage.region is empty. OpenShift APIs for Data Protection requires a region whenever an S3 URL is configured, and without one it creates no BackupStorageLocation." }}
+  {{- end }}
   # Backup data and request signatures cross this connection, and a trust bundle does not stop
-  # Velero from using plain HTTP. Checked on the final s3Url, after storage.endpoint, the endpoint
-  # key in the sourceSecretRef Secret and storage.config have all merged, so no input path skips it.
-  {{hub- $allowInsecure := (eq (toString (index $store "allowInsecureEndpoint")) "true") hub}}
-  {{hub- if and (index $cfg "s3Url") (not (hasPrefix "https://" (lower (index $cfg "s3Url")))) (not $allowInsecure) hub}}
-  {{hub- fail (printf "oadp: the S3 URL %q does not use https, so backup data would cross the network unencrypted. Use an https endpoint, or set config.oadp.storage.allowInsecureEndpoint: true to accept plain HTTP for an object store on a trusted network." (index $cfg "s3Url")) hub}}
-  {{hub- end hub}}
+  # Velero from using plain HTTP. Checked on the final URL, after storage.endpoint, storage.config
+  # and the staged endpoint key have all merged, so no input path skips it.
+  {{- if and $s3Url (not (hasPrefix "https://" (lower $s3Url))) (ne "{{hub toString (index $store "allowInsecureEndpoint") hub}}" "true") }}
+  {{- fail (printf "oadp: the S3 URL %q does not use https, so backup data would cross the network unencrypted. Use an https endpoint, or set config.oadp.storage.allowInsecureEndpoint: true to accept plain HTTP for an object store on a trusted network." $s3Url) }}
+  {{- end }}
   {{hub- $caNs := (index $caRef "namespace" | default "openshift-adp") hub}}
   {{hub- $caName := (index $caRef "name" | default "") hub}}
   {{hub- $caKey := (index $caRef "key" | default "ca-bundle.crt") hub}}
-  - complianceType: musthave
+  # mustonlyhave, so a setting removed from values is removed here too; musthave never deletes a
+  # field. logFormat and disableFsBackup are the API defaults, stated so the two do not fight.
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: oadp.openshift.io/v1alpha1
       kind: DataProtectionApplication
@@ -157,8 +173,10 @@ object-templates-raw: |
         # refuses to reconcile with "BackupLocation must have velero prefix when backupImages is not
         # set to false" and no BackupStorageLocation is created.
         backupImages: false
+        logFormat: text
         configuration:
           velero:
+            disableFsBackup: false
             defaultPlugins:
               {{hub- range $p := $plugins hub}}
               - {{hub $p | quote hub}}
@@ -175,7 +193,7 @@ object-templates-raw: |
               provider: {{hub $provider | quote hub}}
               default: true
               objectStorage:
-                bucket: {{hub $bucket | quote hub}}
+                bucket: {{ $dpaBucket | quote }}
                 {{hub- if $prefix hub}}
                 prefix: {{hub $prefix | quote hub}}
                 {{hub- end hub}}
@@ -190,8 +208,14 @@ object-templates-raw: |
               {{hub- if $cfg hub}}
               config:
                 {{hub- range $k, $v := $cfg hub}}
+                {{hub- if not (has $k (list "s3Url" "s3ForcePathStyle")) hub}}
                 {{hub $k | quote hub}}: {{hub $v | quote hub}}
                 {{hub- end hub}}
+                {{hub- end hub}}
+                {{- if $s3Url }}
+                s3Url: {{ $s3Url | quote }}
+                s3ForcePathStyle: {{ $pathStyle | quote }}
+                {{- end }}
               {{hub- end hub}}
               credential:
                 name: {{hub $credName | quote hub}}

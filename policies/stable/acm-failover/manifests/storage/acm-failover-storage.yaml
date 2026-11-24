@@ -160,7 +160,9 @@ object-templates-raw: |
           [default]
           aws_access_key_id={{ $accessKey }}
           aws_secret_access_key={{ $secretKey }}
-  - complianceType: musthave
+  # mustonlyhave, so a setting removed from values is removed here too; musthave never deletes a
+  # field. logFormat and disableFsBackup are the API defaults, stated so the two do not fight.
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: oadp.openshift.io/v1alpha1
       kind: DataProtectionApplication
@@ -173,8 +175,10 @@ object-templates-raw: |
         # DataProtectionApplication with "BackupLocation must have velero prefix when backupImages
         # is not set to false", and no BackupStorageLocation is ever created.
         backupImages: false
+        logFormat: text
         configuration:
           velero:
+            disableFsBackup: false
             defaultPlugins:
               - openshift
               - aws
@@ -318,7 +322,8 @@ object-templates-raw: |
   {{- fail "acm-failover: the Secret named by storage.sourceSecretRef supplies an endpoint but config.acm-failover.storage.region is empty. OpenShift APIs for Data Protection requires a region whenever an S3 URL is configured, and without one it creates no BackupStorageLocation." }}
   {{- end }}
   {{- if $emitDpa }}
-  - complianceType: musthave
+  # mustonlyhave with the API defaults stated, as in the obc branch.
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: oadp.openshift.io/v1alpha1
       kind: DataProtectionApplication
@@ -329,8 +334,10 @@ object-templates-raw: |
         # See the note in the obc branch: without this OADP 1.6 refuses to reconcile and no
         # BackupStorageLocation is ever created.
         backupImages: false
+        logFormat: text
         configuration:
           velero:
+            disableFsBackup: false
             defaultPlugins:
               {{hub- range $p := $plugins hub}}
               - {{hub $p hub}}
