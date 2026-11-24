@@ -58,6 +58,13 @@ cat > "$GITOPS_BOOTSTRAP_VALUES" << 'EOF'
 # =============================================================================
 
 # Bootstrap-specific settings
+# Set true when OpenShift GitOps is already installed (operator, OperatorGroup and Subscription exist).
+# The chart then skips the namespace, OperatorGroup, full Subscription and CRD-wait hooks, and only sets
+# the Subscription env. Install with `helm upgrade --install ... --take-ownership` so Helm can adopt the
+# existing Subscription, and list any pre-existing cluster-scoped Argo CD namespaces in
+# gitops.clusterScopedNamespaces.
+skipOperatorInstall: false
+
 ignoreHelmHooks: false
 
 # Job image for waiting for CRD. Leave blank: the chart resolves it from the cluster's own
