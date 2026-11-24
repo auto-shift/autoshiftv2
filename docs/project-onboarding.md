@@ -83,7 +83,7 @@ The policies follow the same rules, so what you learn from one applies to the ot
 
 | Policy | On invalid input | Where to read the errors |
 |---|---|---|
-| project-onboarding | The project is skipped, the others apply | ConfigMaps `project-onboarding-status-<shard>` |
+| project-onboarding | The project is skipped, the others apply. A rendered config that cannot be read, or a `projects` that is missing or not a map, applies nothing | ConfigMaps `project-onboarding-status-<shard>`; for the rendered config, the hub template error on every shard Policy |
 | namespace-rbac | The entry or namespace is skipped, the others apply | ConfigMap `namespace-rbac-status` |
 | custom-sccs | The SCC entry is skipped, the others apply | ConfigMap `custom-sccs-status` |
 | project-networks | Nothing is applied | The hub template error on the Policy |
@@ -364,8 +364,8 @@ Pruning never deletes a namespace. Removing a project leaves its namespace and i
 place.
 
 Pruning holds back while the configuration is in doubt. Nothing of a project that has errors is
-deleted while the error stands, and no sweep runs when the rendered configuration cannot be read or
-has no `projects` key. An explicit `projects: {}` is a deliberate removal and sweeps every owned
+deleted while the error stands, also by another shard, and a rendered configuration that cannot be
+read or has no `projects` key fails the hub template, so nothing is applied or deleted. An explicit `projects: {}` is a deliberate removal and sweeps every owned
 object. The full rules are in the
 [project-onboarding README](../policies/stable/project-onboarding/README.md#pruning).
 

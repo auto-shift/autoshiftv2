@@ -169,9 +169,9 @@ The project key and the namespace must be DNS-1123 labels: lowercase letters, di
 starting and ending with a letter or digit, at most 63 characters. A project whose key or namespace
 is not, or whose entry is not a map, is skipped whole and reported. A project entry that is
 malformed never affects the other projects. An entry that is not a map claims no namespace, so a
-valid project can declare the namespace of its key. Its live objects outside the namespaces other
-projects declare still carry its `autoshift.io/project` label, so they belong to a project in error
-and are never pruned.
+valid project can declare the namespace of its key. Its live objects still carry its
+`autoshift.io/project` label, so they belong to a project in error and are never pruned, by any
+shard, also in a namespace that another project declares now.
 
 The policy never manages a platform namespace. A project whose namespace, the project key by
 default, is `openshift`, `default`, `multicluster-engine`, or `hive`, or starts with `kube-`,
@@ -197,7 +197,8 @@ value or a group name keeps them literally.
 
 - A label or annotation is skipped when a placeholder in its key or value is unresolved. An
   explicitly empty value, `value: ''`, is kept: `k8s.ovn.org/primary-user-defined-network` takes an
-  empty value. An entry without `value`, or with `value: null`, renders no empty value.
+  empty value. An entry without `value`, or with `value: null`, is skipped: it never renders an
+  empty value or the text `<nil>`.
 - An access level whose group name has an unresolved placeholder, or is blank, gets no RoleBinding.
   When that name is a project override of `write` or `read`, the status lists it as a note, for
   example `group read name "K8S_{tem}_AUDIT" has an unresolved placeholder, so the level gets no
@@ -317,8 +318,8 @@ Only the enforcing shard Policy carries `recreateOption: IfRequired`: the `-test
 same binding without it, so an Enforce set on a `-test` Policy by hand reports the mismatch and
 never deletes a binding.
 
-A role must be a string of at most 253 characters that the API server accepts as a name: not `.`
-or `..`, and without `/` or `%`. Any other role is reported for every project that binds that level,
+A role must be a non-empty string of at most 253 characters that the API server accepts as a name:
+not `.` or `..`, and without `/` or `%`. Any other role is reported for every project that binds that level,
 for example `projectOnboarding.defaults.roles.admin "team/admin" is not a valid ClusterRole name`.
 That level's RoleBinding is not rendered and stays declared, so the live binding is kept as it is
 and is never deleted to be created under a name the API server refuses.
@@ -726,7 +727,7 @@ never shift under a partial set. The errors are listed under the status key
 render.
 
 The admin tier also needs a usable rendered config. When `projects` is missing, null, or not a
-map, the config is broken and the status key `rendered-config` reports it: no admin
+map, the config is broken and the hub template fails, see [Status](#status): no admin
 AdminNetworkPolicy is rendered or pruned, and the live ones stay as they were. An explicit
 `projects: {}` is a valid empty set and keeps the tier.
 
@@ -1026,13 +1027,16 @@ off:
   address until the label is resolved. Once no declared project names such a namespace, the objects
   are pruned as usual.
 - A namespace declared by more than one project is never swept.
+- An object whose `autoshift.io/project` label names a project entry that is not a map is never a
+  candidate, in any shard, also in a namespace that another project declares. That entry is in
+  error, so its objects wait until it is fixed or removed.
 - A namespace with an empty `autoshift.io/project` value holds nothing back.
 - No admin AdminNetworkPolicy is deleted or reported while the admin tier has errors.
 - No sweep runs when the cluster's rendered configuration cannot be read, or when it has no
   `config.projectOnboarding.projects` map. A missing `projects` key, for example after a values restructure or a
-  misplaced file, sweeps nothing and is reported in the [status](#status), as is a rendered
-  configuration that cannot be read. An explicit `projects: {}` is a deliberate removal and sweeps
-  every owned object.
+  misplaced file, fails the hub template, as does a rendered configuration that cannot be read, so
+  nothing is applied, changed, or deleted, see [Status](#status). An explicit `projects: {}` is a
+  deliberate removal and sweeps every owned object.
 
 After a project moves to another namespace, the old Namespace still carries `autoshift.io/project:
 <project>`, so the project's EgressIP and AdminNetworkPolicy would keep selecting it. The release
@@ -1122,7 +1126,7 @@ data:
 | `egressIP <address> is also declared by project <project>` (each other project, comma-separated) | hub | Project skipped, on every project that declares the address |
 | `the EgressIP CRD (egressips.k8s.ovn.org) is not installed, so the egress IP addresses cannot be assigned` | managed cluster | Nothing rendered for the project |
 | `no resolvable admin group` | hub | Project skipped |
-| `projectOnboarding.defaults.roles.<level> <problem>, so the RoleBinding autoshift-<level> is not changed`, where the problem is `is not a string`, `is longer than 253 characters`, or `"<role>" is not a valid ClusterRole name: ...` | hub | That RoleBinding not rendered, the live one kept, nothing of the project pruned |
+| `projectOnboarding.defaults.roles.<level> <problem>, so the RoleBinding autoshift-<level> is not changed`, where the problem is `is not a string`, `is empty`, `is longer than 253 characters`, or `"<role>" is not a valid ClusterRole name: ...` | hub | That RoleBinding not rendered, the live one kept, nothing of the project pruned |
 | `label <key>=<value> is not a valid Kubernetes label` | hub | Label skipped |
 | `label <key> is reserved for project ownership`, `annotation <key> is reserved for project ownership` | hub | Label or annotation skipped |
 | `label <key> is reserved for the platform; list it in projectOnboarding.defaults.allowedPlatformKeys to set it`, `annotation <key> is reserved ...` | hub | Label or annotation skipped |
@@ -1157,15 +1161,30 @@ example one that echoes a long value, is cut to 400 characters followed by `...`
 When a shard Policy would grow past its size limit, the key `project-onboarding.size` of that
 shard's status names the projects that are not rendered, see [Size limit](#size-limit).
 
-When the cluster's rendered configuration, `<cluster>.rendered-config`, cannot be read, or its
-`config.projectOnboarding.projects` is missing, `null`, or not a map, nothing is rendered and the
-status of every shard holds the key `rendered-config`, for example
-`rendered-config: cannot read cluster1.rendered-config` or
-`rendered-config: config.projectOnboarding.projects is not set in cluster1.rendered-config, so no project is onboarded on this cluster; set it to the projects, or to {} for none`.
-The placement selects only clusters labeled `project-onboarding: 'true'`, so a missing key is a
-broken configuration, never a request to onboard nothing. The status is written rather than
-deleted, so every `-test` Policy stays NonCompliant while nothing can be checked. An explicit
-`projects: {}` is valid: it has no projects and nothing to report.
+When the cluster's rendered configuration, `<cluster>.rendered-config`, cannot be read, its
+`config.projectOnboarding` is set and not a map, or its `config.projectOnboarding.projects` is
+missing, `null`, or not a map, the hub template of every shard Policy and every `-test` Policy
+fails. Each Policy is NonCompliant with a template error that ends with the cause, for example
+`project-onboarding: cannot read cluster1.rendered-config; nothing is applied, changed or deleted until it is fixed` or
+`project-onboarding: config.projectOnboarding.projects is not set in cluster1.rendered-config, so no project is onboarded on this cluster; set it to the projects, or to {} for none; nothing is applied, changed or deleted until it is fixed`.
+Red Hat Advanced Cluster Management applies nothing of a Policy whose hub template fails. It
+removes the Policy's ConfigurationPolicy from the managed cluster after setting its
+`pruneObjectBehavior` to `None`, so no object is deleted, and every live object, the status
+ConfigMaps included, stays as it is until the configuration is fixed. The placement selects only
+clusters labeled `project-onboarding: 'true'`, so a missing key is a broken configuration, never a
+request to onboard nothing. An explicit `projects: {}` is valid: it has no projects and nothing to
+report.
+
+The error quotes the template before the cause, so the compliance message, which is cut at 4096
+bytes, can end before the cause. The full text is in the annotation
+`policy.open-cluster-management.io/hub-templates-error` of the replicated Policy on the hub, and in
+the `PolicyPropagation` warning event of the root Policy:
+
+```bash
+oc get policy -n <cluster> <policy-namespace>.policy-project-onboarding-0 -o json \
+  | jq -r '.spec["policy-templates"][].objectDefinition.metadata.annotations["policy.open-cluster-management.io/hub-templates-error"] // empty' \
+  | sed 's/.*error calling fail: //'
+```
 
 The checks read the raw values. `projectOnboarding.defaults` or one of its sections, such as
 `groups` or `sizes`, that is set to anything other than a map, for example `false`, `[]`, or `''`,
@@ -1205,7 +1224,7 @@ dry run nothing is written, so the shard Policy is NonCompliant and names the mi
 assertion, in its compliance details, or check the values against the error table.
 
 Errors in `config.projectOnboarding.defaults` itself, which would affect every project, fail hub template
-resolution for the whole policy: `projectOnboarding.defaults`, or its `labels`, `annotations`, `groups`,
+resolution for the whole policy in the same way: `projectOnboarding.defaults`, or its `labels`, `annotations`, `groups`,
 `roles`, `sizes`, `networkProfiles`, or `allowedPlatformKeys`, set to something other than a map.
 A malformed `adminNetworkPolicies` is reported in the status instead, and stops only the admin
 tier.
