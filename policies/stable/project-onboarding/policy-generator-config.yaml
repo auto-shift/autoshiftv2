@@ -19,6 +19,9 @@ policyDefaults:
   remediationAction: ${REMEDIATION}
   severity: medium
   consolidateManifests: true
+  # None: removing a project from config, or the policy from a cluster, never deletes a Namespace
+  # and the workloads in it. Deletion is a deliberate act.
+  pruneObjectBehavior: None
   evaluationInterval:
     compliant: ${EVAL_COMPLIANT}
     noncompliant: ${EVAL_NONCOMPLIANT}
@@ -36,3 +39,9 @@ policies:
   - name: policy-project-onboarding
     manifests:
       - path: manifests/project-onboarding.yaml
+  # Separate inform policy: a root remediationAction overrides its children, so an assertion cannot
+  # be bundled inside the enforcing one.
+  - name: policy-project-onboarding-ready
+    remediationAction: inform
+    manifests:
+      - path: test/project-onboarding-ready.yaml

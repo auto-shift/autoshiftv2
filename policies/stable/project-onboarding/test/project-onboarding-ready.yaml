@@ -1,0 +1,44 @@
+# Do the configured Namespaces and RoleBindings exist on the cluster?
+#
+# inform-only, musthave: reports a Namespace that is missing or lacks the labels policy-project-onboarding
+# sets, and a RoleBinding that is missing or binds a different ClusterRole or other subjects.
+# It changes nothing. A separate policy, because a root remediationAction overrides its children, so
+# an assertion bundled inside the enforcing policy would enforce.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $projects := (dig "projectOnboarding" "projects" (dict) $cfg) hub}}
+  {{hub- if not $projects hub}}{{hub fail "project-onboarding: config.projectOnboarding.projects is missing or empty in the rendered-config ConfigMap" hub}}{{hub- end hub}}
+  {{hub- range $name, $p := $projects hub}}
+  {{hub- $labels := merge (dict "autoshift.io/managed-by" "project-onboarding") ($p.labels | default dict) hub}}
+  {{hub- if $p.udn hub}}
+  {{hub- $labels = merge $labels (dict "autoshift.io/udn" $p.udn "k8s.ovn.org/primary-user-defined-network" "") hub}}
+  {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $name | toJson hub}}
+        labels: {{hub $labels | toJson hub}}
+  {{hub- range $binding, $rb := ($p.roleBindings | default dict) hub}}
+  {{hub- $subjects := list hub}}
+  {{hub- range $g := ($rb.groups | default list) hub}}
+  {{hub- $subjects = append $subjects (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "Group" "name" $g) hub}}
+  {{hub- end hub}}
+  {{hub- range $u := ($rb.users | default list) hub}}
+  {{hub- $subjects = append $subjects (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "User" "name" $u) hub}}
+  {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: {{hub printf "autoshift-%s" $binding | toJson hub}}
+        namespace: {{hub $name | toJson hub}}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: {{hub $rb.clusterRole | toJson hub}}
+      subjects: {{hub $subjects | toJson hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

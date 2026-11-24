@@ -1,27 +1,65 @@
-# TODO: Replace this placeholder with your actual resource definition.
+# One Namespace and its RoleBindings per entry in config.projectOnboarding.projects.
 #
-# PolicyGenerator wraps this bare manifest into a ConfigurationPolicy — author only the resource,
-# not the ConfigurationPolicy/object-templates boilerplate. remediationAction, severity, and
-# evaluationInterval are injected from policy-generator-config.yaml.
+# The input is validated when the autoshift chart renders, in
+# autoshift/templates/_validate-project-onboarding.tpl, so this template assumes valid names, labels
+# and subjects. Every value is written through toJson, so none needs quoting here.
 #
-# If the resource needs hub templates ({{hub ... hub}}), loops (range), or conditionals, replace
-# this whole file with a bare object-templates-raw block instead — the complianceType lives inside
-# the content and PG still wraps it into one ConfigurationPolicy:
+# Namespace: musthave. The policy owns the labels and annotations it sets, not the whole Namespace.
+# OpenShift, Pod Security admission label sync, OpenShift GitOps and other tools write their own
+# labels and annotations, and mustonlyhave would fight them. A label removed from config therefore
+# stays on the Namespace.
 #
-#   object-templates-raw: |
-#     - complianceType: musthave
-#       objectDefinition:
-#         apiVersion: v1
-#         kind: ConfigMap
-#         metadata:
-#           name: example
-#           namespace: default
-#         data:
-#           key: '{{hub index .ManagedClusterLabels "autoshift.io/project-onboarding" hub}}'
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: project-onboarding-placeholder
-  namespace: default
-data:
-  placeholder: "true"
+# udn sets autoshift.io/udn, which a ClusterUserDefinedNetwork selects, and the label OVN-Kubernetes
+# requires on a Namespace that uses a primary user-defined network. That label only takes effect when
+# it is present at creation, which it is when this policy creates the Namespace.
+#
+# RoleBinding: mustonlyhave, so the subjects are exactly the configured groups and users. musthave
+# merges lists, and a group removed from config would keep its access. roleRef is immutable, so
+# recreateOption replaces the binding when the clusterRole changes.
+#
+# A placed policy with no projects fails, rather than reporting Compliant with nothing applied.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $projects := (dig "projectOnboarding" "projects" (dict) $cfg) hub}}
+  {{hub- if not $projects hub}}{{hub fail "project-onboarding: config.projectOnboarding.projects is missing or empty in the rendered-config ConfigMap" hub}}{{hub- end hub}}
+  {{hub- range $name, $p := $projects hub}}
+  {{hub- $labels := merge (dict "autoshift.io/managed-by" "project-onboarding") ($p.labels | default dict) hub}}
+  {{hub- if $p.udn hub}}
+  {{hub- $labels = merge $labels (dict "autoshift.io/udn" $p.udn "k8s.ovn.org/primary-user-defined-network" "") hub}}
+  {{hub- end hub}}
+  {{hub- $annotations := dict hub}}
+  {{hub- if $p.displayName hub}}{{hub- $_ := set $annotations "openshift.io/display-name" $p.displayName hub}}{{hub- end hub}}
+  {{hub- if $p.description hub}}{{hub- $_ := set $annotations "openshift.io/description" $p.description hub}}{{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $name | toJson hub}}
+        labels: {{hub $labels | toJson hub}}
+        annotations: {{hub $annotations | toJson hub}}
+  {{hub- range $binding, $rb := ($p.roleBindings | default dict) hub}}
+  {{hub- $subjects := list hub}}
+  {{hub- range $g := ($rb.groups | default list) hub}}
+  {{hub- $subjects = append $subjects (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "Group" "name" $g) hub}}
+  {{hub- end hub}}
+  {{hub- range $u := ($rb.users | default list) hub}}
+  {{hub- $subjects = append $subjects (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "User" "name" $u) hub}}
+  {{hub- end hub}}
+  - complianceType: mustonlyhave
+    recreateOption: IfRequired
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: {{hub printf "autoshift-%s" $binding | toJson hub}}
+        namespace: {{hub $name | toJson hub}}
+        labels:
+          autoshift.io/managed-by: project-onboarding
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: {{hub $rb.clusterRole | toJson hub}}
+      subjects: {{hub $subjects | toJson hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

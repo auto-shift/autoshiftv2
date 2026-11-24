@@ -746,6 +746,51 @@ hubClusterSets:
           - admin
 
       # =======================================================================
+      # Project Onboarding - policy: project-onboarding
+      # =======================================================================
+      # One Namespace per projects entry, keyed by the Namespace name, with RoleBindings to
+      # EXISTING ClusterRoles. No Roles are created. Validated when the autoshift chart renders.
+      #
+      #   displayName, description  optional; the openshift.io/display-name and description annotations
+      #   labels                    optional Namespace labels; string values. The autoshift.io,
+      #                             k8s.ovn.org, kubernetes.io, k8s.io and openshift.io prefixes are reserved
+      #   roleBindings              map keyed by binding name; each becomes RoleBinding autoshift-<name>
+      #     clusterRole             required, an existing ClusterRole such as admin, edit or view
+      #     groups, users           lists of names; at least one entry across the two
+      #   udn                       optional; joins the primary ClusterUserDefinedNetwork that selects
+      #                             autoshift.io/udn: <udn>. Takes effect only on a new Namespace
+      #
+      # Maps merge across global, clusterset and cluster config, so a cluster can add a project or
+      # a binding. Lists are replaced whole, so a cluster restating groups gets exactly its list.
+      # Removing a project leaves its Namespace in place: nothing is deleted.
+      projectOnboarding:
+        projects:
+          payments-api:
+            displayName: 'Payments API'
+            description: 'Payment processing services'
+            labels:
+              example.com/team: 'payments'
+              example.com/cost-center: 'cc-1234'
+            roleBindings:
+              admins:
+                clusterRole: admin
+                groups:
+                  - payments-admins
+              developers:
+                clusterRole: edit
+                groups:
+                  - payments-devs
+                users:
+                  - alice@example.com
+            udn: payments-net
+          reporting:
+            roleBindings:
+              viewers:
+                clusterRole: view
+                groups:
+                  - reporting-readers
+
+      # =======================================================================
       # Logging - policy: logging
       # =======================================================================
       # One ClusterLogForwarder per entry, created in namespace (default openshift-logging).
