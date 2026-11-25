@@ -64,8 +64,9 @@ config:
       - source: redhat-operators
         imagePath: redhat/redhat-operator-index
         tag: v4.22                     # match the cluster's OpenShift minor
-    useIDMS: true
-    disableDefaultCatalogs: true
+        priority: 10                   # optional; OLM prefers the higher value when resolving dependencies
+    useIDMS: true                      # default true; false writes an ImageContentSourcePolicy instead
+    disableDefaultCatalogs: true       # default false
     releaseSignatures:                 # required; [] for none
       - version: '4.22.18'             # optional, for people reading the list
         digest: 'sha256:<64 hex characters>'

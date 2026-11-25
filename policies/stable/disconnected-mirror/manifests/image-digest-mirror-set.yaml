@@ -11,7 +11,12 @@ object-templates-raw: |
   {{hub $url = (printf "%s/%s" $mirrorHost $mirrorPath) hub}}
   {{hub end hub}}
   {{hub $mirrors := (index $mirror "mirrors") hub}}
-  {{hub $useIDMS := (index $disconnected "useIDMS" | default true) hub}}
+  # useIDMS defaults to true. Not `| default true`: default treats false as empty and replaces it.
+  # The autoshift chart validates the value as true or false.
+  {{hub $useIDMS := true hub}}
+  {{hub if hasKey $disconnected "useIDMS" hub}}
+  {{hub $useIDMS = (eq (toString (index $disconnected "useIDMS")) "true") hub}}
+  {{hub end hub}}
   {{hub if (gt (len $mirrors) 0) hub}}
   {{hub if $useIDMS hub}}
   # mustonlyhave, not musthave. The mirror list below is built by ranging over

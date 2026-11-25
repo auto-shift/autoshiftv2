@@ -36,10 +36,17 @@ Shared so config.acm.provisioning.osImages and the deprecated disconnected.osIma
   {{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "mirrors" "tagMirrors" "releaseImage" -}}
   {{- $validMirrorEntryKeys := list "source" "mirror" -}}
   {{- $validCaRefKeys := list "name" "key" "namespace" -}}
-  {{- $validCatalogKeys := list "source" "imagePath" "tag" "publisher" "displayName" "updateInterval" -}}
+  {{- $validCatalogKeys := list "source" "imagePath" "tag" "publisher" "displayName" "updateInterval" "priority" -}}
   {{- range $key, $_ := $disconnected -}}
     {{- if not (has $key $validDisconnectedKeys) }}
 {{ printf "%s: disconnected.%s is not a recognized field (valid: %s)" $path $key (join ", " $validDisconnectedKeys) }}
+    {{- end -}}
+  {{- end -}}
+  {{- range $key := list "useIDMS" "disableDefaultCatalogs" -}}
+    {{- if hasKey $disconnected $key -}}
+      {{- if not (has (toString (index $disconnected $key)) (list "true" "false")) }}
+{{ printf "%s: disconnected.%s must be true or false" $path $key }}
+      {{- end -}}
     {{- end -}}
   {{- end -}}
   {{- $mirrorReg := ($disconnected.mirrorRegistry | default dict) -}}
@@ -131,6 +138,9 @@ Shared so config.acm.provisioning.osImages and the deprecated disconnected.osIma
     {{- end -}}
     {{- if not (index $catalog "tag") }}
 {{ printf "%s: disconnected.catalogs[%d].tag is required" $path $idx }}
+    {{- end -}}
+    {{- if and (hasKey $catalog "priority") (not (regexMatch "^-?[0-9]+$" (toString (index $catalog "priority")))) }}
+{{ printf "%s: disconnected.catalogs[%d].priority must be an integer" $path $idx }}
     {{- end -}}
   {{- end -}}
   {{- include "autoshift.validate-os-images" (dict "path" (printf "%s: disconnected.osImages" $path) "images" ($disconnected.osImages | default list)) -}}
