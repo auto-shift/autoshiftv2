@@ -1,0 +1,23 @@
+# Live objects for project-onboarding's managed-cluster lookups, so the adopt and create branches
+# resolve in CI: payments-api exists (adopted, no created mark), and reporting is left out, so its
+# Namespace takes the create branch. The absent entries (legacy-batch, autoshift-contractors) have
+# no live object, the state after a removal, because the readiness policy fails while one exists.
+# The present binding autoshift-admins is seeded so the RoleBinding lookups have their API.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: payments-api
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoshift-admins
+  namespace: payments-api
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: payments-admins

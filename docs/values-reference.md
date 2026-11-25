@@ -1059,6 +1059,38 @@ Move each to the field shown.
 | `dns-tolerations`                 | bool              |                           | If set, applies DNS operator tolerations for specialized node configurations |
 | `dns-node-placement`              | string            |                           | Node placement configuration for DNS pods |
 
+### Project onboarding
+
+Creates project Namespaces with their labels and RoleBindings to existing ClusterRoles or Roles, and
+removes a Namespace or RoleBinding marked `state: absent`. Projects are declared under
+`config.projectOnboarding.projects`, keyed by Namespace name, and validated when the `autoshift`
+chart renders. A Namespace joins a network through an ordinary label that the network's
+`namespaceSelector` matches. See `policies/stable/project-onboarding/README.md` for the full
+reference, the deletion safeguard and a `ClusterUserDefinedNetwork` example.
+
+> [!WARNING]
+> `state: absent` on a project deletes the Namespace and everything in it, including virtual
+> machines and PersistentVolumeClaims, on every cluster that config applies to. Only a Namespace the
+> policy created is deleted. Removing an entry from config deletes nothing.
+
+| Variable | Type | Default Value | Notes |
+|----------|------|---------------|-------|
+| `project-onboarding` | bool | `false` | Enables the policy. Requires at least one entry in `config.projectOnboarding.projects` |
+
+| Config key | Type | Notes |
+|------------|------|-------|
+| `projectOnboarding.projects.<name>` | map | Namespace name, a DNS-1123 label. Platform namespaces such as `default`, `kube-*` and `openshift-*` are refused |
+| `projectOnboarding.projects.<name>.displayName` | string | Optional `openshift.io/display-name` annotation |
+| `projectOnboarding.projects.<name>.description` | string | Optional `openshift.io/description` annotation |
+| `projectOnboarding.projects.<name>.labels` | map | Namespace labels with string values. The `autoshift.io`, `k8s.ovn.org`, `kubernetes.io`, `k8s.io` and `openshift.io` prefixes are reserved |
+| `projectOnboarding.projects.<name>.state` | string | `present` (default) or `absent`. `absent` deletes the Namespace, only when the policy created it |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.clusterRole` | string | An existing ClusterRole. Exactly one of `clusterRole` and `role`; the RoleBinding is named `autoshift-<binding>` |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.role` | string | An existing Role in the project Namespace. No Role is created |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.groups` | list | Group subjects. At least one subject across groups, users and ServiceAccounts per binding |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.users` | list | User subjects |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.serviceAccounts` | list | ServiceAccount subjects, each `name` and an optional `namespace` that defaults to the project |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.state` | string | `present` (default) or `absent`. `absent` deletes the RoleBinding and needs no role or subjects |
+
 ### Kubernetes NMState Operator
 
 The Kubernetes NMState Operator declaratively configures Red Hat CoreOS network settings including bonds, virtual local area networks, static routes, and DNS. Network configuration is defined through structured YAML under `config.networking` in clusterset or cluster values files.

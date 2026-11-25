@@ -1,0 +1,76 @@
+# Do the configured Namespaces and RoleBindings exist on the cluster, and are the absent ones gone?
+#
+# inform-only: reports a Namespace that is missing or lacks the labels policy-project-onboarding sets
+# (musthave), and a RoleBinding that is missing or binds a different role, or subjects other than
+# exactly the configured ones (mustonlyhave, as the enforcing policy).
+# It changes nothing. A separate policy, because a root remediationAction overrides its children, so
+# an assertion bundled inside the enforcing policy would enforce.
+#
+# An object with state: absent is looked up on the managed cluster. Every one that still exists is
+# collected, and the template then fails with all of them, so the policy reports NonCompliant with a
+# readable message and nothing it could create or delete. Pressing Enforce on a delete-type assertion
+# would delete the object, and on an assertion of a placeholder object would create it and report
+# Compliant while the object still exists. Once every absent object is gone, those entries contribute
+# nothing, and a config whose projects are all absent and gone checks nothing and reports Compliant.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $projects := (dig "projectOnboarding" "projects" (dict) $cfg) hub}}
+  {{hub- if not $projects hub}}
+  {{hub- fail "project-onboarding: config.projectOnboarding.projects is missing or empty in the rendered-config ConfigMap" hub}}
+  {{hub- end hub}}
+  {{- $problems := list }}
+  {{hub- range $name, $p := $projects hub}}
+  {{hub- if eq ($p.state | default "present") "absent" hub}}
+  {{- $ns := (lookup "v1" "Namespace" "" {{hub $name | toJson hub}} | default dict) }}
+  {{- if $ns }}
+  {{- if eq (dig "metadata" "annotations" "autoshift.io/project-onboarding-created" "" $ns) "true" }}
+  {{- $problems = append $problems {{hub printf "Namespace %s has state absent but still exists; policy-project-onboarding deletes it when enforced, and under dryRun or inform it only reports" $name | toJson hub}} }}
+  {{- else }}
+  {{- $problems = append $problems {{hub printf "Namespace %s has state absent, but it was not created by project-onboarding and will not be deleted; delete it by hand, or remove the project from config" $name | toJson hub}} }}
+  {{- end }}
+  {{- end }}
+  {{hub- else hub}}
+  {{hub- $labels := merge (dict "autoshift.io/managed-by" "project-onboarding") ($p.labels | default dict) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $name | toJson hub}}
+        labels: {{hub $labels | toJson hub}}
+  {{hub- range $binding, $rb := ($p.roleBindings | default dict) hub}}
+  {{hub- if eq ($rb.state | default "present") "absent" hub}}
+  {{- if (lookup "rbac.authorization.k8s.io/v1" "RoleBinding" {{hub $name | toJson hub}} {{hub printf "autoshift-%s" $binding | toJson hub}} | default dict) }}
+  {{- $problems = append $problems {{hub printf "RoleBinding %s/autoshift-%s has state absent but still exists; policy-project-onboarding deletes it when enforced, and under dryRun or inform it only reports" $name $binding | toJson hub}} }}
+  {{- end }}
+  {{hub- else hub}}
+  {{hub- $subjects := list hub}}
+  {{hub- range $g := ($rb.groups | default list) hub}}
+  {{hub- $subjects = append $subjects (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "Group" "name" $g) hub}}
+  {{hub- end hub}}
+  {{hub- range $u := ($rb.users | default list) hub}}
+  {{hub- $subjects = append $subjects (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "User" "name" $u) hub}}
+  {{hub- end hub}}
+  {{hub- range $sa := ($rb.serviceAccounts | default list) hub}}
+  {{hub- $subjects = append $subjects (dict "kind" "ServiceAccount" "name" $sa.name "namespace" ($sa.namespace | default $name)) hub}}
+  {{hub- end hub}}
+  {{hub- $roleRef := dict "apiGroup" "rbac.authorization.k8s.io" "kind" "ClusterRole" "name" $rb.clusterRole hub}}
+  {{hub- if $rb.role hub}}
+  {{hub- $roleRef = dict "apiGroup" "rbac.authorization.k8s.io" "kind" "Role" "name" $rb.role hub}}
+  {{hub- end hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: {{hub printf "autoshift-%s" $binding | toJson hub}}
+        namespace: {{hub $name | toJson hub}}
+      roleRef: {{hub $roleRef | toJson hub}}
+      subjects: {{hub $subjects | toJson hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{- if $problems }}
+  {{- fail (printf "project-onboarding: %s" (join "; " $problems)) }}
+  {{- end }}
