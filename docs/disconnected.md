@@ -78,7 +78,7 @@ AutoShift exists to configure the mirror. On a cluster with no route to the defa
 2. Set `source` to that catalog in both bootstrap installs. See the
    [quick start](quickstart.md#installation-from-source).
 3. Point AutoShift at a chart source the cluster can reach: a Git server inside the network, or the
-   OCI charts copied to the mirror. See [releases and OCI](releases.md#disconnected-air-gapped-environments).
+   OCI charts copied to the mirror. See [releases and OCI](releases.md#disconnected-and-air-gapped-environments).
 
 ## Values
 
