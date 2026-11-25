@@ -1,79 +1,36 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: cluster-monitoring-config
-  namespace: openshift-monitoring
-data:
-  config.yaml: |
-    alertmanagerMain:
-      nodeSelector:
-        node-role.kubernetes.io/infra: ""
-      tolerations:
-      - key: node-role.kubernetes.io/infra
-        effect: NoSchedule
-      - key: node-role.kubernetes.io/infra
-        effect: NoExecute
-    prometheusK8s:
-      nodeSelector:
-        node-role.kubernetes.io/infra: ""
-      tolerations:
-      - key: node-role.kubernetes.io/infra
-        effect: NoSchedule
-      - key: node-role.kubernetes.io/infra
-        effect: NoExecute
-    prometheusOperator:
-      nodeSelector:
-        node-role.kubernetes.io/infra: ""
-      tolerations:
-      - key: node-role.kubernetes.io/infra
-        effect: NoSchedule
-      - key: node-role.kubernetes.io/infra
-        effect: NoExecute
-    metricsServer:
-      nodeSelector:
-        node-role.kubernetes.io/infra: ""
-      tolerations:
-      - key: node-role.kubernetes.io/infra
-        effect: NoSchedule
-      - key: node-role.kubernetes.io/infra
-        effect: NoExecute
-    kubeStateMetrics:
-      nodeSelector:
-        node-role.kubernetes.io/infra: ""
-      tolerations:
-      - key: node-role.kubernetes.io/infra
-        effect: NoSchedule
-      - key: node-role.kubernetes.io/infra
-        effect: NoExecute
-    telemeterClient:
-      nodeSelector:
-        node-role.kubernetes.io/infra: ""
-      tolerations:
-      - key: node-role.kubernetes.io/infra
-        effect: NoSchedule
-      - key: node-role.kubernetes.io/infra
-        effect: NoExecute
-    openshiftStateMetrics:
-      nodeSelector:
-        node-role.kubernetes.io/infra: ""
-      tolerations:
-      - key: node-role.kubernetes.io/infra
-        effect: NoSchedule
-      - key: node-role.kubernetes.io/infra
-        effect: NoExecute
-    thanosQuerier:
-      nodeSelector:
-        node-role.kubernetes.io/infra: ""
-      tolerations:
-      - key: node-role.kubernetes.io/infra
-        effect: NoSchedule
-      - key: node-role.kubernetes.io/infra
-        effect: NoExecute
-    monitoringPlugin:
-      nodeSelector:
-        node-role.kubernetes.io/infra: ""
-      tolerations:
-      - key: node-role.kubernetes.io/infra
-        effect: NoSchedule
-      - key: node-role.kubernetes.io/infra
-        effect: NoExecute
+# Schedule the platform monitoring components on infra nodes.
+#
+# cluster-monitoring-config holds one opaque config.yaml string that other writers share:
+# policy-uwm-enable sets enableUserWorkload, ACM Observability's endpoint-monitoring-operator
+# maintains additionalAlertmanagerConfigs, and administrators add retention and storage. Writing a
+# fixed document here would drop all of that on every evaluation and make the writers undo each
+# other.
+#
+# So this reads the live config, sets only nodeSelector and tolerations on each component below,
+# keeps every other key, and emits the ConfigMap only when that changes something. In the steady
+# state it emits nothing and cannot race another writer; drift is still corrected, because the
+# lookup runs on every evaluation. Maps are compared through toJson, which sorts keys.
+object-templates-raw: |
+  {{- $cm := (lookup "v1" "ConfigMap" "openshift-monitoring" "cluster-monitoring-config") | default dict }}
+  {{- $current := (index ($cm.data | default dict) "config.yaml" | default "" | fromYaml) | default dict }}
+  {{- $desired := (toJson $current | fromJson) }}
+  {{- $selector := dict "node-role.kubernetes.io/infra" "" }}
+  {{- $tolerations := list (dict "key" "node-role.kubernetes.io/infra" "effect" "NoSchedule") (dict "key" "node-role.kubernetes.io/infra" "effect" "NoExecute") }}
+  {{- range $component := list "alertmanagerMain" "prometheusK8s" "prometheusOperator" "metricsServer" "kubeStateMetrics" "telemeterClient" "openshiftStateMetrics" "thanosQuerier" "monitoringPlugin" }}
+  {{- $c := (index $desired $component | default dict) }}
+  {{- $_ := set $c "nodeSelector" $selector }}
+  {{- $_ := set $c "tolerations" $tolerations }}
+  {{- $_ := set $desired $component $c }}
+  {{- end }}
+  {{- if ne (toJson $current) (toJson $desired) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cluster-monitoring-config
+        namespace: openshift-monitoring
+      data:
+        config.yaml: |
+          {{ $desired | toYaml | autoindent }}
+  {{- end }}

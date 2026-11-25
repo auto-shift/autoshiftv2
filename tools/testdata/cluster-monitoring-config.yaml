@@ -1,0 +1,21 @@
+# Live openshift-monitoring/cluster-monitoring-config, so the guarded read-modify-write policies
+# have work to do in CI: alertmanagerMain is already on infra nodes and prometheusK8s is not, so
+# policy-infra-monitoring sets the rest and policy-remove-infra-monitoring removes alertmanagerMain's.
+# prometheusK8s.retention stands for the keys other writers own, which both must keep.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+data:
+  config.yaml: |
+    alertmanagerMain:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      tolerations:
+      - key: node-role.kubernetes.io/infra
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/infra
+        effect: NoExecute
+    prometheusK8s:
+      retention: 15d

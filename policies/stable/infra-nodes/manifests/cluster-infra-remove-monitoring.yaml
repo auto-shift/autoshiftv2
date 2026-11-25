@@ -1,34 +1,35 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: cluster-remove-monitoring-config
-  namespace: openshift-monitoring
-data:
-  config.yaml: |
-    alertmanagerMain:
-      nodeSelector: {}
-      tolerations: []
-    prometheusK8s:
-      nodeSelector: {}
-      tolerations: []
-    prometheusOperator:
-      nodeSelector: {}
-      tolerations: []
-    metricsServer:
-      nodeSelector: {}
-      tolerations: []
-    kubeStateMetrics:
-      nodeSelector: {}
-      tolerations: []
-    telemeterClient:
-      nodeSelector: {}
-      tolerations: []
-    openshiftStateMetrics:
-      nodeSelector: {}
-      tolerations: []
-    thanosQuerier:
-      nodeSelector: {}
-      tolerations: []
-    monitoringPlugin:
-      nodeSelector: {}
-      tolerations: []
+# Move the platform monitoring components off infra nodes before policy-remove-infra-nodes deletes
+# the infra MachineSets, which waits for this policy to be Compliant.
+#
+# Removes nodeSelector and tolerations from each component in cluster-monitoring-config, the
+# reverse of cluster-infra-monitoring.yaml, and keeps every other key for the same reason: other
+# writers share config.yaml. A component left with no settings is removed. The ConfigMap is emitted
+# only when that changes something, so the steady state emits nothing.
+object-templates-raw: |
+  {{- $cm := (lookup "v1" "ConfigMap" "openshift-monitoring" "cluster-monitoring-config") | default dict }}
+  {{- $current := (index ($cm.data | default dict) "config.yaml" | default "" | fromYaml) | default dict }}
+  {{- $desired := (toJson $current | fromJson) }}
+  {{- range $component := list "alertmanagerMain" "prometheusK8s" "prometheusOperator" "metricsServer" "kubeStateMetrics" "telemeterClient" "openshiftStateMetrics" "thanosQuerier" "monitoringPlugin" }}
+  {{- if hasKey $desired $component }}
+  {{- $c := (index $desired $component | default dict) }}
+  {{- $_ := unset $c "nodeSelector" }}
+  {{- $_ := unset $c "tolerations" }}
+  {{- if $c }}
+  {{- $_ := set $desired $component $c }}
+  {{- else }}
+  {{- $_ := unset $desired $component }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if ne (toJson $current) (toJson $desired) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cluster-monitoring-config
+        namespace: openshift-monitoring
+      data:
+        config.yaml: |
+          {{ $desired | toYaml | autoindent }}
+  {{- end }}
