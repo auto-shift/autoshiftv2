@@ -187,7 +187,7 @@ makes it enforce, and a `mustnothave` there would then delete the object. Assert
 object to force NonCompliant has the opposite problem: Enforce would create it, and the policy would
 report Compliant while the object still exists. Instead, the policy looks up each `absent` object on
 the managed cluster, collects every one that still exists, and then fails with all of them in the
-message. It reports NonCompliant, and Enforce can neither create nor delete anything. A Namespace
+message. It reports NonCompliant, and pressing Enforce cannot delete anything; it can only create or update the `present` objects, as the enforcing policy does. A Namespace
 that this policy did not create gets its own message, saying it will not be deleted.
 
 Once an `absent` object is gone, its entry contributes nothing. When every project is `absent` and
