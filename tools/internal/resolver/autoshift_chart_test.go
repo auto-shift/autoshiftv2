@@ -49,6 +49,46 @@ func TestAutoShiftChart_ValuesProfiles(t *testing.T) {
 		})
 	}
 
+	// RBAC role names are path segments with no length limit, so a name past the 253 characters of
+	// a DNS subdomain must still render.
+	t.Run("project-onboarding/long-cluster-role", func(t *testing.T) {
+		vf := mustWriteFile(t, t.TempDir(), "values.yaml", `
+config:
+  projectOnboarding:
+    projects:
+      team-a:
+        roleBindings:
+          admins:
+            clusterRole: `+strings.Repeat("a", 254)+`
+            groups:
+              - team-a-admins
+`)
+		renderChart(t, chartDir, globalValues, vf)
+	})
+
+	// Without config.clusterSet the clusterset a cluster inherits from is known only at runtime, and
+	// the merge could fill an empty list from it, so the validator must refuse the empty value.
+	t.Run("project-onboarding/empty-override-without-clusterset", func(t *testing.T) {
+		vf := mustWriteFile(t, t.TempDir(), "values.yaml", `
+clusters:
+  edge-1:
+    config:
+      projectOnboarding:
+        projects:
+          team-a:
+            roleBindings:
+              admins:
+                groups: []
+`)
+		_, err := HelmTemplate(chartDir, globalValues, vf)
+		if err == nil {
+			t.Fatal("helm template succeeded; want the validator to refuse the empty groups")
+		}
+		if want := "is known only at runtime"; !strings.Contains(err.Error(), want) {
+			t.Fatalf("helm template error does not contain %q:\n%v", want, err)
+		}
+	})
+
 	// A per-cluster override is a delta layered on a clusterset, never a whole configuration, so it
 	// is rendered on top of the reference profile. _example.yaml declares every option, which makes
 	// it the strictest base to layer onto.
