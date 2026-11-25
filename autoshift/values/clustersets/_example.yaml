@@ -1413,10 +1413,41 @@ hubClusterSets:
       #   versions:
       #     - 'tempo-product.vX.Y.Z'
       #   startingCSV: 'tempo-product.vX.Y.Z'
-      # virt:
-      #   versions:
-      #     - 'kubevirt-hyperconverged.vX.Y.Z'
-      #   startingCSV: 'kubevirt-hyperconverged.vX.Y.Z'
+      # OpenShift Virtualization (policy-virt-operator-install, policy-virtualization-hyperconverged).
+      # Every key is optional.
+      virt:
+        # versions:
+        #   - 'kubevirt-hyperconverged.vX.Y.Z'
+        # startingCSV: 'kubevirt-hyperconverged.vX.Y.Z'
+        # HyperConverged evictionStrategy. Unset leaves the operator's default for the topology
+        # (None on a single-node cluster); LiveMigrate there blocks node drains.
+        evictionStrategy: LiveMigrate
+        # Changed Block Tracking selectors, used when the virt-cbt label is 'true' and the operator
+        # is 4.22 or later (Developer Preview). Unset: VMs labeled changedBlockTracking: 'true'.
+        cbt:
+          virtualMachineLabelSelector:
+            matchLabels:
+              changedBlockTracking: 'true'
+          namespaceLabelSelector:
+            matchLabels:
+              example.com/vm-backup: 'true'
+        # Boot source import templates, passed through to HyperConverged dataImportCronTemplates.
+        dataImportCronTemplates:
+          - metadata:
+              name: centos-stream9-custom
+            spec:
+              schedule: '0 */12 * * *'
+              garbageCollect: Outdated
+              managedDataSource: centos-stream9-custom
+              template:
+                spec:
+                  source:
+                    registry:
+                      url: 'docker://quay.io/containerdisks/centos-stream:9'
+                  storage:
+                    resources:
+                      requests:
+                        storage: 30Gi
       # =======================================================================
       # Local Storage (config-driven)
       # Named volume sets under localVolumeSets.<id>; each field has a sensible
@@ -2685,6 +2716,7 @@ hubClusterSets:
       # OpenShift Virtualization
       # =======================================================================
       virt: 'false'
+      virt-cbt: 'false'                      # Changed Block Tracking on HyperConverged, operator 4.22+ (Developer Preview)
       virt-subscription-name: kubevirt-hyperconverged
       virt-channel: stable
       virt-version: 'kubevirt-hyperconverged-operator.v4.22.16'

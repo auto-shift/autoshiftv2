@@ -1,48 +1,100 @@
-apiVersion: hco.kubevirt.io/v1beta1
-kind: HyperConverged
-metadata:
-  name: kubevirt-hyperconverged
-  annotations:
-    deployOVS: 'false'
-  namespace: openshift-cnv
-spec:
-  virtualMachineOptions:
-    disableFreePageReporting: false
-    disableSerialConsoleLog: true
-  higherWorkloadDensity:
-    memoryOvercommitPercentage: 100
-  liveMigrationConfig:
-    allowAutoConverge: false
-    allowPostCopy: false
-    completionTimeoutPerGiB: 150
-    parallelMigrationsPerCluster: 5
-    parallelOutboundMigrationsPerNode: 2
-    progressTimeout: 150
-  certConfig:
-    ca:
-      duration: 48h0m0s
-      renewBefore: 24h0m0s
-    server:
-      duration: 24h0m0s
-      renewBefore: 12h0m0s
-  applicationAwareConfig:
-    allowApplicationAwareClusterResourceQuota: false
-    vmiCalcConfigName: DedicatedVirtualResources
-  featureGates:
-    enableCommonBootImageImport: true
-    downwardMetrics: false
-    disableMDevConfiguration: false
-    enableApplicationAwareQuota: false
-    deployKubeSecondaryDNS: false
-    alignCPUs: false
-    deployVmConsoleProxy: false
-    persistentReservation: false
-    autoResourceLimits: false
-  workloadUpdateStrategy:
-    batchEvictionInterval: 1m0s
-    batchEvictionSize: 10
-    workloadUpdateMethods:
-    - LiveMigrate
-  uninstallStrategy: BlockUninstallIfWorkloadsExist
-  resourceRequirements:
-    vmiCPUAllocationRatio: 10
+# HyperConverged custom resource, mustonlyhave. Settings from config.virt, every one optional:
+#
+#   evictionStrategy         Written only when set. Unset leaves the operator's default, which it
+#                            picks from the cluster topology (None on a single-node cluster).
+#   dataImportCronTemplates  Boot source import templates, passed through. Omitted when unset.
+#   cbt                      Changed Block Tracking selectors, used when the virt-cbt label is
+#                            'true'. Default: virtual machines labeled changedBlockTracking: 'true'.
+#
+# Changed Block Tracking (the incrementalBackup feature gate) is Developer Preview in OpenShift
+# Virtualization 4.22. Its fields exist from operator 4.22 on and earlier custom resource
+# definitions reject them, so the managed cluster writes them only when the running operator
+# reports 4.22 or later. There, incrementalBackup is always written, false when virt-cbt is off,
+# because the operator defaults it and mustonlyhave compares the whole featureGates map.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $virt := (index $cfg "virt" | default dict) hub}}
+  {{hub- $vmSel := (dig "cbt" "virtualMachineLabelSelector" (dict) $virt) hub}}
+  {{hub- $nsSel := (dig "cbt" "namespaceLabelSelector" (dict) $virt) hub}}
+  {{hub- if and (not $vmSel) (not $nsSel) hub}}
+  {{hub- $vmSel = (dict "matchLabels" (dict "changedBlockTracking" "true")) hub}}
+  {{hub- end hub}}
+  {{hub- $eviction := (index $virt "evictionStrategy" | default "") hub}}
+  {{hub- $dicts := (index $virt "dataImportCronTemplates" | default list) hub}}
+  {{- $hco := (lookup "hco.kubevirt.io/v1beta1" "HyperConverged" "openshift-cnv" "kubevirt-hyperconverged" | default dict) }}
+  {{- $operatorVersion := "" }}
+  {{- range $v := (dig "status" "versions" (list) $hco) }}
+  {{- if eq (index $v "name") "operator" }}
+  {{- $operatorVersion = (index $v "version") }}
+  {{- end }}
+  {{- end }}
+  {{- $cbtSupported := and (ne $operatorVersion "") (semverCompare ">= 4.22.0-0" $operatorVersion) }}
+  {{- $cbt := and $cbtSupported (eq "{{hub index .ManagedClusterLabels "autoshift.io/virt-cbt" | default "false" hub}}" "true") }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: hco.kubevirt.io/v1beta1
+      kind: HyperConverged
+      metadata:
+        name: kubevirt-hyperconverged
+        annotations:
+          deployOVS: 'false'
+        namespace: openshift-cnv
+      spec:
+        virtualMachineOptions:
+          disableFreePageReporting: false
+          disableSerialConsoleLog: true
+        higherWorkloadDensity:
+          memoryOvercommitPercentage: 100
+        liveMigrationConfig:
+          allowAutoConverge: false
+          allowPostCopy: false
+          completionTimeoutPerGiB: 150
+          parallelMigrationsPerCluster: 5
+          parallelOutboundMigrationsPerNode: 2
+          progressTimeout: 150
+        certConfig:
+          ca:
+            duration: 48h0m0s
+            renewBefore: 24h0m0s
+          server:
+            duration: 24h0m0s
+            renewBefore: 12h0m0s
+        {{hub- if $eviction hub}}
+        evictionStrategy: {{hub $eviction | toJson hub}}
+        {{hub- end hub}}
+        applicationAwareConfig:
+          allowApplicationAwareClusterResourceQuota: false
+          vmiCalcConfigName: DedicatedVirtualResources
+        featureGates:
+          enableCommonBootImageImport: true
+          downwardMetrics: false
+          disableMDevConfiguration: false
+          enableApplicationAwareQuota: false
+          deployKubeSecondaryDNS: false
+          alignCPUs: false
+          deployVmConsoleProxy: false
+          persistentReservation: false
+          autoResourceLimits: false
+          {{- if $cbtSupported }}
+          incrementalBackup: {{ $cbt }}
+          {{- end }}
+        {{- if $cbt }}
+        changedBlockTrackingLabelSelectors:
+          {{hub- if $vmSel hub}}
+          virtualMachineLabelSelector: {{hub $vmSel | toJson hub}}
+          {{hub- end hub}}
+          {{hub- if $nsSel hub}}
+          namespaceLabelSelector: {{hub $nsSel | toJson hub}}
+          {{hub- end hub}}
+        {{- end }}
+        workloadUpdateStrategy:
+          batchEvictionInterval: 1m0s
+          batchEvictionSize: 10
+          workloadUpdateMethods:
+          - LiveMigrate
+        uninstallStrategy: BlockUninstallIfWorkloadsExist
+        resourceRequirements:
+          vmiCPUAllocationRatio: 10
+        {{hub- if $dicts hub}}
+        dataImportCronTemplates: {{hub $dicts | toJson hub}}
+        {{hub- end hub}}

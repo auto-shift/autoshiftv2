@@ -842,10 +842,20 @@ no interactive administrator until you either configure OpenID Connect and list 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `virt`                            | bool              |                           | If not set OpenShift Virtualization will not be managed |
+| `virt-cbt`                        | bool              | `false`                   | Changed Block Tracking (`incrementalBackup`) on `HyperConverged`. Applied only when the operator is 4.22 or later. Developer Preview |
 | `virt-channel`                    | string            | `stable`                  | KubeVirt-based virtualization platform for running VMs on OpenShift |
 | `virt-version`                    | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `virt-source`                     | string            | `redhat-operators`        |       |
 | `virt-source-namespace`           | string            | `openshift-marketplace`   |       |
+
+`config.virt` settings for the `HyperConverged` custom resource, each optional:
+
+| Config key | Type | Notes |
+|------------|------|-------|
+| `virt.evictionStrategy` | string | Written only when set. Unset leaves the operator default for the cluster topology, which is `None` on a single-node cluster. `LiveMigrate` on a single-node cluster blocks node drains |
+| `virt.dataImportCronTemplates` | list | Boot source import templates, passed through to `spec.dataImportCronTemplates` |
+| `virt.cbt.virtualMachineLabelSelector` | map | Virtual machines that get Changed Block Tracking when `virt-cbt` is `'true'`. Defaults to `changedBlockTracking: 'true'` when neither selector is set |
+| `virt.cbt.namespaceLabelSelector` | map | Namespaces whose virtual machines get Changed Block Tracking |
 
 ### Developer OpenShift gitops
 
