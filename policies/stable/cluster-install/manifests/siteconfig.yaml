@@ -60,6 +60,14 @@ object-templates-raw: |
         {{- fail (printf "config.disconnected.mirrorRegistry.caRef: ConfigMap %s/%s has no key %s" $refNs (index $caRef "name") (index $caRef "key")) }}
         {{- end }}
       {{- end }}
+      {{- /* InfraEnv image type: explicit value wins; otherwise full-iso when mirrors are set, else the InfraEnv default. */ -}}
+      {{- $imageType := (index $ci "imageType" | default "") }}
+      {{- if and (not $imageType) (gt (len $mirrors) 0) }}
+      {{- $imageType = "full-iso" }}
+      {{- end }}
+      {{- if and $imageType (ne $imageType "full-iso") (ne $imageType "minimal-iso") }}
+      {{- fail (printf "config.clusterInstall.imageType for %s must be full-iso or minimal-iso, got %s" $clusterName $imageType) }}
+      {{- end }}
       {{- $bmcEndpoint := (index $ci "bmcEndpoint" | default "/redfish/v1/Systems/1") }}
       {{- $clusterNetwork := (index $networking "clusterNetwork") }}
       {{- $machineNetwork := (index $networking "machineNetwork") }}
@@ -439,8 +447,10 @@ object-templates-raw: |
           spec:
             agentLabels:
               agentBareMetal-generated-infraenv-ai-flow: {{ printf "%s-%s" $clusterName $clusterName }}
+          {{- if $imageType }}
+            imageType: {{ $imageType }}
+          {{- end }}
           {{- if (gt (len $mirrors) 0) }}
-            imageType: full-iso
             mirrorRegistryRef:
               name: mirror-registry-config
               namespace: {{ $clusterName }}

@@ -358,6 +358,7 @@ clusterInstall:
   ingressVip: '10.0.0.2'            # required for multi-node
   mastersSchedulable: false          # default: false, bare metal multi-node only
   cpuPartitioning: 'None'            # 'None' (default) or 'AllNodes' — install-time only, see docs/workload-partitioning.md
+  imageType: 'full-iso'              # bare metal only: 'full-iso' or 'minimal-iso'; default: full-iso with mirrors, else the InfraEnv default
   pullSecretRef: 'default-pull-secret'
   bmcCredentialRef: 'default-bmc-cred'
   bmcEndpoint: '/redfish/v1/Systems/1'

@@ -228,7 +228,7 @@ Collects all errors and reports them together.
 {{- define "autoshift.validate-cluster-install" -}}
 
 {{/* ===== Valid key lists — add new fields here ===== */}}
-{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "hostnameFormat" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" "diskPartitions" "extraManifests" }}
+{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "imageType" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "hostnameFormat" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" "diskPartitions" "extraManifests" }}
 {{- $validHostKeys := list "role" "hostname" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
 {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" "brEx" }}
 {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
@@ -259,6 +259,13 @@ Collects all errors and reports them together.
     {{- $platform := ($ci.platform | default "baremetal" | toString) }}
     {{- if not (has $platform $validPlatforms) }}
       {{- $errors = append $errors (printf "%s: clusterInstall.platform must be one of: %s (got: %s)" $path (join ", " $validPlatforms) $platform) }}
+    {{- end }}
+
+    {{/* Validate imageType (bare metal InfraEnv) */}}
+    {{- $validImageTypes := list "full-iso" "minimal-iso" }}
+    {{- $imageType := ($ci.imageType | default "" | toString) }}
+    {{- if and $imageType (not (has $imageType $validImageTypes)) }}
+      {{- $errors = append $errors (printf "%s: clusterInstall.imageType must be one of: %s (got: %s)" $path (join ", " $validImageTypes) $imageType) }}
     {{- end }}
 
     {{/* ===== Validate unexpected keys (only sections this policy owns) ===== */}}
