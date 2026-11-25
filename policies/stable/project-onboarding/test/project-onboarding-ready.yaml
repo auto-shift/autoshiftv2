@@ -6,51 +6,31 @@
 # It changes nothing. A separate policy, because a root remediationAction overrides its children, so
 # an assertion bundled inside the enforcing policy would enforce.
 #
-# An object with state: absent is looked up on the managed cluster. While it still exists, the policy
-# asserts a ConfigMap that never exists, whose name and data say what is wrong, so it reports
-# NonCompliant with a readable message. Once it is gone, the entry contributes nothing.
-# This instead of a delete-type assertion: pressing Enforce on this policy in the console would then
-# delete the object.
-#
-# The template counts the checks it emits and fails when there are none, for example when every
-# project is absent and already gone, so the policy never reports Compliant with nothing checked.
+# An object with state: absent is looked up on the managed cluster. Every one that still exists is
+# collected, and the template then fails with all of them, so the policy reports NonCompliant with a
+# readable message and nothing it could create or delete. Pressing Enforce on a delete-type assertion
+# would delete the object, and on an assertion of a placeholder object would create it and report
+# Compliant while the object still exists. Once every absent object is gone, those entries contribute
+# nothing, and a config whose projects are all absent and gone checks nothing and reports Compliant.
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $projects := (dig "projectOnboarding" "projects" (dict) $cfg) hub}}
   {{hub- if not $projects hub}}
   {{hub- fail "project-onboarding: config.projectOnboarding.projects is missing or empty in the rendered-config ConfigMap" hub}}
   {{hub- end hub}}
-  {{- $checks := 0 }}
+  {{- $problems := list }}
   {{hub- range $name, $p := $projects hub}}
   {{hub- if eq ($p.state | default "present") "absent" hub}}
   {{- $ns := (lookup "v1" "Namespace" "" {{hub $name | toJson hub}} | default dict) }}
   {{- if $ns }}
-  {{- $checks = add1 $checks }}
   {{- if eq (dig "metadata" "annotations" "autoshift.io/project-onboarding-created" "" $ns) "true" }}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: {{hub printf "project-onboarding-absent-namespace-%s-still-exists" $name | toJson hub}}
-        namespace: {{hub $name | toJson hub}}
-      data:
-        problem: {{hub printf "Namespace %s has state absent but still exists. policy-project-onboarding deletes it when enforced; under dryRun or inform it only reports." $name | toJson hub}}
+  {{- $problems = append $problems {{hub printf "Namespace %s has state absent but still exists; policy-project-onboarding deletes it when enforced, and under dryRun or inform it only reports" $name | toJson hub}} }}
   {{- else }}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: {{hub printf "project-onboarding-absent-namespace-%s-not-created-by-policy" $name | toJson hub}}
-        namespace: {{hub $name | toJson hub}}
-      data:
-        problem: {{hub printf "Namespace %s has state absent, but it was not created by project-onboarding and will not be deleted. Delete it by hand, or remove the project from config." $name | toJson hub}}
+  {{- $problems = append $problems {{hub printf "Namespace %s has state absent, but it was not created by project-onboarding and will not be deleted; delete it by hand, or remove the project from config" $name | toJson hub}} }}
   {{- end }}
   {{- end }}
   {{hub- else hub}}
   {{hub- $labels := merge (dict "autoshift.io/managed-by" "project-onboarding") ($p.labels | default dict) hub}}
-  {{- $checks = add1 $checks }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -61,16 +41,7 @@ object-templates-raw: |
   {{hub- range $binding, $rb := ($p.roleBindings | default dict) hub}}
   {{hub- if eq ($rb.state | default "present") "absent" hub}}
   {{- if (lookup "rbac.authorization.k8s.io/v1" "RoleBinding" {{hub $name | toJson hub}} {{hub printf "autoshift-%s" $binding | toJson hub}} | default dict) }}
-  {{- $checks = add1 $checks }}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: {{hub printf "project-onboarding-absent-rolebinding-autoshift-%s-still-exists" $binding | toJson hub}}
-        namespace: {{hub $name | toJson hub}}
-      data:
-        problem: {{hub printf "RoleBinding %s/autoshift-%s has state absent but still exists. policy-project-onboarding deletes it when enforced; under dryRun or inform it only reports." $name $binding | toJson hub}}
+  {{- $problems = append $problems {{hub printf "RoleBinding %s/autoshift-%s has state absent but still exists; policy-project-onboarding deletes it when enforced, and under dryRun or inform it only reports" $name $binding | toJson hub}} }}
   {{- end }}
   {{hub- else hub}}
   {{hub- $subjects := list hub}}
@@ -87,7 +58,6 @@ object-templates-raw: |
   {{hub- if $rb.role hub}}
   {{hub- $roleRef = dict "apiGroup" "rbac.authorization.k8s.io" "kind" "Role" "name" $rb.role hub}}
   {{hub- end hub}}
-  {{- $checks = add1 $checks }}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: rbac.authorization.k8s.io/v1
@@ -101,6 +71,6 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
-  {{- if eq $checks 0 }}
-  {{- fail "project-onboarding: every project in config has state absent and none still exists, so there is nothing left to check; remove those projects from config, or set project-onboarding to 'false'" }}
+  {{- if $problems }}
+  {{- fail (printf "project-onboarding: %s" (join "; " $problems)) }}
   {{- end }}

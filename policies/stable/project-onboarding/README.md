@@ -183,16 +183,16 @@ annotation. Removing the annotation by hand protects a Namespace from deletion.
 ### How readiness reports removal
 
 The readiness policy contains no `mustnothave`. Pressing Enforce on an inform policy in the console
-makes it enforce, and a `mustnothave` there would then delete the object. Instead, it looks up each
-`absent` object on the managed cluster. While the object still exists, the policy asserts a
-ConfigMap that does not exist, named for the problem, for example
-`project-onboarding-absent-namespace-<name>-still-exists`, with the explanation in its data. The
-policy reports NonCompliant with that name in the message. Once the object is gone, the entry
-contributes nothing.
+makes it enforce, and a `mustnothave` there would then delete the object. Asserting a placeholder
+object to force NonCompliant has the opposite problem: Enforce would create it, and the policy would
+report Compliant while the object still exists. Instead, the policy looks up each `absent` object on
+the managed cluster, collects every one that still exists, and then fails with all of them in the
+message. It reports NonCompliant, and Enforce can neither create nor delete anything. A Namespace
+that this policy did not create gets its own message, saying it will not be deleted.
 
-When every project is `absent` and gone, the readiness policy has nothing left to check and fails
-with a message saying so, rather than reporting Compliant with no check run. Remove those projects
-from config, or set `project-onboarding` to `'false'`.
+Once an `absent` object is gone, its entry contributes nothing. When every project is `absent` and
+gone, the removal has succeeded: the readiness policy checks nothing and reports Compliant. A
+missing or empty project list still fails.
 
 ## Joining networks
 
@@ -275,7 +275,8 @@ make test
 ```
 
 `tools/testdata/project-onboarding.yaml` seeds the live objects the managed-cluster lookups read, so
-the suite resolves the create, adopt, delete and still-exists branches.
+the suite resolves the create and adopt branches and the state after a removal. It seeds no object
+marked `absent`, because the readiness policy fails while one still exists.
 
 ## Verify
 
