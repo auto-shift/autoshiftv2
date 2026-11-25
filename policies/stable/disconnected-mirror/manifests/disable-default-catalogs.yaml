@@ -3,8 +3,9 @@
 object-templates-raw: |
   {{hub $configYaml := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" | fromYaml | default dict) hub}}
   {{hub $disconnected := (index $configYaml "disconnected" | default dict) hub}}
-  # toString, so a quoted 'true' works: eq on a string and a bool is a template error.
-  {{hub if eq (toString (index $disconnected "disableDefaultCatalogs")) "true" hub}}
+  # printf "%v", so a quoted 'true' works: eq on a string and a bool is a template error. Not
+  # toString, which hub templates on Red Hat Advanced Cluster Management 2.15 and earlier do not have.
+  {{hub if eq (printf "%v" (index $disconnected "disableDefaultCatalogs")) "true" hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: config.openshift.io/v1
