@@ -131,8 +131,9 @@ clusters:
       # =====================================================================
       # Hosts — per-host hardware config, shared with other policies
       # =====================================================================
-      # Each key is the short hostname. Siteconfig constructs the FQDN as
-      # {key}.{clusterName}.{baseDomain} for the BareMetalHost and ClusterInstance.
+      # Each key names the host. The node hostname is the host's hostname when set, otherwise
+      # {key}.{clusterName}.{baseDomain} (clusterInstall.hostnameFormat: fqdn, the default) or
+      # {key} (hostnameFormat: short). The nmstate policy selects per-host NNCPs by the same name.
       hosts:
         master-0:
           role: master                              # 'master' (default) or 'worker'
@@ -161,6 +162,7 @@ clusters:
                       prefixLength: 25
         master-1:
           role: master
+          hostname: 'master-1.example.com'          # optional, the node hostname as given
           bmcIP: '192.168.1.11'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:11'
@@ -349,6 +351,7 @@ clusters:
         createCluster: 'true'                       # Required — triggers provisioning
         platform: baremetal                          # 'baremetal', 'aws', or 'vmware'
         baseDomain: example.com
+        hostnameFormat: fqdn                        # 'fqdn' (default): {key}.{cluster}.{baseDomain}; 'short': {key}
         openshiftVersion: '4.22.8'
         cpuArch: x86_64                             # default: x86_64
         openshiftChannel: stable                    # ClusterImageSet channel label (default: stable)

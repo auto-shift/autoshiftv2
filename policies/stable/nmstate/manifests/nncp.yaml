@@ -4,6 +4,7 @@ object-templates-raw: |
   {{hub- $networking := (index $config "networking" | default dict) hub}}
   {{hub- $interfaces := (index $networking "interfaces" | default dict) hub}}
   {{hub- $hosts := (index $config "hosts" | default dict) hub}}
+  {{hub- $hostnameFormat := (dig "clusterInstall" "hostnameFormat" "fqdn" $config) hub}}
   {{hub- $nodeSelector := (index $networking "nodeSelector" | default dict) hub}}
   {{hub- $routes := (index $networking "routes" | default dict) hub}}
   {{hub- $dns := (index $networking "dns" | default dict) hub}}
@@ -216,6 +217,8 @@ object-templates-raw: |
         nodeSelector:
         {{hub- if $hostOverrideHostname hub}}
           kubernetes.io/hostname: {{hub $hostOverrideHostname hub}}
+        {{hub- else if eq $hostnameFormat "short" hub}}
+          kubernetes.io/hostname: {{hub $hostname hub}}
         {{hub- else hub}}
           kubernetes.io/hostname: {{hub $hostname hub}}.{{ $clusterDomain }}
         {{hub- end hub}}

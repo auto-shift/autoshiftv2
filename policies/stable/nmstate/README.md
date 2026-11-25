@@ -200,10 +200,15 @@ Each host can override interface properties from the topology. Per-host override
 
 Per-host NNCPs use `kubernetes.io/hostname` as the nodeSelector. The hostname is resolved in this order:
 
-1. **`hosts.*.hostname`** — if set, uses that value as-is (for non-standard node names)
-2. **Auto-constructed** — `{mapKey}.{clusterDomain}` where `clusterDomain` is looked up from `dns.config.openshift.io/cluster` on the managed cluster
+1. **`hosts.*.hostname`**: if set, uses that value as given (for non-standard node names)
+2. **`{mapKey}`**: when `clusterInstall.hostnameFormat` is `short`
+3. **Auto-constructed**: `{mapKey}.{clusterDomain}`, where `clusterDomain` comes from `dns.config.openshift.io/cluster` on the managed cluster
 
-For cluster-install clusters, the FQDN is constructed in siteconfig as `{mapKey}.{clusterName}.{baseDomain}`.
+The cluster-install siteconfig names nodes by the same rule, so the selectors match the nodes it installs.
+
+Set `hostnameFormat` or `hostname` before the cluster installs. Changing either one later renames no
+node, because OpenShift does not support changing a node hostname after installation, so the
+per-host NNCPs stop matching. See [hosts](../../../docs/cluster-install.md#hosts).
 
 ## Generated NNCPs
 

@@ -196,7 +196,20 @@ This is install-time only. A host added after installation needs its own file ad
 
 ### hosts
 
-Per-host hardware and networking configuration. Each key is the short hostname (siteconfig constructs the FQDN as `{key}.{clusterName}.{baseDomain}`).
+Per-host hardware and networking configuration. Each key names the host. The node hostname is,
+in order:
+
+1. `hostname` on the host, used as given
+2. `{key}` when `clusterInstall.hostnameFormat` is `short`
+3. `{key}.{clusterName}.{baseDomain}`, the default (`hostnameFormat: fqdn`)
+
+The nmstate policy selects each per-host `NodeNetworkConfigurationPolicy` by the same name.
+
+Set `hostnameFormat` and any `hostname` before the cluster installs. OpenShift does not support
+changing a node hostname after installation; the node has to be re-created, as the
+[Red Hat Knowledgebase solution on node hostnames](https://access.redhat.com/solutions/6966864) describes.
+Changing either value on an installed cluster renames nothing: it changes only the nmstate
+selectors, so the per-host policies stop matching their nodes.
 
 ```yaml
 hosts:
@@ -205,6 +218,7 @@ hosts:
     bmcIP: '192.168.1.10'
     bmcPrefix: 'redfish-virtualmedia'      # BMC protocol prefix
     bmcEndpoint: '/redfish/v1/Systems/1'   # optional, overrides cluster-level
+    # hostname: 'master-0.example.com'     # optional node hostname, overrides hostnameFormat
     bootMACAddress: '00:00:00:00:00:01'
     primaryMac: '00:00:00:00:00:02'        # MAC for bond, defaults to first interface
     rootDeviceHints:                        # optional, disk selection for OS install
@@ -333,6 +347,7 @@ clusterInstall:
   createCluster: 'true'              # Required - triggers provisioning
   platform: baremetal                 # 'baremetal' (default), 'aws', or 'vmware'
   baseDomain: example.com
+  hostnameFormat: fqdn               # bare metal: 'fqdn' (default) or 'short', see hosts
   openshiftVersion: '4.22.8'
   cpuArch: x86_64                    # default: x86_64
   openshiftChannel: stable           # ClusterImageSet channel label (default: stable)

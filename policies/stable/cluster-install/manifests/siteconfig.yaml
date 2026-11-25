@@ -24,6 +24,10 @@ object-templates-raw: |
       {{- $hubDNS := (lookup "config.openshift.io/v1" "DNS" "" "cluster") | default dict }}
       {{- $baseDomain = (splitList "." (dig "spec" "baseDomain" "" $hubDNS) | rest | join ".") }}
       {{- end }}{{- $fips := (eq (printf "%v" (index $ci "fips" | default false)) "true") }}
+      {{- /* Node hostname: hosts.<key>.hostname when set, otherwise <key> with hostnameFormat
+             short, or <key>.<cluster>.<baseDomain> with fqdn, the default. The nmstate policy
+             applies the same rule to its per-host nodeSelector. */ -}}
+      {{- $hostnameFormat := (index $ci "hostnameFormat" | default "fqdn") }}
       {{- /* config.versionTag pins the clusterset to a specific release; otherwise this
              deployment's own suffix is used. cluster-set-assignment applies the identical rule. */ -}}
       {{- $versionTag := (printf "%v" (index $config "versionTag" | default "")) }}
@@ -483,7 +487,14 @@ object-templates-raw: |
             hubAcceptsClient: true
 
       {{- range $hostname, $host := $hosts }}
-        {{ $hostFQDN := (printf "%s.%s.%s" $hostname $clusterName $baseDomain) }}
+        {{ $nodeHostname := (index $host "hostname" | default "") }}
+        {{- if not $nodeHostname }}
+          {{- if eq $hostnameFormat "short" }}
+            {{- $nodeHostname = $hostname }}
+          {{- else }}
+            {{- $nodeHostname = (printf "%s.%s.%s" $hostname $clusterName $baseDomain) }}
+          {{- end }}
+        {{- end }}
         {{ $hostBmcEndpoint := (index $host "bmcEndpoint" | default $bmcEndpoint) }}
         {{ $bmcAddress := (printf "%s://%s%s" (index $host "bmcPrefix") (index $host "bmcIP") $hostBmcEndpoint) }}
   - complianceType: musthave
@@ -502,7 +513,7 @@ object-templates-raw: |
             namespace: {{ $clusterName }}
             annotations:
               inspect.metal3.io: disabled
-              bmac.agent-install.openshift.io/hostname: {{ $hostFQDN }}
+              bmac.agent-install.openshift.io/hostname: {{ $nodeHostname }}
             labels:
               infraenvs.agent-install.openshift.io: {{ $clusterName }}
           spec:
@@ -736,10 +747,17 @@ object-templates-raw: |
       {{- end }}
         nodes:
       {{- range $hostname, $host := $hosts }}
-        {{ $hostFQDN := (printf "%s.%s.%s" $hostname $clusterName $baseDomain) }}
+        {{ $nodeHostname := (index $host "hostname" | default "") }}
+        {{- if not $nodeHostname }}
+          {{- if eq $hostnameFormat "short" }}
+            {{- $nodeHostname = $hostname }}
+          {{- else }}
+            {{- $nodeHostname = (printf "%s.%s.%s" $hostname $clusterName $baseDomain) }}
+          {{- end }}
+        {{- end }}
         {{ $hostBmcEndpoint := (index $host "bmcEndpoint" | default $bmcEndpoint) }}
         {{ $bmcAddress := (printf "%s://%s%s" (index $host "bmcPrefix") (index $host "bmcIP") $hostBmcEndpoint) }}
-          - hostName: {{ $hostFQDN }}
+          - hostName: {{ $nodeHostname }}
             role: {{ index $host "role" | default "master" }}
             bmcAddress: {{ $bmcAddress }}
             bmcCredentialsName:

@@ -228,8 +228,8 @@ Collects all errors and reports them together.
 {{- define "autoshift.validate-cluster-install" -}}
 
 {{/* ===== Valid key lists — add new fields here ===== */}}
-{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" "diskPartitions" "extraManifests" }}
-{{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
+{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "hostnameFormat" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" "diskPartitions" "extraManifests" }}
+{{- $validHostKeys := list "role" "hostname" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
 {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" "brEx" }}
 {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
 {{- $validRouteKeys := list "destination" "gateway" "interface" "metric" "tableId" }}
@@ -277,6 +277,17 @@ Collects all errors and reports them together.
         {{- if not (has $key $validHostKeys) }}
           {{- $errors = append $errors (printf "%s host %s: %s is not a recognized field (valid: %s)" $path $hostname $key (join ", " $validHostKeys)) }}
         {{- end }}
+      {{- end }}
+      {{- if hasKey $host "hostname" }}
+        {{- $hn := (toString $host.hostname) }}
+        {{- if or (gt (len $hn) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $hn)) }}
+          {{- $errors = append $errors (printf "%s host %s: hostname must be a lowercase DNS name, such as master-0 or master-0.example.com" $path $hostname) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- if hasKey $ci "hostnameFormat" }}
+      {{- if not (has (toString $ci.hostnameFormat) (list "fqdn" "short")) }}
+        {{- $errors = append $errors (printf "%s: clusterInstall.hostnameFormat must be fqdn or short" $path) }}
       {{- end }}
     {{- end }}
 
