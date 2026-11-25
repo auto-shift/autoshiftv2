@@ -1,0 +1,27 @@
+# Has OVN-Kubernetes accepted each configured ClusterUserDefinedNetwork?
+#
+# inform-only: reports a ClusterUserDefinedNetwork from config.networking.cudn.vlans that is missing
+# or whose NetworkCreated condition is not True, for example after the API rejected a changed spec.
+# It changes nothing. A separate policy, because a root remediationAction overrides its children.
+# The name defaults match manifests/networks.yaml; the chart validation guarantees each entry has
+# an id or a name.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $vlans := (dig "networking" "cudn" "vlans" (list) $cfg) hub}}
+  {{hub- if not $vlans hub}}
+  {{hub- fail "virt-networks: config.networking.cudn.vlans is missing or empty in the rendered-config ConfigMap" hub}}
+  {{hub- end hub}}
+  {{hub- range $v := $vlans hub}}
+  {{hub- $id := (index $v "id" | default 0 | toInt) hub}}
+  {{hub- $name := (index $v "name" | default (printf "vlan-%d" $id)) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: k8s.ovn.org/v1
+      kind: ClusterUserDefinedNetwork
+      metadata:
+        name: {{hub $name | toJson hub}}
+      status:
+        conditions:
+          - type: NetworkCreated
+            status: 'True'
+  {{hub- end hub}}

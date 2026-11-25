@@ -1,0 +1,25 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-virt-networks
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: selected via ManagedClusterSetBindings in this namespace + the predicate.
+  # Both labels are required: the networks are opt-in on top of OpenShift Virtualization.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/virt'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/virt-networks'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

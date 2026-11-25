@@ -39,3 +39,20 @@ policies:
     manifests:
       - path: manifests/hyperconverged.yaml
         complianceType: mustonlyhave
+  # 3) Localnet ClusterUserDefinedNetworks from config.networking.cudn.vlans, the secondary networks
+  #    virtual machines attach to. Opt-in: placed only where virt-networks is also 'true'. No
+  #    dependency: a ClusterUserDefinedNetwork needs OVN-Kubernetes, not the operator, and the
+  #    bridge mapping it names comes from the nmstate policy.
+  - name: policy-virtualization-networks
+    manifests:
+      - path: manifests/networks.yaml
+    placement:
+      placementPath: placement-virt-networks.yaml
+  # 4) inform: each configured ClusterUserDefinedNetwork reports NetworkCreated. A separate policy,
+  #    because a root remediationAction overrides its children.
+  - name: policy-virtualization-networks-ready
+    remediationAction: inform
+    manifests:
+      - path: test/networks-ready.yaml
+    placement:
+      placementPath: placement-virt-networks.yaml

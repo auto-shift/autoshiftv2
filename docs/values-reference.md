@@ -842,10 +842,15 @@ no interactive administrator until you either configure OpenID Connect and list 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `virt`                            | bool              |                           | If not set OpenShift Virtualization will not be managed |
+| `virt-networks`                   | bool              | `false`                   | Localnet `ClusterUserDefinedNetwork` objects for virtual machines from `config.networking.cudn`. Needs `virt` |
 | `virt-channel`                    | string            | `stable`                  | KubeVirt-based virtualization platform for running VMs on OpenShift |
 | `virt-version`                    | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `virt-source`                     | string            | `redhat-operators`        |       |
 | `virt-source-namespace`           | string            | `openshift-marketplace`   |       |
+
+`config.networking.cudn` holds `physicalNetworkName`, `mtu` and a `vlans` list of `id`, `name`,
+`selectorKey`, `physicalNetworkName` and `mtu`. See the
+[openshift-virtualization README](../policies/stable/openshift-virtualization/README.md#virtual-machine-networks).
 
 ### Developer OpenShift gitops
 

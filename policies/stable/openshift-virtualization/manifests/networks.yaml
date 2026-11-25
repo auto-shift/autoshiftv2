@@ -1,0 +1,75 @@
+# One localnet ClusterUserDefinedNetwork per entry in config.networking.cudn.vlans, the secondary
+# networks virtual machines attach to.
+#
+# The input is validated when the autoshift chart renders, in
+# autoshift/templates/_validate-virt-networks.tpl. A placed policy with no VLANs fails, rather than
+# reporting Compliant with nothing applied.
+#
+# physicalNetworkName names an OVN bridge mapping that must already exist on the nodes, normally
+# from config.networking.ovnMappings in the nmstate policy. This policy creates no mapping and no
+# bridge.
+#
+# IPAM is Disabled: OpenShift Virtualization does not support IPAM on localnet networks for virtual
+# machines, so addresses come from the physical network or the guest.
+#
+# A Namespace joins a network by carrying the label named by selectorKey (default vlan-<id>), with
+# any value.
+#
+# The network spec of a ClusterUserDefinedNetwork cannot be changed after creation. A changed
+# physicalNetworkName, mtu or id is rejected by the API and the policy reports NonCompliant. There
+# is no recreateOption: OVN-Kubernetes holds the delete while virtual machines use the network.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $cudn := (dig "networking" "cudn" (dict) $cfg) hub}}
+  {{hub- $vlans := (index $cudn "vlans" | default list) hub}}
+  {{hub- if not $vlans hub}}
+  {{hub- fail "virt-networks: config.networking.cudn.vlans is missing or empty in the rendered-config ConfigMap" hub}}
+  {{hub- end hub}}
+  {{hub- range $v := $vlans hub}}
+  {{hub- $id := (index $v "id" | default 0 | toInt) hub}}
+  {{hub- $name := (index $v "name" | default "") hub}}
+  {{hub- if and (not $name) $id hub}}
+  {{hub- $name = (printf "vlan-%d" $id) hub}}
+  {{hub- end hub}}
+  {{hub- if not $name hub}}
+  {{hub- fail "virt-networks: a config.networking.cudn.vlans entry without id needs a name" hub}}
+  {{hub- end hub}}
+  {{hub- $selectorKey := (index $v "selectorKey" | default "") hub}}
+  {{hub- if not $selectorKey hub}}
+  {{hub- $selectorKey = (ternary (printf "vlan-%d" $id) $name (gt $id 0)) hub}}
+  {{hub- end hub}}
+  {{hub- $physNet := (index $v "physicalNetworkName" | default (index $cudn "physicalNetworkName" | default "")) hub}}
+  {{hub- if not $physNet hub}}
+  {{hub- fail (printf "virt-networks: %s needs physicalNetworkName, on the entry or on config.networking.cudn" $name) hub}}
+  {{hub- end hub}}
+  {{hub- $mtu := (index $v "mtu" | default (index $cudn "mtu" | default 0) | toInt) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: k8s.ovn.org/v1
+      kind: ClusterUserDefinedNetwork
+      metadata:
+        name: {{hub $name | toJson hub}}
+        labels:
+          autoshift.io/managed-by: openshift-virtualization
+      spec:
+        namespaceSelector:
+          matchExpressions:
+            - key: {{hub $selectorKey | toJson hub}}
+              operator: Exists
+        network:
+          topology: Localnet
+          localnet:
+            role: Secondary
+            physicalNetworkName: {{hub $physNet | toJson hub}}
+            ipam:
+              mode: Disabled
+            {{hub- if gt $mtu 0 hub}}
+            mtu: {{hub $mtu hub}}
+            {{hub- end hub}}
+            {{hub- if gt $id 0 hub}}
+            vlan:
+              mode: Access
+              access:
+                id: {{hub $id hub}}
+            {{hub- end hub}}
+  {{hub- end hub}}

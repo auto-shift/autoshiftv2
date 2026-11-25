@@ -1570,6 +1570,21 @@ hubClusterSets:
           physnet1:
             localnet: physnet1
             bridge: br-ex
+        # Localnet ClusterUserDefinedNetworks for virtual machines (policy-virtualization-networks,
+        # placed where virt and virt-networks are both 'true'). One per vlans entry. IPAM is always
+        # Disabled. physicalNetworkName names an ovnMappings localnet above; set it here or per entry.
+        #   id                 VLAN ID, 1-4094, access mode. Omit for an untagged network, then set name
+        #   name               default vlan-<id>; the ClusterUserDefinedNetwork and attachment name
+        #   selectorKey        default vlan-<id>, or name without id; a Namespace with this label joins
+        #   mtu                optional, 576-65536; on cudn or per entry
+        # The network spec cannot change after creation; see the openshift-virtualization README.
+        cudn:
+          physicalNetworkName: physnet1
+          vlans:
+            - id: 100
+            - id: 200
+              name: storage-200
+              mtu: 9000
         dns:
           servers:
             - '10.0.0.1'
@@ -2685,6 +2700,7 @@ hubClusterSets:
       # OpenShift Virtualization
       # =======================================================================
       virt: 'false'
+      virt-networks: 'false'                 # Localnet ClusterUserDefinedNetworks from config.networking.cudn (needs virt)
       virt-subscription-name: kubevirt-hyperconverged
       virt-channel: stable
       virt-version: 'kubevirt-hyperconverged-operator.v4.22.16'
