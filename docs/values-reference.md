@@ -1102,6 +1102,7 @@ NNCPs are generated from `config.networking` in values files. Each interface get
 | `mode` | string | Bond only | Bond mode (e.g., `802.3ad`, `active-backup`) |
 | `ports` | list | Bond only | Member interfaces |
 | `miimon` | int | No | Media Independent Interface monitoring interval (bond only) |
+| `options` | map | No | Other bond options, written to `link-aggregation.options` as given, such as `xmit_hash_policy: layer3+4`. When both are set, `options.miimon` wins over `miimon` (bond only) |
 | `id` | int | VLAN only | VLAN ID |
 | `base` | string | VLAN only | Parent interface name |
 

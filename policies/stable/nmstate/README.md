@@ -58,6 +58,8 @@ config:
         mode: 802.3ad                # bond mode (required for bonds)
         mtu: 9000                    # optional
         miimon: 100                  # MII monitoring interval (optional)
+        options:                     # other bond options, passed through (optional)
+          xmit_hash_policy: layer3+4
         mac: 'aa:bb:cc:dd:ee:ff'     # optional — sets MAC and adds identifier: mac-address
         ports:                       # bond member interfaces (required for bonds)
           - eno1

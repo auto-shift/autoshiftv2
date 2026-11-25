@@ -501,16 +501,21 @@ object-templates-raw: |
                     enabled: true
         {{- end }}{{- if eq $ifaceType "bond" }}
           {{- $bondMode := (index $topoIface "mode" | default "802.3ad") }}
-          {{- $bondMiimon := (index $topoIface "miimon" | default "") }}
+          {{- $bondOptions := dict }}
+          {{- range $optKey, $optVal := (index $topoIface "options" | default dict) }}
+            {{- $_ := set $bondOptions $optKey $optVal }}
+          {{- end }}
+          {{- if and (index $topoIface "miimon") (not (hasKey $bondOptions "miimon")) }}
+            {{- $_ := set $bondOptions "miimon" (index $topoIface "miimon") }}
+          {{- end }}
           {{- $ports := $hostPorts }}
           {{- if (eq (len $ports) 0) }}
             {{- $ports = (index $topoIface "ports" | default list) }}
           {{- end }}
                   link-aggregation:
                     mode: {{ $bondMode }}
-          {{- if $bondMiimon }}
-                    options:
-                      miimon: {{ $bondMiimon }}
+          {{- if $bondOptions }}
+                    options: {{ $bondOptions | toJson }}
           {{- end }}
           {{- if (gt (len $ports) 0) }}
                     port:

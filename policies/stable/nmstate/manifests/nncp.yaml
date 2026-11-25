@@ -81,13 +81,18 @@ object-templates-raw: |
       {{hub- end hub}}
       {{hub- if eq $ifaceType "bond" hub}}
         {{hub- $bondMode := (index $iface "mode" | default "802.3ad") hub}}
-        {{hub- $bondMiimon := (index $iface "miimon" | default "") hub}}
+        {{hub- $bondOptions := dict hub}}
+        {{hub- range $optKey, $optVal := (index $iface "options" | default dict) hub}}
+        {{hub- $_ := set $bondOptions $optKey $optVal hub}}
+        {{hub- end hub}}
+        {{hub- if and (index $iface "miimon") (not (hasKey $bondOptions "miimon")) hub}}
+        {{hub- $_ := set $bondOptions "miimon" (index $iface "miimon") hub}}
+        {{hub- end hub}}
         {{hub- $bondPorts := (index $iface "ports" | default list) hub}}
               link-aggregation:
                 mode: {{hub $bondMode hub}}
-        {{hub- if $bondMiimon hub}}
-                options:
-                  miimon: {{hub $bondMiimon hub}}
+        {{hub- if $bondOptions hub}}
+                options: {{hub $bondOptions | toJson hub}}
         {{hub- end hub}}
         {{hub- if (gt (len $bondPorts) 0) hub}}
                 port:
@@ -295,12 +300,17 @@ object-templates-raw: |
         {{hub- end hub}}
         {{hub- if eq $ifaceType "bond" hub}}
           {{hub- $bondMode := (index $topoIface "mode" | default "802.3ad") hub}}
-          {{hub- $bondMiimon := (index $topoIface "miimon" | default "") hub}}
+          {{hub- $bondOptions := dict hub}}
+          {{hub- range $optKey, $optVal := (index $topoIface "options" | default dict) hub}}
+          {{hub- $_ := set $bondOptions $optKey $optVal hub}}
+          {{hub- end hub}}
+          {{hub- if and (index $topoIface "miimon") (not (hasKey $bondOptions "miimon")) hub}}
+          {{hub- $_ := set $bondOptions "miimon" (index $topoIface "miimon") hub}}
+          {{hub- end hub}}
               link-aggregation:
                 mode: {{hub $bondMode hub}}
-          {{hub- if $bondMiimon hub}}
-                options:
-                  miimon: {{hub $bondMiimon hub}}
+          {{hub- if $bondOptions hub}}
+                options: {{hub $bondOptions | toJson hub}}
           {{hub- end hub}}
           {{hub- if (gt (len $ports) 0) hub}}
                 port:

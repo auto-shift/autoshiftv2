@@ -231,7 +231,7 @@ Collects all errors and reports them together.
 {{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" "diskPartitions" }}
 {{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
 {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
-{{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
+{{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "options" "ports" "ipv4" "ipv6" "id" "base" }}
 {{- $validRouteKeys := list "destination" "gateway" "interface" "metric" "tableId" }}
 {{- $validSshRefKeys := list "name" "key" "namespace" }}
 {{- $validAwsKeys := list "region" "credentialRef" "sshPrivateKeyRef" "sshPublicKey" "sshKeyRef" "fips" "networkType" "zones" "controlPlane" "workers" }}
@@ -669,6 +669,17 @@ Collects all errors and reports them together.
       {{- range $key, $_ := $iface }}
         {{- if not (has $key $validInterfaceKeys) }}
           {{- $errors = append $errors (printf "%s interface %s: %s is not a recognized field (valid: %s)" $path $ifaceId $key (join ", " $validInterfaceKeys)) }}
+        {{- end }}
+      {{- end }}
+      {{- if hasKey $iface "options" }}
+        {{- if not (kindIs "map" $iface.options) }}
+          {{- $errors = append $errors (printf "%s interface %s: options must be a map of bond option names to values" $path $ifaceId) }}
+        {{- else }}
+          {{- range $optKey, $optVal := $iface.options }}
+            {{- if or (kindIs "map" $optVal) (kindIs "slice" $optVal) }}
+              {{- $errors = append $errors (printf "%s interface %s: options.%s must be a single value" $path $ifaceId $optKey) }}
+            {{- end }}
+          {{- end }}
         {{- end }}
       {{- end }}
     {{- end }}
