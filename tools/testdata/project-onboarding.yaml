@@ -1,0 +1,29 @@
+# Live objects for project-onboarding's managed-cluster lookups, so each branch resolves in CI:
+# payments-api exists (adopted, no created mark), legacy-batch has state: absent and carries the
+# created mark, and autoshift-contractors has state: absent but still exists. reporting is left
+# out, so its Namespace takes the create branch.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: payments-api
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: legacy-batch
+  annotations:
+    autoshift.io/project-onboarding-created: 'true'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoshift-contractors
+  namespace: payments-api
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: contractors

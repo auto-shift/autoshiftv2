@@ -9,27 +9,48 @@
 # labels and annotations, and mustonlyhave would fight them. A label removed from config therefore
 # stays on the Namespace.
 #
-# udn sets autoshift.io/udn, which a ClusterUserDefinedNetwork selects, and the label OVN-Kubernetes
-# requires on a Namespace that uses a primary user-defined network. That label only takes effect when
-# it is present at creation, which it is when this policy creates the Namespace.
+# autoshift.io/project-onboarding-created marks a Namespace this policy created. The managed-cluster
+# lookup adds it to the desired state only while the Namespace does not exist, so it is set at
+# creation and never on an adopted Namespace. Once the Namespace exists the desired state no longer
+# names it, and musthave leaves an annotation it is not given in place, so the mark persists.
 #
-# RoleBinding: mustonlyhave, so the subjects are exactly the configured groups and users. musthave
-# merges lists, and a group removed from config would keep its access. roleRef is immutable, so
-# recreateOption replaces the binding when the clusterRole changes.
+# state: absent on a project deletes the Namespace (mustnothave), but only when it carries that mark.
+# An adopted Namespace is never deleted; policy-project-onboarding-ready reports it instead. The
+# managed-by label is not the safeguard, because musthave adds it to adopted Namespaces too.
+#
+# RoleBinding: mustonlyhave, so the subjects are exactly the configured groups, users and
+# ServiceAccounts. musthave merges lists, and a group removed from config would keep its access.
+# roleRef is immutable, so recreateOption replaces the binding when the role or its kind changes.
+# state: absent on a binding deletes RoleBinding autoshift-<binding> (mustnothave).
 #
 # A placed policy with no projects fails, rather than reporting Compliant with nothing applied.
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $projects := (dig "projectOnboarding" "projects" (dict) $cfg) hub}}
-  {{hub- if not $projects hub}}{{hub fail "project-onboarding: config.projectOnboarding.projects is missing or empty in the rendered-config ConfigMap" hub}}{{hub- end hub}}
-  {{hub- range $name, $p := $projects hub}}
-  {{hub- $labels := merge (dict "autoshift.io/managed-by" "project-onboarding") ($p.labels | default dict) hub}}
-  {{hub- if $p.udn hub}}
-  {{hub- $labels = merge $labels (dict "autoshift.io/udn" $p.udn "k8s.ovn.org/primary-user-defined-network" "") hub}}
+  {{hub- if not $projects hub}}
+  {{hub- fail "project-onboarding: config.projectOnboarding.projects is missing or empty in the rendered-config ConfigMap" hub}}
   {{hub- end hub}}
+  {{hub- range $name, $p := $projects hub}}
+  {{hub- if eq ($p.state | default "present") "absent" hub}}
+  {{- $ns := (lookup "v1" "Namespace" "" {{hub $name | toJson hub}} | default dict) }}
+  {{- if eq (dig "metadata" "annotations" "autoshift.io/project-onboarding-created" "" $ns) "true" }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $name | toJson hub}}
+  {{- end }}
+  {{hub- else hub}}
+  {{hub- $labels := merge (dict "autoshift.io/managed-by" "project-onboarding") ($p.labels | default dict) hub}}
   {{hub- $annotations := dict hub}}
-  {{hub- if $p.displayName hub}}{{hub- $_ := set $annotations "openshift.io/display-name" $p.displayName hub}}{{hub- end hub}}
-  {{hub- if $p.description hub}}{{hub- $_ := set $annotations "openshift.io/description" $p.description hub}}{{hub- end hub}}
+  {{hub- if $p.displayName hub}}
+  {{hub- $_ := set $annotations "openshift.io/display-name" $p.displayName hub}}
+  {{hub- end hub}}
+  {{hub- if $p.description hub}}
+  {{hub- $_ := set $annotations "openshift.io/description" $p.description hub}}
+  {{hub- end hub}}
+  {{hub- $createAnnotations := merge (dict "autoshift.io/project-onboarding-created" "true") $annotations hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -37,14 +58,34 @@ object-templates-raw: |
       metadata:
         name: {{hub $name | toJson hub}}
         labels: {{hub $labels | toJson hub}}
+  {{- if (lookup "v1" "Namespace" "" {{hub $name | toJson hub}} | default dict) }}
         annotations: {{hub $annotations | toJson hub}}
+  {{- else }}
+        annotations: {{hub $createAnnotations | toJson hub}}
+  {{- end }}
   {{hub- range $binding, $rb := ($p.roleBindings | default dict) hub}}
+  {{hub- if eq ($rb.state | default "present") "absent" hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: {{hub printf "autoshift-%s" $binding | toJson hub}}
+        namespace: {{hub $name | toJson hub}}
+  {{hub- else hub}}
   {{hub- $subjects := list hub}}
   {{hub- range $g := ($rb.groups | default list) hub}}
   {{hub- $subjects = append $subjects (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "Group" "name" $g) hub}}
   {{hub- end hub}}
   {{hub- range $u := ($rb.users | default list) hub}}
   {{hub- $subjects = append $subjects (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "User" "name" $u) hub}}
+  {{hub- end hub}}
+  {{hub- range $sa := ($rb.serviceAccounts | default list) hub}}
+  {{hub- $subjects = append $subjects (dict "kind" "ServiceAccount" "name" $sa.name "namespace" ($sa.namespace | default $name)) hub}}
+  {{hub- end hub}}
+  {{hub- $roleRef := dict "apiGroup" "rbac.authorization.k8s.io" "kind" "ClusterRole" "name" $rb.clusterRole hub}}
+  {{hub- if $rb.role hub}}
+  {{hub- $roleRef = dict "apiGroup" "rbac.authorization.k8s.io" "kind" "Role" "name" $rb.role hub}}
   {{hub- end hub}}
   - complianceType: mustonlyhave
     recreateOption: IfRequired
@@ -56,10 +97,9 @@ object-templates-raw: |
         namespace: {{hub $name | toJson hub}}
         labels:
           autoshift.io/managed-by: project-onboarding
-      roleRef:
-        apiGroup: rbac.authorization.k8s.io
-        kind: ClusterRole
-        name: {{hub $rb.clusterRole | toJson hub}}
+      roleRef: {{hub $roleRef | toJson hub}}
       subjects: {{hub $subjects | toJson hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}

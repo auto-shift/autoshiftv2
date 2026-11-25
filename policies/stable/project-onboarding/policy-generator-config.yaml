@@ -20,7 +20,7 @@ policyDefaults:
   severity: medium
   consolidateManifests: true
   # None: removing a project from config, or the policy from a cluster, never deletes a Namespace
-  # and the workloads in it. Deletion is a deliberate act.
+  # and the workloads in it. Deletion is a deliberate act: state: absent on the entry.
   pruneObjectBehavior: None
   evaluationInterval:
     compliant: ${EVAL_COMPLIANT}
@@ -43,5 +43,9 @@ policies:
   # be bundled inside the enforcing one.
   - name: policy-project-onboarding-ready
     remediationAction: inform
+    # The template fails on the managed cluster when it has nothing to check. This strips the
+    # template dump so the fail text is the message; any other message passes through unchanged.
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
     manifests:
       - path: test/project-onboarding-ready.yaml

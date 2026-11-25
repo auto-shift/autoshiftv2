@@ -749,20 +749,26 @@ hubClusterSets:
       # Project Onboarding - policy: project-onboarding
       # =======================================================================
       # One Namespace per projects entry, keyed by the Namespace name, with RoleBindings to
-      # EXISTING ClusterRoles. No Roles are created. Validated when the autoshift chart renders.
+      # EXISTING ClusterRoles or Roles. No Roles are created. Validated when the autoshift chart renders.
       #
       #   displayName, description  optional; the openshift.io/display-name and description annotations
       #   labels                    optional Namespace labels; string values. The autoshift.io,
-      #                             k8s.ovn.org, kubernetes.io, k8s.io and openshift.io prefixes are reserved
+      #                             k8s.ovn.org, kubernetes.io, k8s.io and openshift.io prefixes are reserved.
+      #                             A label is also how a Namespace joins a network that selects on it
+      #   state                     optional, present (default) or absent. absent DELETES the Namespace
+      #                             and everything in it, but only a Namespace this policy created
       #   roleBindings              map keyed by binding name; each becomes RoleBinding autoshift-<name>
-      #     clusterRole             required, an existing ClusterRole such as admin, edit or view
-      #     groups, users           lists of names; at least one entry across the two
-      #   udn                       optional; joins the primary ClusterUserDefinedNetwork that selects
-      #                             autoshift.io/udn: <udn>. Takes effect only on a new Namespace
+      #     clusterRole | role      exactly one: an existing ClusterRole such as admin, edit or view, or
+      #                             an existing Role in the project
+      #     groups, users           lists of names
+      #     serviceAccounts         list of {name, namespace}; namespace defaults to the project
+      #                             At least one subject across groups, users and serviceAccounts
+      #     state                   optional, present (default) or absent. absent deletes the RoleBinding,
+      #                             and needs no role or subjects
       #
       # Maps merge across global, clusterset and cluster config, so a cluster can add a project or
       # a binding. Lists are replaced whole, so a cluster restating groups gets exactly its list.
-      # Removing a project leaves its Namespace in place: nothing is deleted.
+      # Removing an entry from config deletes nothing; use state: absent to remove it.
       projectOnboarding:
         projects:
           payments-api:
@@ -771,6 +777,7 @@ hubClusterSets:
             labels:
               example.com/team: 'payments'
               example.com/cost-center: 'cc-1234'
+              example.com/vm-net: 'true'
             roleBindings:
               admins:
                 clusterRole: admin
@@ -782,13 +789,22 @@ hubClusterSets:
                   - payments-devs
                 users:
                   - alice@example.com
-            udn: payments-net
+              deployer:
+                role: payments-deployer
+                serviceAccounts:
+                  - name: pipeline
+                  - name: argocd-application-controller
+                    namespace: gitops-example
+              contractors:
+                state: absent
           reporting:
             roleBindings:
               viewers:
                 clusterRole: view
                 groups:
                   - reporting-readers
+          legacy-batch:
+            state: absent
 
       # =======================================================================
       # Logging - policy: logging

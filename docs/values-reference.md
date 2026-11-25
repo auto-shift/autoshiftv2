@@ -1061,11 +1061,17 @@ Move each to the field shown.
 
 ### Project onboarding
 
-Creates project Namespaces with their labels, RoleBindings to existing ClusterRoles, and optional
-membership of a primary user-defined network by label. Projects are declared under
+Creates project Namespaces with their labels and RoleBindings to existing ClusterRoles or Roles, and
+removes a Namespace or RoleBinding marked `state: absent`. Projects are declared under
 `config.projectOnboarding.projects`, keyed by Namespace name, and validated when the `autoshift`
-chart renders. See `policies/stable/project-onboarding/README.md` for the full reference and a
-`ClusterUserDefinedNetwork` example.
+chart renders. A Namespace joins a network through an ordinary label that the network's
+`namespaceSelector` matches. See `policies/stable/project-onboarding/README.md` for the full
+reference, the deletion safeguard and a `ClusterUserDefinedNetwork` example.
+
+> [!WARNING]
+> `state: absent` on a project deletes the Namespace and everything in it, including virtual
+> machines and PersistentVolumeClaims, on every cluster that config applies to. Only a Namespace the
+> policy created is deleted. Removing an entry from config deletes nothing.
 
 | Variable | Type | Default Value | Notes |
 |----------|------|---------------|-------|
@@ -1077,10 +1083,13 @@ chart renders. See `policies/stable/project-onboarding/README.md` for the full r
 | `projectOnboarding.projects.<name>.displayName` | string | Optional `openshift.io/display-name` annotation |
 | `projectOnboarding.projects.<name>.description` | string | Optional `openshift.io/description` annotation |
 | `projectOnboarding.projects.<name>.labels` | map | Namespace labels with string values. The `autoshift.io`, `k8s.ovn.org`, `kubernetes.io`, `k8s.io` and `openshift.io` prefixes are reserved |
-| `projectOnboarding.projects.<name>.roleBindings.<binding>.clusterRole` | string | Required. An existing ClusterRole; the RoleBinding is named `autoshift-<binding>` |
-| `projectOnboarding.projects.<name>.roleBindings.<binding>.groups` | list | Group subjects. At least one group or user per binding |
+| `projectOnboarding.projects.<name>.state` | string | `present` (default) or `absent`. `absent` deletes the Namespace, only when the policy created it |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.clusterRole` | string | An existing ClusterRole. Exactly one of `clusterRole` and `role`; the RoleBinding is named `autoshift-<binding>` |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.role` | string | An existing Role in the project Namespace. No Role is created |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.groups` | list | Group subjects. At least one subject across groups, users and ServiceAccounts per binding |
 | `projectOnboarding.projects.<name>.roleBindings.<binding>.users` | list | User subjects |
-| `projectOnboarding.projects.<name>.udn` | string | Primary `ClusterUserDefinedNetwork` to join, by the label `autoshift.io/udn`. Takes effect only on a newly created Namespace |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.serviceAccounts` | list | ServiceAccount subjects, each `name` and an optional `namespace` that defaults to the project |
+| `projectOnboarding.projects.<name>.roleBindings.<binding>.state` | string | `present` (default) or `absent`. `absent` deletes the RoleBinding and needs no role or subjects |
 
 ### Kubernetes NMState Operator
 

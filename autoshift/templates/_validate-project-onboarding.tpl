@@ -8,7 +8,8 @@ Config is checked the way rendered-config merges it, the cluster's own over its 
 the global config, so a cluster can override part of a project its clusterset declares. A clusters
 entry names its clusterset only through config.clusterSet. Without it the clusterset is whatever the
 ManagedCluster carries at runtime, so the merged view is incomplete and the checks for required
-fields are skipped rather than guessed. Format and type checks still run.
+fields are skipped rather than guessed. Format and type checks still run, and any empty value the
+cluster sets is refused, because the merge could fill it from the unknown clusterset.
 */}}
 {{- define "autoshift.validate-project-onboarding" -}}
 {{- $errors := list }}
@@ -37,10 +38,13 @@ fields are skipped rather than guessed. Format and type checks still run.
 {{- $labelValue := "^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$" }}
 {{- $reservedNamespace := "^(default|openshift|kube-.*|openshift-.*|open-cluster-management.*)$" }}
 {{- $reservedLabelPrefix := "^((.*\\.)?autoshift\\.io|k8s\\.ovn\\.org|kubernetes\\.io|k8s\\.io|openshift\\.io)$" }}
-{{- $clusterRoleName := "^[^/%{}\\s]+$" }}
+{{- /* RBAC role names are path segments with no length limit; braces and whitespace are refused too, because the name is rendered into a hub template */}}
+{{- $roleName := "^[^/%{}\\s]+$" }}
 {{- $subjectName := "^[^/%{}\\s]([^/%{}]*[^/%{}\\s])?$" }}
-{{- $projectKeys := list "displayName" "description" "labels" "roleBindings" "udn" }}
-{{- $bindingKeys := list "clusterRole" "groups" "users" }}
+{{- $projectKeys := list "displayName" "description" "labels" "roleBindings" "state" }}
+{{- $bindingKeys := list "clusterRole" "role" "groups" "users" "serviceAccounts" "state" }}
+{{- $serviceAccountKeys := list "name" "namespace" }}
+{{- $states := list "present" "absent" }}
 
 {{- range $t := $targets }}
   {{- $merged := dict }}
@@ -65,7 +69,7 @@ fields are skipped rather than guessed. Format and type checks still run.
     {{- $paths := list }}
     {{- range $name, $p := (dig "projectOnboarding" "projects" (dict) $layer | default dict) }}
       {{- if not (kindIs "map" $p) }}{{- continue }}{{- end }}
-      {{- range $f := list "displayName" "description" "udn" }}
+      {{- range $f := list "displayName" "description" "state" }}
         {{- if hasKey $p $f }}{{- $paths = append $paths (list $name $f) }}{{- end }}
       {{- end }}
       {{- if kindIs "map" $p.labels }}
@@ -82,7 +86,13 @@ fields are skipped rather than guessed. Format and type checks still run.
     {{- end }}
     {{- range $path := $paths }}
       {{- $full := concat (list "projectOnboarding" "projects") $path }}
-      {{- if include "autoshift.project-onboarding.non-empty-at" (dict "root" $layer "path" $full) }}{{- continue }}{{- end }}
+      {{- if include "autoshift.project-onboarding.non-empty-at" (dict "root" $layer "path" $full) }}
+        {{- continue }}
+      {{- end }}
+      {{- if and (eq $i 0) (not $t.complete) }}
+        {{- $errors = append $errors (printf "%s: config.%s is empty, and this cluster sets no config.clusterSet, so the clusterset it inherits from is known only at runtime and the merge could fill the empty value from it; remove the key, or set config.clusterSet" $t.where (join "." $full)) }}
+        {{- continue }}
+      {{- end }}
       {{- range $lower := slice $t.layers (add1 $i) }}
         {{- if include "autoshift.project-onboarding.non-empty-at" (dict "root" $lower "path" $full) }}
           {{- $errors = append $errors (printf "%s: config.%s is empty but a lower layer sets it, and the merge keeps the inherited value; an empty value cannot clear it, so remove the entry from the lower layer instead" $t.where (join "." $full)) }}
@@ -140,7 +150,7 @@ fields are skipped rather than guessed. Format and type checks still run.
         {{- if or (gt (len $parts) 2) (and (eq (len $parts) 2) (or (gt (len $prefix) 253) (not (regexMatch $dnsSubdomain $prefix)))) (gt (len $lname) 63) (not (regexMatch $labelName $lname)) }}
           {{- $errors = append $errors (printf "%s.labels: '%s' is not a valid label key" $at $key) }}
         {{- else if and $prefix (regexMatch $reservedLabelPrefix $prefix) }}
-          {{- $errors = append $errors (printf "%s.labels: '%s' uses the reserved prefix '%s/' (autoshift.io, k8s.ovn.org, kubernetes.io, k8s.io, openshift.io); set udn for a user-defined network" $at $key $prefix) }}
+          {{- $errors = append $errors (printf "%s.labels: '%s' uses the reserved prefix '%s/' (autoshift.io, k8s.ovn.org, kubernetes.io, k8s.io, openshift.io)" $at $key $prefix) }}
         {{- end }}
         {{- if not (kindIs "string" $value) }}
           {{- $errors = append $errors (printf "%s.labels.%s must be a string; quote it, as in '%v'" $at $key $value) }}
@@ -150,10 +160,13 @@ fields are skipped rather than guessed. Format and type checks still run.
       {{- end }}
     {{- end }}
 
-    {{- $udn := index $p "udn" }}
-    {{- if not (kindIs "invalid" $udn) }}
-      {{- if or (not (kindIs "string" $udn)) (gt (len (toString $udn)) 63) (not (regexMatch $dns1123Label (toString $udn))) }}
-        {{- $errors = append $errors (printf "%s.udn must be a ClusterUserDefinedNetwork name, a DNS-1123 label" $at) }}
+    {{- $projectAbsent := false }}
+    {{- $state := index $p "state" }}
+    {{- if not (kindIs "invalid" $state) }}
+      {{- if not (and (kindIs "string" $state) (has $state $states)) }}
+        {{- $errors = append $errors (printf "%s.state must be 'present' or 'absent'" $at) }}
+      {{- else if eq $state "absent" }}
+        {{- $projectAbsent = true }}
       {{- end }}
     {{- end }}
 
@@ -176,18 +189,39 @@ fields are skipped rather than guessed. Format and type checks still run.
           {{- $errors = append $errors (printf "%s.%s is not a recognized field (valid: %s)" $bat $key (join ", " $bindingKeys)) }}
         {{- end }}
       {{- end }}
-      {{- $role := index $rb "clusterRole" }}
-      {{- if kindIs "invalid" $role }}
-        {{- if $t.complete }}
-          {{- $errors = append $errors (printf "%s.clusterRole is required: the name of an existing ClusterRole, such as admin, edit or view" $bat) }}
+      {{- $bindingAbsent := $projectAbsent }}
+      {{- $bstate := index $rb "state" }}
+      {{- if not (kindIs "invalid" $bstate) }}
+        {{- if not (and (kindIs "string" $bstate) (has $bstate $states)) }}
+          {{- $errors = append $errors (printf "%s.state must be 'present' or 'absent'" $bat) }}
+        {{- else if eq $bstate "absent" }}
+          {{- $bindingAbsent = true }}
         {{- end }}
-      {{- else if or (not (kindIs "string" $role)) (gt (len (toString $role)) 253) (not (regexMatch $clusterRoleName (toString $role))) (has (toString $role) (list "." "..")) }}
-        {{- $errors = append $errors (printf "%s.clusterRole is not a valid ClusterRole name" $bat) }}
+      {{- end }}
+      {{- $roleRefs := 0 }}
+      {{- range $kind := list "clusterRole" "role" }}
+        {{- $role := index $rb $kind }}
+        {{- if kindIs "invalid" $role }}
+          {{- continue }}
+        {{- end }}
+        {{- if $role }}
+          {{- $roleRefs = add1 $roleRefs }}
+        {{- end }}
+        {{- if or (not (kindIs "string" $role)) (not (regexMatch $roleName (toString $role))) (has (toString $role) (list "." "..")) }}
+          {{- $errors = append $errors (printf "%s.%s is not a valid %s name (non-empty, not '.' or '..', no '/', '%%', '{', '}' or whitespace)" $bat $kind (ternary "ClusterRole" "Role" (eq $kind "clusterRole"))) }}
+        {{- end }}
+      {{- end }}
+      {{- if gt $roleRefs 1 }}
+        {{- $errors = append $errors (printf "%s sets both clusterRole and role; set exactly one. A lower layer that sets the other cannot be cleared by the merge, so change it in the layer that declares it" $bat) }}
+      {{- else if and $t.complete (not $bindingAbsent) (eq $roleRefs 0) }}
+        {{- $errors = append $errors (printf "%s needs clusterRole, the name of an existing ClusterRole such as admin, edit or view, or role, the name of an existing Role in the project" $bat) }}
       {{- end }}
       {{- $subjects := 0 }}
       {{- range $kind := list "groups" "users" }}
         {{- $names := index $rb $kind }}
-        {{- if kindIs "invalid" $names }}{{- continue }}{{- end }}
+        {{- if kindIs "invalid" $names }}
+          {{- continue }}
+        {{- end }}
         {{- if not (kindIs "slice" $names) }}
           {{- $errors = append $errors (printf "%s.%s must be a list of names" $bat $kind) }}
           {{- $subjects = add1 $subjects }}{{/* the type error is the one to report, not a missing subject */}}
@@ -202,8 +236,39 @@ fields are skipped rather than guessed. Format and type checks still run.
           {{- end }}
         {{- end }}
       {{- end }}
-      {{- if and $t.complete (eq $subjects 0) }}
-        {{- $errors = append $errors (printf "%s needs at least one entry in groups or users" $bat) }}
+      {{- $sas := index $rb "serviceAccounts" }}
+      {{- if not (kindIs "invalid" $sas) }}
+        {{- if not (kindIs "slice" $sas) }}
+          {{- $errors = append $errors (printf "%s.serviceAccounts must be a list of {name, namespace} entries" $bat) }}
+          {{- $subjects = add1 $subjects }}
+        {{- else }}
+          {{- range $i, $sa := $sas }}
+            {{- $subjects = add1 $subjects }}
+            {{- $sat := printf "%s.serviceAccounts[%d]" $bat $i }}
+            {{- if not (kindIs "map" $sa) }}
+              {{- $errors = append $errors (printf "%s must be a map with name and an optional namespace" $sat) }}
+              {{- continue }}
+            {{- end }}
+            {{- range $key, $_ := $sa }}
+              {{- if not (has $key $serviceAccountKeys) }}
+                {{- $errors = append $errors (printf "%s.%s is not a recognized field (valid: %s)" $sat $key (join ", " $serviceAccountKeys)) }}
+              {{- end }}
+            {{- end }}
+            {{- $saName := index $sa "name" }}
+            {{- if or (not (kindIs "string" $saName)) (gt (len (toString $saName)) 253) (not (regexMatch $dnsSubdomain (toString $saName))) }}
+              {{- $errors = append $errors (printf "%s.name is required and must be a ServiceAccount name, a DNS-1123 subdomain of 253 characters or fewer" $sat) }}
+            {{- end }}
+            {{- $saNamespace := index $sa "namespace" }}
+            {{- if not (kindIs "invalid" $saNamespace) }}
+              {{- if or (not (kindIs "string" $saNamespace)) (gt (len (toString $saNamespace)) 63) (not (regexMatch $dns1123Label (toString $saNamespace))) }}
+                {{- $errors = append $errors (printf "%s.namespace must be a Namespace name, a DNS-1123 label; omit it for the project's own Namespace" $sat) }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      {{- if and $t.complete (not $bindingAbsent) (eq $subjects 0) }}
+        {{- $errors = append $errors (printf "%s needs at least one entry in groups, users or serviceAccounts" $bat) }}
       {{- end }}
     {{- end }}
   {{- end }}
