@@ -1,0 +1,132 @@
+# Is the shared gateway serving, its authorization applied, and every server federated?
+#
+# inform-only. The MCPGatewayExtension Ready condition covers the broker-router Deployment
+# and the EnvoyFilter in openshift-ingress together. It stays False while the EnvoyFilter CRD is
+# missing, which is what an Istio control plane that never came up looks like from here, and
+# while the trusted-headers public key Secret is missing.
+#
+# Ready on an MCPServerRegistration means the broker connected to the server and listed its
+# tools. The usual reasons it stays False: the HTTPRoute does not attach to the internal
+# listener, the prefix is already taken by another registration, the credential Secret is
+# missing or lacks its label, or the MCP server itself is not running.
+#
+# The Secret checks are musthave in an inform policy, so they report a missing Secret rather than
+# create an empty one. Both halves of the trusted-headers key pair are created out of band; a
+# key is a secret, and it never comes from values:
+#
+#   openssl ecparam -name prime256v1 -genkey -noout -out private-key.pem
+#   openssl ec -in private-key.pem -pubout -out public-key.pem
+#   oc create secret generic mcp-trusted-headers-private -n kuadrant-system \
+#     --from-file=key.pem=private-key.pem
+#   oc create secret generic mcp-trusted-headers -n mcp-gateway --from-file=key=public-key.pem
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "") hub}}
+  {{hub- $cfg := (index ($raw | fromYaml | default dict) "mcpGateway" | default dict) hub}}
+  {{hub- $gw := (dig "gateway" (dict) $cfg) hub}}
+  {{hub- if not $gw hub}}{{hub fail "mcp-gateway: config.mcpGateway.gateway is missing" hub}}{{hub- end hub}}
+  {{hub- $name := (dig "name" "mcp-gateway" $gw) hub}}
+  {{hub- $ns := (dig "namespace" "mcp-gateway" $gw) hub}}
+  {{hub- $gwNs := "openshift-ingress" hub}}
+  {{hub- $authType := (dig "auth" "type" "" $gw) hub}}
+  {{hub- $toolAuthz := (eq (printf "%v" (dig "toolAuthorization" "enabled" false $gw)) "true") hub}}
+  {{hub- $keySecret := (dig "toolAuthorization" "keySecretName" "mcp-trusted-headers" $gw) hub}}
+  {{hub- $kuadrantNs := (dig "toolAuthorization" "kuadrantNamespace" "kuadrant-system" $gw) hub}}
+  {{hub- $servers := (dig "servers" (list) $cfg) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata:
+        name: envoyfilters.networking.istio.io
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      metadata:
+        name: {{hub $name hub}}
+        namespace: {{hub $gwNs hub}}
+      status:
+        conditions:
+          - type: Programmed
+            status: 'True'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: mcp.kuadrant.io/v1
+      kind: MCPGatewayExtension
+      metadata:
+        name: {{hub $name hub}}
+        namespace: {{hub $ns hub}}
+      status:
+        conditions:
+          - type: Ready
+            status: 'True'
+  {{hub- if ne $authType "none" hub}}
+  # Accepted alone means the policy parsed. Enforced means Authorino is applying it.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: kuadrant.io/v1
+      kind: AuthPolicy
+      metadata:
+        name: {{hub $name hub}}-mcp
+        namespace: {{hub $gwNs hub}}
+      status:
+        conditions:
+          - type: Enforced
+            status: 'True'
+  {{hub- end hub}}
+  {{hub- if $toolAuthz hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: kuadrant.io/v1
+      kind: AuthPolicy
+      metadata:
+        name: {{hub $name hub}}-tools
+        namespace: {{hub $gwNs hub}}
+      status:
+        conditions:
+          - type: Enforced
+            status: 'True'
+  # The public key the broker verifies x-authorized-tools with, under the key "key".
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub $keySecret hub}}
+        namespace: {{hub $ns hub}}
+  # The private key Authorino signs x-authorized-tools with, under the key "key.pem". Authorino
+  # resolves signing keys in the namespace of the AuthConfig Kuadrant generates, which is the
+  # Kuadrant namespace, not openshift-ingress.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub $keySecret hub}}-private
+        namespace: {{hub $kuadrantNs hub}}
+  {{hub- end hub}}
+  {{hub- range $s := $servers hub}}
+  {{hub- if not (and (dig "name" "" $s) (dig "namespace" "" $s)) hub}}{{hub fail "mcp-gateway: every config.mcpGateway.servers entry needs name, namespace, port and prefix" hub}}{{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: mcp.kuadrant.io/v1
+      kind: MCPServerRegistration
+      metadata:
+        name: {{hub (dig "name" "" $s) hub}}
+        namespace: {{hub (dig "namespace" "" $s) hub}}
+      status:
+        conditions:
+          - type: Ready
+            status: 'True'
+  {{hub- if (dig "credentialSecret" "name" "" $s) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub (dig "credentialSecret" "name" "" $s) hub}}
+        namespace: {{hub (dig "namespace" "" $s) hub}}
+        labels:
+          mcp.kuadrant.io/secret: 'true'
+  {{hub- end hub}}
+  {{hub- end hub}}

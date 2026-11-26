@@ -1,0 +1,37 @@
+# Is the MCP Gateway API there to be used?
+#
+# inform-only. Connectivity Link 1.5 applies these CRDs and deploys the MCP Gateway controller
+# through the KuadrantControlPlane named default. This policy only reads that object; it never
+# creates, changes or deletes it, because deleting it removes every Connectivity Link component.
+#
+# The dependency matters more than usual here. A ConfigurationPolicy naming a kind whose CRD
+# does not exist reports Compliant while doing nothing, so without this gate a cluster on
+# Connectivity Link 1.4, which has no MCP Gateway, would show the instance policy green.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpgatewayextensions.mcp.kuadrant.io
+status:
+  conditions:
+    - type: Established
+      status: 'True'
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpserverregistrations.mcp.kuadrant.io
+status:
+  conditions:
+    - type: Established
+      status: 'True'
+---
+# Ready means every component the control plane deploys, the MCP Gateway controller among
+# them, has available replicas.
+apiVersion: kuadrant.io/v1alpha1
+kind: KuadrantControlPlane
+metadata:
+  name: default
+status:
+  conditions:
+    - type: Ready
+      status: 'True'

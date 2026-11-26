@@ -1,0 +1,22 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-mcp-gateway
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: selects across all ManagedClusterSetBindings in this namespace,
+  # filtered by the predicate below. No cluster-type predicate, so a self-managed hub can be
+  # placed: cluster-type spoke never matches a hub, and an unplaced policy has no status at all.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/mcp-gateway'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
