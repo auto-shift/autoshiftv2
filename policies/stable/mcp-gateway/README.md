@@ -120,6 +120,7 @@ Every value in the sample is an example.
 | `servers[].prefix` | | Required. Prepended to every tool name. Immutable |
 | `servers[].category` | `[uncategorised]` | Used by the gateway's tool discovery |
 | `servers[].hint` | | Short description for tool discovery |
+| `servers[].supportedProtocolVersions` | | Optional. The MCP protocol versions the server serves, for a server that advertises fewer in `server/discover`. The broker shows a server's tools only to clients on a version it supports; list both `2025-11-25` and `2026-07-28` for a server that serves both but advertises only one |
 | `servers[].credentialSecret.name` / `.key` | / `token` | A Secret created out of band |
 | `servers[].access[].groups` / `.users` | | Who the entry grants. One of the two is required |
 | `servers[].access[].tools` | | Required. Tool names without the prefix |
