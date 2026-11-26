@@ -1,0 +1,57 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: cluster-autoscaler
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml, never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# Two policies share placement.yaml, so the shared PlacementBinding needs an explicit name.
+placementBindingDefaults:
+  name: binding-policy-cluster-autoscaler
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: medium
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+    - SC System and Communications Protection
+  controls:
+    - CM-2 Baseline Configuration
+    - SC-5 Denial of Service Protection
+  # Turning autoscaling off must not delete the ClusterAutoscaler out from under running nodes
+  # without anyone deciding to: removal stops reconciliation and leaves everything in place.
+  pruneObjectBehavior: None
+  placement:
+    placementPath: placement.yaml
+policies:
+  # The ClusterAutoscaler and one MachineAutoscaler per selected MachineSet.
+  - name: policy-cluster-autoscaler
+    manifests:
+      - path: manifests/cluster-autoscaler.yaml
+  # inform: the autoscaler Deployment the ClusterAutoscaler creates is running, and every class
+  # configured in machineSets has MachineSets with MachineAutoscalers.
+  - name: policy-cluster-autoscaler-ready
+    remediationAction: inform
+    consolidateManifests: false
+    dependencies:
+      - name: policy-cluster-autoscaler
+    manifests:
+      - path: test/cluster-autoscaler-ready.yaml
+        customMessage:
+          noncompliant: >-
+            The cluster-autoscaler-default Deployment in openshift-machine-api is not available, so
+            nothing is autoscaled. Check the ClusterAutoscaler default and the machine-api-operator
+            logs; a resourceLimits value the API rejects is a common cause.
+      - path: test/machine-autoscalers-ready.yaml
+        # Surfaces the fail message (which names the class) rather than the template error
+        # wrapping it; a missing or different MachineAutoscaler shows the default message.
+        customMessage:
+          noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
