@@ -50,7 +50,9 @@ want would have, not at its current size (Red Hat solution 6573321).
 Machine sets are classified on the managed cluster, in this order:
 
 1. **storage**: the template's node labels carry `cluster.ocs.openshift.io/openshift-storage`.
-   Never autoscaled.
+   Never autoscaled: the template renders no `MachineAutoscaler` for one, and removes the
+   `MachineAutoscaler` of a machine set that becomes storage. On upgrade, a `MachineAutoscaler`
+   targeting a storage machine set is deleted; the machine set keeps its current replicas.
 2. **gpu**: the template's node labels carry `node-role.kubernetes.io/gpu` or
    `cluster-api/accelerator`. Checked before the role, because a GPU machine set usually has the
    `worker` role too, and would otherwise scale with the workers.

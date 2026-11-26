@@ -387,6 +387,15 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	assertContains("stable/user-workload-monitoring", "storage:",
 		"config.uwm.prometheus.storage must be set in hub example config")
 
+	// cluster-autoscaler: a MachineSet classified storage must get mustnothave for its
+	// MachineAutoscaler, not musthave. The storage MachineSet stub may have been scaled
+	// by this policy while it was classified worker, and a reclassified storage node
+	// must not keep scaling.
+	assertContains("stable/cluster-autoscaler", "complianceType: mustnothave",
+		"the storage-classified MachineSet stub must render a mustnothave MachineAutoscaler")
+	assertContains("stable/cluster-autoscaler", "name: test-cluster-abc12-storage-us-east-2a",
+		"the mustnothave must name the storage MachineSet's autoscaler exactly")
+
 	// Multi-profile coverage: acm-mch-install emits `disableHubSelfManagement`
 	// only when the cluster's self-managed label is 'false'. The hub context
 	// (self-managed: 'true') must NOT emit it, and every managed profile

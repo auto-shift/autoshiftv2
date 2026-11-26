@@ -300,6 +300,71 @@ spec:
             resourcePool: /DC1/host/cluster/Resources
             server: vcenter.test.example.com
 ---
+# Storage MachineSet — the cluster-autoscaler policy classifies it storage through the
+# cluster.ocs.openshift.io/openshift-storage node label, checked before the machine role.
+# Its MachineAutoscaler must therefore get mustnothave, not musthave: the policy may have
+# created that autoscaler while the MachineSet was still classified worker, and a
+# reclassified storage node must not keep scaling. Not named <infrastructure id>-worker
+# for the same reason as the GPU MachineSet above. Same hybrid providerSpec.
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineSet
+metadata:
+  name: test-cluster-abc12-storage-us-east-2a
+  namespace: openshift-machine-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-cluster: test-cluster-abc12
+      machine.openshift.io/cluster-api-machineset: test-cluster-abc12-storage-us-east-2a
+  template:
+    metadata:
+      labels:
+        machine.openshift.io/cluster-api-cluster: test-cluster-abc12
+        machine.openshift.io/cluster-api-machine-role: worker
+        machine.openshift.io/cluster-api-machine-type: worker
+        machine.openshift.io/cluster-api-machineset: test-cluster-abc12-storage-us-east-2a
+    spec:
+      metadata:
+        labels:
+          cluster.ocs.openshift.io/openshift-storage: ''
+      providerSpec:
+        value:
+          apiVersion: machine.openshift.io/v1beta1
+          kind: AWSMachineProviderConfig
+          ami:
+            id: ami-fake0000000000002
+          placement:
+            availabilityZone: us-east-2a
+            region: us-east-2
+          instanceType: m5.2xlarge
+          userDataSecret:
+            name: worker-user-data
+          credentialsSecret:
+            name: aws-cloud-credentials
+          iamInstanceProfile:
+            id: test-cluster-abc12-worker-profile
+          securityGroups:
+            - filters:
+                - name: tag:Name
+                  values:
+                    - test-cluster-abc12-worker-sg
+          subnet:
+            filters:
+              - name: tag:Name
+                values:
+                  - test-cluster-abc12-subnet-private-us-east-2a
+          tags:
+            - name: kubernetes.io/cluster/test-cluster-abc12
+              value: owned
+          deviceIndex: 0
+          workspace:
+            datacenter: DC1
+            datastore: datastore1
+            folder: /DC1/vm/test-cluster
+            resourcePool: /DC1/host/cluster/Resources
+            server: vcenter.test.example.com
+---
 # IngressController — registers operator.openshift.io/v1
 apiVersion: operator.openshift.io/v1
 kind: IngressController

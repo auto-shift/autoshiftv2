@@ -18,7 +18,8 @@
 #
 # MachineSets are classified on the managed cluster, in this order:
 #   storage  template node labels carry cluster.ocs.openshift.io/openshift-storage. Never
-#            autoscaled: removing a storage node is not something to do automatically.
+#            autoscaled: removing a storage node is not something to do automatically, so the
+#            template also removes the MachineAutoscaler of a MachineSet classified storage.
 #   gpu      template node labels carry node-role.kubernetes.io/gpu or cluster-api/accelerator.
 #            Checked before the role, because a GPU MachineSet usually also has role worker.
 #   infra    machine role infra.
@@ -90,5 +91,20 @@ object-templates-raw: |
           apiVersion: machine.openshift.io/v1beta1
           kind: MachineSet
           name: {{ $ms.metadata.name }}
+  {{- end }}
+  {{- if eq $class "storage" }}
+  # A storage MachineSet must never be autoscaled: removing a storage node is not something
+  # to do automatically. This removes the MachineAutoscaler of every MachineSet classified
+  # storage, which is also how an autoscaler this policy created while the MachineSet was
+  # still worker, infra or gpu is cleaned up after a reclassification: pruneObjectBehavior is
+  # None, so nothing else would delete it. The definition names exactly the MachineSet above,
+  # so no other MachineAutoscaler is touched.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: autoscaling.openshift.io/v1beta1
+      kind: MachineAutoscaler
+      metadata:
+        name: {{ $ms.metadata.name }}
+        namespace: openshift-machine-api
   {{- end }}
   {{- end }}
