@@ -1,0 +1,16 @@
+# Inform-only: Compliant once the operator has reconciled the UpdateService, which includes creating
+# its Route. The OperatorPolicy reports only on the Subscription and CSV.
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config") hub}}
+  {{hub- $cfg := (index ($raw | fromYaml | default dict) "update-service" | default dict) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: updateservice.operator.openshift.io/v1
+      kind: UpdateService
+      metadata:
+        name: '{{hub dig "name" "autoshift" $cfg hub}}'
+        namespace: openshift-update-service
+      status:
+        conditions:
+          - type: ReconcileCompleted
+            status: 'True'

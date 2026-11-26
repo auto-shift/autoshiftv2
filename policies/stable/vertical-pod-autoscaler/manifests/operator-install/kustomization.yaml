@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Renders the shared components/operator-install chart, which owns the OperatorPolicy structure and
+# creates the namespace (with the cluster-monitoring label). The per-operator ACM lookups below are the
+# visible, greppable inputs — every autoshift.io/vertical-pod-autoscaler-* label this operator consumes is here.
+# ${REMEDIATION} is substituted by the CMP before kustomize runs.
+helmGlobals:
+  chartHome: ../../../../../components/
+helmCharts:
+  - name: operator-install
+    releaseName: vertical-pod-autoscaler
+    valuesInline:
+      name: vertical-pod-autoscaler
+      namespace: openshift-vertical-pod-autoscaler
+      targetNamespaces:
+        - openshift-vertical-pod-autoscaler
+      remediation: ${REMEDIATION}
+      policyNamespace: ${POLICY_NAMESPACE}
+      subscription:
+        name: '{{hub index .ManagedClusterLabels "autoshift.io/vertical-pod-autoscaler-subscription-name" | default "vertical-pod-autoscaler" hub}}'
+        channel: '{{hub index .ManagedClusterLabels "autoshift.io/vertical-pod-autoscaler-channel" | default "stable" hub}}'
+        source: '{{hub $base := (index .ManagedClusterLabels "autoshift.io/vertical-pod-autoscaler-source" | default "redhat-operators") hub}}{{hub ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}'
+        sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/vertical-pod-autoscaler-source-namespace" | default "openshift-marketplace" hub}}'
+        # Version resolution (config lives in the rendered-config ConfigMap on the hub):
+        #   config mode (config.vertical-pod-autoscaler.versions set): versions = that list; startingCSV = config.vertical-pod-autoscaler.startingCSV
+        #     (explicit — the list says what's ALLOWED, not where to START; default "" = let OLM pick).
+        #   label mode (no config): versions = [vertical-pod-autoscaler-version label]; startingCSV = that same version.
+        # $vers is computed here and reused by `versions` below.
+        startingCSV: |-
+          {{hub- $cfg := (index (index (index ((lookup "v1" "ConfigMap" "${POLICY_NAMESPACE}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "vertical-pod-autoscaler" | default dict) hub}}
+          {{hub- $cfgVers := (dig "versions" (list) $cfg) hub}}
+          {{hub- $isCfg := (not (empty $cfgVers)) hub}}
+          {{hub- $labelVer := (index .ManagedClusterLabels "autoshift.io/vertical-pod-autoscaler-version" | default "") hub}}
+          {{hub- $vers := (ternary $cfgVers (ternary (list) (list $labelVer) (empty $labelVer)) $isCfg) hub}}
+          {{hub- (ternary (dig "startingCSV" "" $cfg) $labelVer $isCfg) hub}}
+      # versions reuses $vers set in startingCSV above (same policy, resolves after it).
+      versions: '{{hub $vers | toRawJson | toLiteral hub}}'
