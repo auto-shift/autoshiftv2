@@ -207,6 +207,21 @@ func TestPinPrereleaseIsTheLowest(t *testing.T) {
 	}
 }
 
+// Two values files requesting different channels of the same package, each pinning on its
+// own channel. clusterset.yaml requests stable-3.18 and pins v3.18.0, which stable-3.18
+// carries; cluster-cross-channel.yaml requests stable-3.17 and pins the same v3.18.0, which
+// stable-3.17 does not carry. The pin must be validated on the channel of the file that
+// requested it and fail, not pass because the other file requested a channel that has it.
+func TestPinValidatedOnItsOwnChannel(t *testing.T) {
+	log, _, err := generate(t, nil, "clusterset.yaml", "cluster-cross-channel.yaml")
+	if err == nil {
+		t.Fatalf("a pin its own channel lacks should fail generation:\n%s", log)
+	}
+	if !strings.Contains(log, "is not in channel stable-3.17") {
+		t.Errorf("the failure does not name the pin's own channel:\n%s", log)
+	}
+}
+
 func TestPinMissingFromCatalogFails(t *testing.T) {
 	log, _, err := generate(t, nil, "clusterset.yaml", "cluster-bad-pin.yaml")
 	if err == nil {

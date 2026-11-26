@@ -400,13 +400,15 @@ extract_version_pins() {
               if (f[1] == "cfg" || !(k in cfg)) print f[3] "|" f[4] } }' <<< "$raw" | sort -u
 }
 
-# Write PINS_FILE ("package|csv" lines) for the operators being mirrored. Only labels that name one of
-# those packages count, and only values shaped like a CSV name, which leaves out openshift-version,
-# servicemesh3operator-istio-version and chart versions such as vault-version.
+# Write PINS_FILE ("package|csv|channel" lines) for the operators being mirrored. Only labels that
+# name one of those packages count, and only values shaped like a CSV name, which leaves out
+# openshift-version, servicemesh3operator-istio-version and chart versions such as vault-version.
+# The channel is the -channel label of the same file, so each pin keeps the channel that requested
+# it and resolve_pin_ranges validates it there, not against every channel any file requests.
 collect_version_pins() {
     local packages=" $1 "
     shift
-    local values_file label csv package
+    local values_file label csv package channel
     : > "$PINS_FILE"
     if ! yq --version 2>&1 | grep -q mikefarah; then
         log_error "yq v4 (mikefarah) is required to read the version pins in the values files"
@@ -420,7 +422,8 @@ collect_version_pins() {
             [[ "$csv" =~ ^[a-z][a-z0-9-]*\.v?[0-9]+\. ]] || continue
             package=$(get_operator_subscription_name "$label" "$values_file")
             [[ -n "$package" && "$packages" == *" $package "* ]] || continue
-            echo "$package|$csv" >> "$PINS_FILE"
+            channel=$(grep -E "^[[:space:]]*${label}-channel:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r')
+            echo "$package|$csv|$channel" >> "$PINS_FILE"
         done <<< "$pins"
     done
     sort -u "$PINS_FILE" -o "$PINS_FILE"
@@ -448,10 +451,10 @@ resolve_pin_ranges() {
     PIN_VERSIONS=""
     [[ -s "$PINS_FILE" ]] || return 0
     local csvs
-    csvs=$(grep "^${package}|" "$PINS_FILE" | cut -d'|' -f2 | paste -sd' ' -)
+    csvs=$(grep "^${package}|" "$PINS_FILE" | cut -d'|' -f2 | sort -u | paste -sd' ' -)
     [[ -z "$csvs" ]] && return 0
 
-    local configs_dir resolved="" csv version in_channels channel requested found
+    local configs_dir resolved="" csv version in_channels channel requested found pin_package pin_channel
     configs_dir=$(get_catalog_cache_configs "$catalog_image")
     requested=$(echo "$channels" | tr ',' '\n' | xargs -n1 2>/dev/null)
     if [[ -n "$configs_dir" && -d "$configs_dir/$package" ]]; then
@@ -486,22 +489,43 @@ resolve_pin_ranges() {
         done
     fi
 
+    # Validate each pin on the channel of the file that requested it, not on every channel
+    # any file requests: a pin valid only on file B's channel must not pass because file A
+    # asked for a different one.
     local pairs="" invalid=0
-    while IFS='|' read -r csv version in_channels; do
+    while IFS='|' read -r pin_package csv pin_channel; do
         [[ -z "$csv" ]] && continue
         found=0
+        IFS='|' read -r _ version in_channels <<< "$(grep "^${csv}|" <<< "$resolved" | head -1)"
         if [[ -n "$version" ]]; then
-            for channel in $requested; do
-                if [[ ",$in_channels," == *",$channel,"* ]]; then
-                    pairs+="$channel|$version|$csv"$'\n'
-                    [[ " $PIN_VERSIONS " == *" $version "* ]] || PIN_VERSIONS+="$version "
-                    found=1
-                fi
-            done
+            if [[ -n "$pin_channel" ]]; then
+                for channel in $requested; do
+                    if [[ "$channel" == "$pin_channel" && ",$in_channels," == *",$pin_channel,"* ]]; then
+                        pairs+="$pin_channel|$version|$csv"$'\n'
+                        [[ " $PIN_VERSIONS " == *" $version "* ]] || PIN_VERSIONS+="$version "
+                        found=1
+                    fi
+                done
+            else
+                # A record without a channel keeps the old any-requested-channel behaviour.
+                # collect_version_pins aborts on a missing -channel label, so this is
+                # defensive only.
+                for channel in $requested; do
+                    if [[ ",$in_channels," == *",$channel,"* ]]; then
+                        pairs+="$channel|$version|$csv"$'\n'
+                        [[ " $PIN_VERSIONS " == *" $version "* ]] || PIN_VERSIONS+="$version "
+                        found=1
+                    fi
+                done
+            fi
         fi
         if [[ $found -eq 0 ]]; then
             local why
-            why="is not in channel $(echo "$requested" | paste -sd, - | sed 's/,/, /g') of $catalog_label"
+            if [[ -n "$pin_channel" ]]; then
+                why="is not in channel $pin_channel of $catalog_label"
+            else
+                why="is not in channel $(echo "$requested" | paste -sd, - | sed 's/,/, /g') of $catalog_label"
+            fi
             [[ -z "$version" ]] && why="is not in $catalog_label"
             if [[ "$ALL_OPERATORS" == "true" ]]; then
                 log_warning "Pinned $csv $why; not mirrored"
@@ -510,7 +534,7 @@ resolve_pin_ranges() {
                 invalid=1
             fi
         fi
-    done <<< "$resolved"
+    done < <(grep "^${package}|" "$PINS_FILE")
     if [[ $invalid -ne 0 ]]; then
         log_error "Fix the <operator>-version label or config.<operator>.versions, then run again"
         return 1
