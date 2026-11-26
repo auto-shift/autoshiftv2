@@ -1,0 +1,53 @@
+object-templates-raw: |
+  {{- /* Inform gate for a disconnected cluster. The Cluster Version Operator verifies the target
+         release against signatures in ConfigMaps in openshift-config-managed labeled
+         release.openshift.io/verification-signatures, and refuses the update when none matches.
+         This gate fails first, naming the digest, so the missing signature shows in Governance
+         instead of as a stalled ClusterVersion. It stays quiet on a connected cluster, when the
+         target is not offered yet (openshift-upgrade-allowed reports that), and once the update
+         has been accepted or has completed. */ -}}
+  {{- $disconnected := "{{hub index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false" hub}}" }}
+  {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
+  {{- $allowConditional := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-allow-conditional" | default "false" hub}}" }}
+  {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
+  {{- $current := "" }}
+  {{- range $h := (index $status "history" | default list) }}
+  {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}
+  {{-     $current = (index $h "version") }}
+  {{-   end }}
+  {{- end }}
+  {{- $done := false }}
+  {{- if regexMatch "^[0-9]+[.][0-9]+[.][0-9]+" $target }}
+  {{-   $done = and (ne $current "") (semverCompare (printf ">= %s" $target) $current) }}
+  {{- end }}
+  {{- $desired := (printf "%v" (index (index $status "desired" | default dict) "version" | default "") | trim) }}
+  {{- $image := "" }}
+  {{- range $u := (index $status "availableUpdates" | default list) }}
+  {{-   if and (eq $image "") (eq (index $u "version") $target) }}
+  {{-     $image = (index $u "image" | default "") }}
+  {{-   end }}
+  {{- end }}
+  {{- if and (eq $image "") (eq $allowConditional "true") }}
+  {{-   range $u := (index $status "conditionalUpdates" | default list) }}
+  {{-     $rel := (index $u "release" | default dict) }}
+  {{-     if and (eq $image "") (eq (printf "%v" (index $rel "version" | default "") | trim) $target) }}
+  {{-       $image = (index $rel "image" | default "") }}
+  {{-     end }}
+  {{-   end }}
+  {{- end }}
+  {{- if and (eq $disconnected "true") (not $done) (ne $desired $target) (contains "@sha256:" $image) }}
+  {{-   $hex := (index (splitList "@sha256:" $image) 1) }}
+  {{-   $prefix := (printf "sha256-%s-" $hex) }}
+  {{-   $found := false }}
+  {{-   $cms := (lookup "v1" "ConfigMap" "openshift-config-managed" "" "release.openshift.io/verification-signatures") }}
+  {{-   range $cm := (index ($cms | default dict) "items" | default list) }}
+  {{-     range $k, $v := (index $cm "binaryData" | default dict) }}
+  {{-       if hasPrefix $prefix $k }}
+  {{-         $found = true }}
+  {{-       end }}
+  {{-     end }}
+  {{-   end }}
+  {{-   if not $found }}
+  {{-     fail (printf "%s has no release signature on this cluster for digest sha256:%s" $target $hex) }}
+  {{-   end }}
+  {{- end }}

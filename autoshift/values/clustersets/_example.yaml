@@ -529,9 +529,32 @@ hubClusterSets:
       # NVIDIA card gets feature.node.kubernetes.io/pci-10de.present=true.
       #
       # workerConfig is nfd-worker.conf and replaces the default outright, so copy the default
-      # and extend it. nodeFeatureRules add custom labels, for example for AMD or Intel Gaudi
-      # accelerators. A label name without a prefix lands in feature.node.kubernetes.io/; any
-      # other prefix must be listed in extraLabelNs or nfd-master drops it.
+      # and extend it. Its lists (deviceClassWhitelist, deviceLabelFields) are replaced whole by a
+      # cluster that sets them, like every list in config.
+      #
+      # nodeFeatureRules adds hardware-specific labels. One fleet-wide set labels a mixed fleet
+      # node by node, because each rule matches the node's own hardware. Give it as a map keyed by
+      # the NodeFeatureRule name: maps merge by key from clusterset to cluster, so a cluster can add
+      # a rule, override one, or switch one off without restating the rest. The list form
+      # (- name: ..., rules: ...) is still accepted, but a cluster that sets it replaces the whole
+      # list. A label name without a prefix lands in feature.node.kubernetes.io/; any other prefix
+      # must be listed in extraLabelNs or nfd-master drops it.
+      #
+      # Per-cluster override, in clusters/<name>.yaml:
+      #   config:
+      #     nodeFeatureDiscovery:
+      #       nodeFeatureRules:
+      #         amd-gpu:
+      #           enabled: false            # no AMD nodes on this cluster
+      #         fpga-xilinx:                # one extra rule, the clusterset rules stay
+      #           rules:
+      #             - name: 'xilinx fpga present'
+      #               labels:
+      #                 xilinx-fpga: 'true'
+      #               matchFeatures:
+      #                 - feature: 'pci.device'
+      #                   matchExpressions:
+      #                     vendor: {op: 'In', value: ['10ee']}
       nodeFeatureDiscovery:
         workerConfig:
           core:
@@ -545,7 +568,10 @@ hubClusterSets:
               deviceLabelFields:
                 - 'vendor'
         nodeFeatureRules:
-          - name: 'nvidia-gpu'
+          # NVIDIA GPU, PCI vendor 10de. The NVIDIA GPU Operator itself selects on the vendor
+          # label (pci-10de.present) from workerConfig; this adds a plain nvidia-gpu label for
+          # workloads and placements.
+          nvidia-gpu:
             rules:
               - name: 'nvidia gpu present'
                 labels:
@@ -557,6 +583,46 @@ hubClusterSets:
                         op: 'In'
                         value:
                           - '10de'
+          # AMD GPU, PCI vendor 1002, limited to display (0300, 0302, 0380) and processing
+          # accelerator (1200) classes so other AMD devices do not match. Check the label against
+          # the node selector of the AMD GPU Operator release you install.
+          amd-gpu:
+            rules:
+              - name: 'amd gpu present'
+                labels:
+                  amd-gpu: 'true'
+                matchFeatures:
+                  - feature: 'pci.device'
+                    matchExpressions:
+                      vendor:
+                        op: 'In'
+                        value:
+                          - '1002'
+                      class:
+                        op: 'In'
+                        value:
+                          - '0300'
+                          - '0302'
+                          - '0380'
+                          - '1200'
+          # Intel Gaudi, PCI vendor 1da3 (Habana Labs), processing accelerator class 1200. Check
+          # the label against the node selector of the Intel Gaudi Base Operator you install.
+          intel-gaudi:
+            rules:
+              - name: 'intel gaudi present'
+                labels:
+                  intel-gaudi: 'true'
+                matchFeatures:
+                  - feature: 'pci.device'
+                    matchExpressions:
+                      vendor:
+                        op: 'In'
+                        value:
+                          - '1da3'
+                      class:
+                        op: 'In'
+                        value:
+                          - '1200'
         topologyUpdater: false
         enableTaints: false
         extraLabelNs: []
@@ -956,11 +1022,16 @@ hubClusterSets:
           path: 'openshift'
           # ca (inline bundle) or caRef (hub ConfigMap): only when the mirror's certificate is not
           # publicly trusted. Omit both for a mirror with a public certificate.
+          # caRef names a ConfigMap on the HUB, created out of band. AutoShift copies the CA from it
+          # to every cluster that uses this config. namespace defaults to the policy namespace.
           caRef:
             name: 'cluster-ca-bundle'
             key: 'ca-bundle.crt'
             namespace: 'cluster-install-secrets'
-          # mirror is a path on host, which every consumer prefixes; omit it to use host[/path].
+          # source: the image name a cluster pulls, in full, registry included. Copy it from the left
+          #   side of oc-mirror's idms-oc-mirror.yaml.
+          # mirror: a path on host, never a registry. AutoShift prefixes host, so writing the
+          #   registry here doubles it. Omit it to use host[/path].
           mirrors:
             - source: 'registry.redhat.io'
               mirror: 'rhel'
@@ -989,6 +1060,16 @@ hubClusterSets:
             publisher: Red Hat
         useIDMS: true
         disableDefaultCatalogs: true
+        # Release image signatures, required whenever disconnected-mirror is 'true'. The Cluster
+        # Version Operator refuses an update it cannot verify. Copy them from oc-mirror's
+        # cluster-resources/signature-configmap.json, or print entries with
+        # scripts/oc-mirror-to-values.sh. Removing an entry removes its signatures from the cluster;
+        # [] deletes them all. version is for people reading the list and is not used.
+        releaseSignatures:
+          - version: '4.22.18'
+            digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000001'
+            signatures:
+              - 'ZXhhbXBsZS1zaWduYXR1cmU='
       # =======================================================================
       # GitLab (values with / or spaces that can't be labels)
       # =======================================================================
@@ -1162,14 +1243,41 @@ hubClusterSets:
       #   versions:
       #     - 'rhdh.vX.Y.Z'
       #   startingCSV: 'rhdh.vX.Y.Z'
-      # dev-spaces:
-      #   versions:
-      #     - 'devspaces.vX.Y.Z'
-      #   startingCSV: 'devspaces.vX.Y.Z'
+      # Dev Spaces CheCluster settings (policy-devspaces-instance), merged over the live spec.
+      # Any CheCluster field is accepted; maps merge, lists replace.
+      dev-spaces:
+        # versions:
+        #   - 'devspaces.vX.Y.Z'
+        # startingCSV: 'devspaces.vX.Y.Z'
+        checluster:
+          devEnvironments:
+            secondsOfInactivityBeforeIdling: 1800
+            maxNumberOfWorkspacesPerUser: 2
       # external-secrets-operator:
       #   versions:
       #     - 'openshift-external-secrets-operator.vX.Y.Z'
       #   startingCSV: 'openshift-external-secrets-operator.vX.Y.Z'
+      # Vertical Pod Autoscaler rules (policy-vpa-rules), placed where both vertical-pod-autoscaler
+      # and vertical-pod-autoscaler-rules are 'true'. A map keyed by VerticalPodAutoscaler name;
+      # clusters add, override or switch off (enabled: false) single rules. updateMode defaults to
+      # Initial, which sizes pods only when they are created.
+      vertical-pod-autoscaler:
+        rules:
+          example-app:
+            namespace: 'example-app'
+            targetRef:
+              apiVersion: 'apps/v1'
+              kind: 'Deployment'
+              name: 'example-app'
+            updateMode: 'Initial'
+            resourcePolicy:
+              containerPolicies:
+                - containerName: '*'
+                  minAllowed:
+                    memory: '128Mi'
+                  maxAllowed:
+                    memory: '1Gi'
+                  controlledValues: 'RequestsAndLimits'
       far:
         # copy (default): policy copies FAR-shaped Secrets (--username/--password) from
         #                 sharedSecretNamespace into openshift-workload-availability.
@@ -1455,6 +1563,21 @@ hubClusterSets:
               - 'ocp_events_list'
               - 'docs_search'
 
+      # =======================================================================
+      # NVIDIA GPU Operator. Requires the nvidia-gpu-operator label.
+      # =======================================================================
+      # Same key as the version pin (config.nvidia-gpu-operator.versions). clusterPolicy is merged
+      # over the policy's base ClusterPolicy spec: maps merge key by key and these values win,
+      # lists replace the default whole. Name only what you change. Every field must exist in the
+      # ClusterPolicy CRD of the installed channel; the API server rejects the whole object on
+      # the first unknown field.
+      nvidia-gpu-operator:
+        clusterPolicy:
+          mig:
+            strategy: single
+          dcgmExporter:
+            serviceMonitor:
+              enabled: true
       # =======================================================================
       # OpenShift Lightspeed. Requires the openshift-lightspeed label.
       # =======================================================================
@@ -2069,11 +2192,24 @@ hubClusterSets:
             secretRef:
               name: 'global-observability-remote-write'
               namespace: 'open-cluster-management-observability'
-      # OpenShift Update Service graph written to ClusterVersion.spec.upstream
-      # (see docs/ocp-upgrade.md). Default is the public graph; you do not need
-      # to set this key if you are not using a local or disconnected service.
+      # Update graph written to ClusterVersion.spec.upstream (see docs/ocp-upgrade.md). Both keys
+      # are optional. upgradeGraphUrl, when set, wins. Otherwise graphSource picks the OpenShift
+      # Update Service: local (on this cluster), hub (on the hub that manages it) or auto. auto, the
+      # default, uses this cluster's service and then its hub's on a disconnected-mirror cluster,
+      # and the public graph on any other. local and hub fail when that service does not exist.
       openshift-upgrade:
         upgradeGraphUrl: 'https://api.openshift.com/api/upgrades_info/v1/graph'
+        graphSource: 'auto'
+      # OpenShift Update Service, for a disconnected fleet. Requires the update-service label, usually
+      # on the hub only. Every key is optional. releases and graphDataImage default to oc-mirror v2's
+      # paths under disconnected.mirrorRegistry; set them only for another layout, copying the spec
+      # of oc-mirror's cluster-resources/updateService.yaml. Disconnected clusters the hub manages
+      # find this service on their own. If you change name, set it where every cluster sees it.
+      update-service:
+        name: 'autoshift'                      # UpdateService name, which also names its Route
+        replicas: 2
+        releases: 'registry.example.com:5000/openshift/release-images'
+        graphDataImage: 'registry.example.com:5000/openshift/graph-image:latest'
     labels:
       # =======================================================================
       # Core Configuration
@@ -2485,6 +2621,20 @@ hubClusterSets:
       dev-spaces-source-namespace: openshift-marketplace
 
       # =======================================================================
+      # Vertical Pod Autoscaler
+      # =======================================================================
+      # Installs the operator (OwnNamespace only, in openshift-vertical-pod-autoscaler).
+      # vertical-pod-autoscaler-rules places policy-vpa-rules, which creates the
+      # VerticalPodAutoscalers in config.vertical-pod-autoscaler.rules.
+      vertical-pod-autoscaler: 'true'
+      vertical-pod-autoscaler-rules: 'true'
+      vertical-pod-autoscaler-subscription-name: vertical-pod-autoscaler
+      vertical-pod-autoscaler-channel: stable
+      vertical-pod-autoscaler-source: redhat-operators
+      vertical-pod-autoscaler-source-namespace: openshift-marketplace
+      vertical-pod-autoscaler-version: 'vertical-pod-autoscaler.v4.22.0-202611031655'
+
+      # =======================================================================
       # Developer Hub
       # =======================================================================
       dev-hub: 'false'
@@ -2693,6 +2843,29 @@ hubClusterSets:
       openshift-lightspeed-version: ''
 
       # =======================================================================
+      # NVIDIA GPU Operator (certified-operators; support is from NVIDIA)
+      # =======================================================================
+      # Selects GPU nodes on NFD's vendor label (feature.node.kubernetes.io/pci-10de.present), so
+      # enable node-feature-discovery as well. ClusterPolicy settings: config.nvidia-gpu-operator.
+      nvidia-gpu-operator: 'false'
+      nvidia-gpu-operator-subscription-name: gpu-operator-certified
+      nvidia-gpu-operator-channel: v25.3
+      nvidia-gpu-operator-source: certified-operators
+      nvidia-gpu-operator-source-namespace: openshift-marketplace
+      nvidia-gpu-operator-version: ''
+
+      # =======================================================================
+      # OpenShift Update Service: serves the update graph to a disconnected fleet.
+      # Settings: config.update-service. Usually enabled on the hub only.
+      # =======================================================================
+      update-service: 'false'
+      update-service-subscription-name: cincinnati-operator
+      update-service-channel: v1
+      update-service-source: redhat-operators
+      update-service-source-namespace: openshift-marketplace
+      update-service-version: ''
+
+      # =======================================================================
       # SR-IOV Network Operator
       # =======================================================================
       sriov: 'false'
@@ -2849,7 +3022,7 @@ hubClusterSets:
       trident-source: certified-operators
       trident-source-namespace: openshift-marketplace
       trident-channel: stable
-      trident-version: 'trident-operator.v25.06.0'   # optional CSV version pin
+      trident-version: 'trident-operator.v26.6.2'   # optional CSV version pin
       # =======================================================================
       # Far
       # =======================================================================
