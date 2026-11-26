@@ -123,10 +123,23 @@ labels:
 
 `pruneObjectBehavior: None`: setting the label to `'false'` stops reconciliation and leaves the
 `ClusterAutoscaler` and `MachineAutoscaler` objects in place, so nodes keep scaling. To stop
-autoscaling, delete them:
+autoscaling, delete them. Wait until the hub has unplaced the policy from this cluster first:
+while it still enforces, the template recreates any `MachineAutoscaler` deleted early, and with
+pruning disabled the recreated objects stay after the policy is gone. The hub removes the
+replicated policies from this cluster once the placement no longer selects it, so confirm on the
+cluster that they are gone:
 
 ```bash
-oc delete machineautoscalers.autoscaling.openshift.io --all -n openshift-machine-api
+oc get policy -A | grep cluster-autoscaler   # prints nothing once the policies are gone
+```
+
+The `MachineAutoscaler` objects carry no marker: this policy names each after its MachineSet. List
+them and delete the ones this policy created, by name. `--all` would also delete every other
+`MachineAutoscaler` in the namespace, including any created outside this policy:
+
+```bash
+oc get machineautoscalers.autoscaling.openshift.io -n openshift-machine-api
+oc delete machineautoscalers.autoscaling.openshift.io <name> -n openshift-machine-api
 oc delete clusterautoscalers.autoscaling.openshift.io default
 ```
 
