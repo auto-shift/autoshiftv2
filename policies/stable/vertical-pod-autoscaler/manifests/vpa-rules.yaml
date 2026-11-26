@@ -1,0 +1,38 @@
+# VerticalPodAutoscaler objects from config.vertical-pod-autoscaler.rules, a map keyed by the VPA's
+# name. The rendered-config merge deep-merges maps, so a cluster can add, override or switch off
+# (enabled: false) one rule from its clusterset without restating the others. A switched-off rule
+# renders as mustnothave, so it is deleted rather than left in place unmanaged. Each rule:
+#   namespace      required
+#   targetRef      required: apiVersion, kind, name (the workload whose pods the VPA sizes)
+#   updateMode     optional, default Initial: resources are set only when a pod is created, so
+#                  nothing is evicted. Auto and Recreate also evict running pods to resize them.
+#   resourcePolicy optional, passed through as the VPA's spec.resourcePolicy (containerPolicies
+#                  with containerName, minAllowed, maxAllowed, controlledValues, ...)
+#   enabled        optional, false removes the VPA
+# Map keys render in sorted order. The policy fails, naming the entry, when a required field is
+# missing, and fails when the map is empty: this policy is placed only on clusters that set the
+# vertical-pod-autoscaler-rules label, so an empty map means the rules were left out by mistake.
+# mustonlyhave: the VPA spec comes entirely from config; status is written by the recommender, which
+# mustonlyhave leaves alone.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $rules := (dig "vertical-pod-autoscaler" "rules" (dict) $cfg) hub}}
+  {{hub- if not (kindIs "map" $rules) hub}}{{hub fail "config.vertical-pod-autoscaler.rules must be a map keyed by VerticalPodAutoscaler name" hub}}{{hub- end hub}}
+  {{hub- if eq (len $rules) 0 hub}}{{hub fail "vertical-pod-autoscaler-rules is set but config.vertical-pod-autoscaler.rules is empty: add at least one rule, or unset the label" hub}}{{hub- end hub}}
+  {{hub- range $name, $r := $rules hub}}
+  {{hub- $r = ($r | default dict) hub}}
+  {{hub- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $name) hub}}{{hub fail (printf "config.vertical-pod-autoscaler.rules[%s]: the key must be a lowercase Kubernetes object name" $name) hub}}{{hub- end hub}}
+  {{hub- if not (dig "namespace" "" $r) hub}}{{hub fail (printf "config.vertical-pod-autoscaler.rules[%s]: namespace is required" $name) hub}}{{hub- end hub}}
+  {{hub- $t := (dig "targetRef" (dict) $r) hub}}
+  {{hub- if not (and (dig "apiVersion" "" $t) (dig "kind" "" $t) (dig "name" "" $t)) hub}}{{hub fail (printf "config.vertical-pod-autoscaler.rules[%s]: targetRef needs apiVersion, kind and name" $name) hub}}{{hub- end hub}}
+  {{hub- $spec := (dict "targetRef" (dict "apiVersion" (dig "apiVersion" "" $t) "kind" (dig "kind" "" $t) "name" (dig "name" "" $t)) "updatePolicy" (dict "updateMode" (dig "updateMode" "Initial" $r))) hub}}
+  {{hub- if (dig "resourcePolicy" "" $r) hub}}{{hub- $spec = (set $spec "resourcePolicy" (dig "resourcePolicy" (dict) $r)) hub}}{{hub- end hub}}
+  - complianceType: {{hub ternary "mustnothave" "mustonlyhave" (eq (printf "%v" (dig "enabled" true $r)) "false") hub}}
+    objectDefinition:
+      apiVersion: autoscaling.k8s.io/v1
+      kind: VerticalPodAutoscaler
+      metadata:
+        name: {{hub $name hub}}
+        namespace: {{hub dig "namespace" "" $r hub}}
+      spec: {{hub $spec | toJson hub}}
+  {{hub- end hub}}

@@ -13,10 +13,12 @@ autoshift/values/
     hub-minimal.yaml                 # Hub clusterset — minimal (GitOps + ACM only)
     hub-baremetal-sno.yaml           # Hub clusterset — baremetal single-node
     hub-baremetal-compact.yaml       # Hub clusterset — baremetal compact (3 node)
+    hub-disconnected.yaml            # Hub clusterset — disconnected, mirror and update service at the hub site
     hubofhubs.yaml                   # Hub-of-hubs clusterset
     hub1.yaml                        # Spoke hub (managed by hub-of-hubs)
     hub2.yaml                        # Spoke hub (managed by hub-of-hubs)
     managed.yaml                     # Managed spoke clusterset — full enterprise
+    managed-disconnected.yaml        # Managed spoke clusterset — disconnected, own site mirror
     sbx.yaml                         # Managed spoke clusterset — sandbox
   clusters/
     _example.yaml                    # Reference: ALL per-cluster override options
