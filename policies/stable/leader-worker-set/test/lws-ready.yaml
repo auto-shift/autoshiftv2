@@ -4,13 +4,52 @@
 # (openshift-lws-operator). This operator has no lws-controller-manager
 # Deployment, so a check written against that name could only ever fail.
 #
+# Is cert-manager installed? The OpenShift "AI workloads" documentation, chapter
+# "Leader Worker Set Operator", says to install the cert-manager Operator for
+# Red Hat OpenShift before the Leader Worker Set Operator, because it is
+# required to configure services and manage metrics collection
+# (https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/ai_workloads/leader-worker-set-operator).
+# Enable the cert-manager policy (label cert-manager: 'true') alongside this
+# one. The chain goes through the Subscription the cert-manager policy creates:
+# the CSV OLM installed on the managed cluster (status.installedCSV - the name carries the version, so
+# it cannot be pinned here) must have phase Succeeded. A cluster without that
+# Subscription reports the Subscription missing instead, which is the missing
+# prerequisite.
+#
 # inform-only: a status can only be observed.
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: openshift-lws-operator
-  namespace: openshift-lws-operator
-status:
-  conditions:
-    - type: Available
-      status: 'True'
+object-templates-raw: |
+  {{- /* The label is read on the hub; the Subscription is looked up on the managed cluster,
+         which is where cert-manager has to be installed. */}}
+  {{- $sname := "{{hub index .ManagedClusterLabels "autoshift.io/cert-manager-subscription-name" | default "openshift-cert-manager-operator" hub}}" }}
+  {{- $sub := (lookup "operators.coreos.com/v1alpha1" "Subscription" "cert-manager-operator" $sname) | default dict }}
+  {{- $csv := (dig "status" "installedCSV" "" $sub) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: openshift-lws-operator
+        namespace: openshift-lws-operator
+      status:
+        conditions:
+          - type: Available
+            status: 'True'
+  {{- if $csv }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: ClusterServiceVersion
+      metadata:
+        name: {{ $csv }}
+        namespace: cert-manager-operator
+      status:
+        phase: Succeeded
+  {{- else }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: {{ $sname }}
+        namespace: cert-manager-operator
+  {{- end }}

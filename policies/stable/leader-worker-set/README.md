@@ -5,6 +5,17 @@ LeaderWorkerSet runs a group of pods as one unit, a leader with its workers, whi
 distributed inference spreads one model across several pods. Red Hat OpenShift AI needs it for
 distributed inference with llm-d, which Models-as-a-Service uses.
 
+## Prerequisites
+
+cert-manager. The OpenShift "AI workloads" documentation, chapter
+[Leader Worker Set Operator](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/ai_workloads/leader-worker-set-operator),
+says: "Before you install the Leader Worker Set Operator, you must install the cert-manager
+Operator for Red Hat OpenShift because it is required to configure services and manage metrics
+collection." Enable the cert-manager policy (label `cert-manager: 'true'`) alongside
+`leader-worker-set`. The readiness policy reports the prerequisite when it is missing: it checks
+the ClusterServiceVersion the cert-manager Subscription installed, and a cluster without that
+Subscription reports the Subscription missing instead.
+
 ## Policies
 
 | Policy | Mode | What it does |
