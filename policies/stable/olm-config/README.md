@@ -13,5 +13,7 @@ namespaces.
 Enable it with the label `olm-disable-copied-csvs: 'true'`.
 
 Users without cluster-wide rights stop seeing cluster-wide operators listed in their own namespaces
-in the web console. Operators keep working. Remove the label and set the field back to `false` by
-hand to turn copies on again, since AutoShift does not prune.
+in the web console. Operators keep working. To turn copies on again, remove the label first. Wait
+until the policy no longer applies to the cluster, then set the field back to `false` by hand.
+Setting the field earlier lets enforcement set it back to `true`. AutoShift does not prune, so the
+field stays as you set it after the policy is removed.
