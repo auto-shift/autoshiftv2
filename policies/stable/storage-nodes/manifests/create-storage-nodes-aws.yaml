@@ -20,15 +20,30 @@ object-templates-raw: |
     {{- fail (printf "no worker MachineSet in zone %s to copy the subnet and security groups from, so the storage MachineSet for that zone cannot be built; use a zone that has workers" $zone) }}
   {{- end }}
   {{- $zone_provider := (index $workers_by_zone $zone).spec.template.spec.providerSpec.value }}
-  {{- /* musthave merges lists and never removes entries, so a MachineSet created with a different
-         subnet or security groups (by an older version of this policy, or by hand) would keep the old
-         entries beside the worker's and still report Compliant. Fail instead, naming the MachineSet. */ -}}
+  {{- /* musthave merges lists and never removes entries. A MachineSet whose security groups are a
+         subset of the worker's (the older version of this policy copied only the worker's first
+         one) converges: musthave adds the missing entries. A security group the worker does not
+         have, or a different subnet (a MachineSet has one, which musthave cannot replace), would
+         stay and still report Compliant, so fail instead, naming the MachineSet. */ -}}
   {{- $ms_name := printf "%s-%s-%s" $infrastructure_id $machineset_role $zone }}
   {{- $existing := lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" $ms_name }}
   {{- if $existing }}
     {{- $live := $existing.spec.template.spec.providerSpec.value }}
-    {{- if or (ne ($live.subnet | toJson) ($zone_provider.subnet | toJson)) (ne ($live.securityGroups | toJson) ($zone_provider.securityGroups | toJson)) }}
-      {{- fail (printf "MachineSet %s has a subnet or security groups that differ from the worker MachineSet in zone %s, and this policy cannot remove list entries. Set its providerSpec subnet and securityGroups to the worker's, or delete the MachineSet (which replaces its machines) so the policy recreates it" $ms_name $zone) }}
+    {{- $worker_sgs := list }}
+    {{- range $sg := ($zone_provider.securityGroups | default list) }}
+      {{- $worker_sgs = append $worker_sgs ($sg | toJson) }}
+    {{- end }}
+    {{- $extra_sgs := list }}
+    {{- range $sg := ($live.securityGroups | default list) }}
+      {{- if not (has ($sg | toJson) $worker_sgs) }}
+        {{- $extra_sgs = append $extra_sgs ($sg | toJson) }}
+      {{- end }}
+    {{- end }}
+    {{- if ne ($live.subnet | toJson) ($zone_provider.subnet | toJson) }}
+      {{- fail (printf "MachineSet %s has a subnet that differs from the worker MachineSet in zone %s (%s, worker %s), and this policy cannot replace it. Set its providerSpec subnet to the worker's, or delete the MachineSet (which replaces its machines) so the policy recreates it" $ms_name $zone ($live.subnet | toJson) ($zone_provider.subnet | toJson)) }}
+    {{- end }}
+    {{- if $extra_sgs }}
+      {{- fail (printf "MachineSet %s has security groups the worker MachineSet in zone %s does not (%s), and this policy cannot remove list entries. Remove them from its providerSpec securityGroups, or delete the MachineSet (which replaces its machines) so the policy recreates it" $ms_name $zone (join ", " $extra_sgs)) }}
     {{- end }}
   {{- end }}
   - complianceType: musthave
@@ -89,7 +104,7 @@ object-templates-raw: |
                 tags:
                   {{- range $tag := $worker_ms.spec.template.spec.providerSpec.value.tags }}
                   - name: {{ $tag.name }}
-                    value: {{ $tag.value }}
+                    value: {{ $tag.value | quote }}
                   {{- end }}
                 deviceIndex: 0
                 ami:
