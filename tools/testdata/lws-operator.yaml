@@ -1,0 +1,34 @@
+# The LeaderWorkerSetOperator CR the leader-worker-set readiness check reads
+# (policies/stable/leader-worker-set/test/lws-ready.yaml): Available, nothing
+# Degraded, as the operator reports a healthy lws-controller-manager, and that
+# controller Deployment with an available replica. readyReplicas is 0 as
+# operator 1.0.1 reports it on a working cluster.
+apiVersion: operator.openshift.io/v1
+kind: LeaderWorkerSetOperator
+metadata:
+  name: cluster
+spec:
+  managementState: Managed
+status:
+  readyReplicas: 0
+  conditions:
+    - type: Available
+      status: 'True'
+      reason: AsExpected
+    - type: TargetConfigControllerDegraded
+      status: 'False'
+      reason: AsExpected
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lws-controller-manager
+  namespace: openshift-lws-operator
+spec:
+  replicas: 2
+status:
+  replicas: 2
+  availableReplicas: 2
+  conditions:
+    - type: Available
+      status: 'True'

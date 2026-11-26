@@ -1,0 +1,86 @@
+# Is the LeaderWorkerSet controller actually running?
+#
+# The operator (Deployment openshift-lws-operator) deploys the controller, the
+# operand Deployment lws-controller-manager, once the LeaderWorkerSetOperator CR
+# "cluster" exists, and reports on it in that CR's status: an Available
+# condition and *Degraded conditions (its own cert-manager check sets one when
+# cert-manager is missing). The check reads the CR and fails, naming the
+# reason, unless it is Available and nothing is Degraded. It then reads the
+# controller Deployment and fails unless at least one replica is available:
+# a Deployment scaled to zero still reports Available=True, so the condition
+# alone is not enough. The CR also has a readyReplicas field, but operator
+# 1.0.1 leaves it at 0 while the controller runs, so it is not used.
+#
+# Is cert-manager installed? The OpenShift "AI workloads" documentation, chapter
+# "Leader Worker Set Operator", says to install the cert-manager Operator for
+# Red Hat OpenShift before the Leader Worker Set Operator, because it is
+# required to configure services and manage metrics collection
+# (https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/ai_workloads/leader-worker-set-operator).
+# Enable the cert-manager policy (label cert-manager: 'true') alongside this
+# one. The chain goes through the Subscription the cert-manager policy creates:
+# the CSV OLM installed on the managed cluster (status.installedCSV - the name carries the version, so
+# it cannot be pinned here) must have phase Succeeded. A cluster without that
+# Subscription reports the Subscription missing instead, which is the missing
+# prerequisite.
+#
+# inform-only: a status can only be observed.
+object-templates-raw: |
+  {{- /* The label is read on the hub; the Subscription is looked up on the managed cluster,
+         which is where cert-manager has to be installed. */}}
+  {{- $sname := "{{hub index .ManagedClusterLabels "autoshift.io/cert-manager-subscription-name" | default "openshift-cert-manager-operator" hub}}" }}
+  {{- $sub := (lookup "operators.coreos.com/v1alpha1" "Subscription" "cert-manager-operator" $sname) | default dict }}
+  {{- $csv := (dig "status" "installedCSV" "" $sub) }}
+  {{- $lws := (lookup "operator.openshift.io/v1" "LeaderWorkerSetOperator" "" "cluster") | default dict }}
+  {{- if not $lws }}
+    {{- fail "LeaderWorkerSetOperator cluster does not exist yet; policy-lws-instance creates it" }}
+  {{- end }}
+  {{- $available := false }}
+  {{- $degraded := list }}
+  {{- range $c := (dig "status" "conditions" (list) $lws) }}
+    {{- if and (eq (dig "type" "" $c) "Available") (eq (dig "status" "" $c) "True") }}
+      {{- $available = true }}
+    {{- end }}
+    {{- if and (hasSuffix "Degraded" (dig "type" "" $c)) (eq (dig "status" "" $c) "True") }}
+      {{- $degraded = append $degraded (printf "%s: %s" (dig "type" "" $c) (dig "message" "" $c)) }}
+    {{- end }}
+  {{- end }}
+  {{- if $degraded }}
+    {{- fail (printf "LeaderWorkerSetOperator cluster is degraded: %s" (join "; " $degraded)) }}
+  {{- end }}
+  {{- if not $available }}
+    {{- fail "LeaderWorkerSetOperator cluster does not report Available=True, so the LeaderWorkerSet controller is not up" }}
+  {{- end }}
+  {{- $ctl := (lookup "apps/v1" "Deployment" "openshift-lws-operator" "lws-controller-manager") | default dict }}
+  {{- if lt (int (dig "status" "availableReplicas" 0 $ctl)) 1 }}
+    {{- fail "the LeaderWorkerSet controller (Deployment lws-controller-manager in openshift-lws-operator) has no available replicas" }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: lws-controller-manager
+        namespace: openshift-lws-operator
+      status:
+        conditions:
+          - type: Available
+            status: 'True'
+  {{- if $csv }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: ClusterServiceVersion
+      metadata:
+        name: {{ $csv }}
+        namespace: cert-manager-operator
+      status:
+        phase: Succeeded
+  {{- else }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: {{ $sname }}
+        namespace: cert-manager-operator
+  {{- end }}
