@@ -26,8 +26,14 @@ policyDefaults:
 policies:
   - name: policy-storage-nodes-aws
     pruneObjectBehavior: None
+    # One manifest; unconsolidated only because a per-manifest customMessage requires it.
+    consolidateManifests: false
     manifests:
       - path: manifests/create-storage-nodes-aws.yaml
+        # Surfaces the fail message (which names the MachineSet and the fix) rather than the
+        # template error wrapping it.
+        customMessage:
+          noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
     placement:
       placementPath: placement-aws.yaml
   - name: policy-storage-nodes-vmware
