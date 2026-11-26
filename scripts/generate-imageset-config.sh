@@ -455,14 +455,29 @@ resolve_pin_ranges() {
     configs_dir=$(get_catalog_cache_configs "$catalog_image")
     requested=$(echo "$channels" | tr ',' '\n' | xargs -n1 2>/dev/null)
     if [[ -n "$configs_dir" && -d "$configs_dir/$package" ]]; then
+        # Read the cached stream and parse it as separate steps with their statuses checked.
+        # jq slurps the whole stream, so a truncated final object fails the parse with no rows
+        # at all; left unchecked, resolution would end with no pin ranges and a silent success.
+        local fbc_file
+        fbc_file="$LOCAL_TMP/catalog-fbc.$$"
+        catalog_fbc_json "$configs_dir/$package" > "$fbc_file" || {
+            rm -f "$fbc_file"
+            log_error "$package: the cached $catalog_label catalog could not be read for the pinned versions"
+            return 1
+        }
         # shellcheck disable=SC2016 # jq variables, not shell expansions
-        resolved=$(catalog_fbc_json "$configs_dir/$package" | jq -rs --arg want "$csvs" '
+        resolved=$(jq -rs --arg want "$csvs" '
             . as $all | ($want | split(" ") | map(select(. != "")))[] as $c
             | ([$all[] | select(.schema == "olm.bundle" and .name == $c) | .properties[]
                 | select(.type == "olm.package") | .value.version] | first // "") as $v
             | ([$all[] | select(.schema == "olm.channel" and any(.entries[]; .name == $c)) | .name]
                 | join(",")) as $ch
-            | "\($c)|\($v)|\($ch)"')
+            | "\($c)|\($v)|\($ch)"' < "$fbc_file") || {
+            rm -f "$fbc_file"
+            log_error "$package: the cached $catalog_label catalog could not be parsed for the pinned versions; the cache may be truncated, delete it and run again"
+            return 1
+        }
+        rm -f "$fbc_file"
     else
         log_warning "$package: $catalog_label is not cached; pinned versions read from the CSV names and not checked against the catalog"
         for csv in $csvs; do
@@ -506,7 +521,23 @@ resolve_pin_ranges() {
         local lines min list
         lines=$(grep "^${channel}|" <<< "$pairs" || true)
         [[ -z "$lines" ]] && continue
-        min=$(cut -d'|' -f2 <<< "$lines" | sort -V | head -1)
+        # Lowest version per channel, with every CSV pinned in it. The minimum is by
+        # semantic-version precedence: a prerelease or rebuild suffix sorts before the release
+        # it belongs to, where sort -V puts the plain release first and oc-mirror would then
+        # not copy the suffixed CSV the pin names.
+        # shellcheck disable=SC2016 # jq variables, not shell expansions
+        min=$(cut -d'|' -f2 <<< "$lines" | jq -sRr '
+            def vkey:
+                (index("+") // length) as $p | .[0:$p] as $v
+                | if $v | index("-") then
+                    ($v | index("-")) as $d
+                    | [($v[0:$d] | split(".") | map(tonumber)), 0,
+                       ($v[$d + 1:] | split(".")
+                         | map(if test("^[0-9]+$") then [0, tonumber] else [1, .] end))]
+                  else
+                    [($v | split(".") | map(tonumber)), 1]
+                  end;
+            split("\n") | map(select(length > 0)) | sort_by(vkey) | first')
         list=$(cut -d'|' -f3 <<< "$lines" | sort -u | paste -sd, -)
         PIN_RANGES+="$channel|$min|$list"$'\n'
     done

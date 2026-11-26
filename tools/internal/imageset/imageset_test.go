@@ -61,6 +61,12 @@ func repoRoot(t *testing.T) string {
 // generate runs the script on the given testdata values files and returns its output, the parsed
 // ImageSetConfiguration (nil when the script failed) and the exit error.
 func generate(t *testing.T, extraArgs []string, values ...string) (string, *imageSet, error) {
+	return generateFromCatalog(t, "catalog", extraArgs, values...)
+}
+
+// generateFromCatalog seeds the catalog cache from the named testdata directory, whose layout
+// mirrors testdata/catalog, then runs the script like generate does.
+func generateFromCatalog(t *testing.T, catalog string, extraArgs []string, values ...string) (string, *imageSet, error) {
 	t.Helper()
 	for _, tool := range []string{"bash", "jq", "yq"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -77,7 +83,7 @@ func generate(t *testing.T, extraArgs []string, values ...string) (string, *imag
 	cache := t.TempDir()
 	sum := md5.Sum([]byte(catalogImage + "\n"))
 	configs := filepath.Join(cache, hex.EncodeToString(sum[:]), "configs")
-	if err := os.CopyFS(configs, os.DirFS(filepath.Join(testdata, "catalog"))); err != nil {
+	if err := os.CopyFS(configs, os.DirFS(filepath.Join(testdata, catalog))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -173,6 +179,31 @@ func TestUnpinnedChannelTracksHead(t *testing.T) {
 	}
 	if _, ok := got["quay-operator/stable-3.18"]; ok {
 		t.Errorf("stable-3.18 is not requested by cluster.yaml but was mirrored")
+	}
+}
+
+// A truncated cached catalog must fail generation: the slurping read that resolves the pins
+// yields nothing, and continuing would report success without the pinned minVersion.
+func TestTruncatedCatalogFails(t *testing.T) {
+	log, _, err := generateFromCatalog(t, "catalog-truncated", nil, "clusterset.yaml")
+	if err == nil {
+		t.Fatalf("a truncated cached catalog should fail generation:\n%s", log)
+	}
+	if !strings.Contains(log, "could not be parsed") {
+		t.Errorf("the failure does not name the unreadable catalog:\n%s", log)
+	}
+}
+
+// One channel pinning both a release and its rebuild: the rebuild is the lowest by
+// semantic-version precedence, so minVersion names it and oc-mirror copies the rebuild too.
+// sort -V would put the plain release first and drop the rebuild below the range.
+func TestPinPrereleaseIsTheLowest(t *testing.T) {
+	log, set, err := generate(t, nil, "cluster-suffix-pin.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	if c := channels(t, set)["quay-operator/stable-3.18"]; c.MinVersion != "3.18.2-202611031655" {
+		t.Errorf("quay-operator/stable-3.18 minVersion = %q, want 3.18.2-202611031655", c.MinVersion)
 	}
 }
 
