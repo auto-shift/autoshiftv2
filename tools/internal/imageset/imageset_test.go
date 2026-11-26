@@ -324,6 +324,111 @@ func TestGatewayAPIOperatorUnknownVersionIsFlagged(t *testing.T) {
 	}
 }
 
+// A supported release whose payload names no CSV is unresolved discovery, not an empty result:
+// warn and mirror the stable head. Later runs reuse the cached empty payload and must do the same.
+func TestGatewayAPIOperatorMissingCSVIsUnresolved(t *testing.T) {
+	log, set, err := generateWith(t, map[string]string{"4.22.18": ""}, []string{"--openshift-version", "4.22.18"}, "gateway-consumer.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	c, ok := channels(t, set)["servicemeshoperator3/stable"]
+	if !ok || c.MinVersion != "" {
+		t.Errorf("servicemeshoperator3/stable = %+v (present %v), want the channel head", c, ok)
+	}
+	if !strings.Contains(log, "--gateway-api-version") {
+		t.Errorf("no warning points at --gateway-api-version:\n%s", log)
+	}
+}
+
+// Discovery covers the platform bounds, not just the --min-version/--max-version values: with
+// --min-version alone the range reaches the --openshift-version release, whose payload may name a
+// different CSV than the lower bound does.
+func TestGatewayAPIOperatorReadsBothPlatformBounds(t *testing.T) {
+	payloads := map[string]string{
+		"4.22.10": "stable|servicemeshoperator3.v3.3.1|redhat-operators",
+		"4.22.18": "stable|servicemeshoperator3.v3.3.2|redhat-operators",
+	}
+	log, set, err := generateWith(t, payloads, []string{"--openshift-version", "4.22.18", "--min-version", "4.22.10"}, "gateway-consumer.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	for _, release := range []string{"4.22.10", "4.22.18"} {
+		if !strings.Contains(log, "OpenShift "+release+":") {
+			t.Errorf("the %s release payload was not read for the CSV:\n%s", release, log)
+		}
+	}
+	if c := channels(t, set)["servicemeshoperator3/stable"]; c.MinVersion != "3.3.1" || c.MaxVersion != "3.3.2" {
+		t.Errorf("servicemeshoperator3/stable = %q - %q, want 3.3.1 - 3.3.2", c.MinVersion, c.MaxVersion)
+	}
+}
+
+// A release before 4.19 names no Gateway API operator, as expected: skip it and still read the
+// CSV from the newer bound, instead of reporting the discovery unresolved.
+func TestGatewayAPIOperatorOlderReleaseWithoutCSVIgnores(t *testing.T) {
+	payloads := map[string]string{
+		"4.18.5":  "",
+		"4.22.18": "stable|servicemeshoperator3.v3.3.1|redhat-operators",
+	}
+	log, set, err := generateWith(t, payloads, []string{"--openshift-version", "4.22.18", "--min-version", "4.18.5"}, "gateway-consumer.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	if c := channels(t, set)["servicemeshoperator3/stable"]; c.MinVersion != "3.3.1" || c.MaxVersion != "3.3.1" {
+		t.Errorf("servicemeshoperator3/stable = %q - %q, want 3.3.1 - 3.3.1", c.MinVersion, c.MaxVersion)
+	}
+	if strings.Contains(log, "names no servicemeshoperator3 version") {
+		t.Errorf("the 4.18.5 release was treated as unresolved although releases before 4.19 name no Gateway API operator:\n%s", log)
+	}
+}
+
+// An unresolved CSV still merges the stable head into a package the values files already mirror
+// on another channel, deduplicated into the one package entry, instead of leaving only that
+// channel although the warning promises the head. The head channel picks up a values pin when
+// the pinned version is on it, like any other channel.
+func TestGatewayAPIOperatorFallbackAddsHeadChannel(t *testing.T) {
+	log, set, err := generate(t, nil, "gateway-consumer.yaml", "servicemesh-3.5.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	got := channels(t, set)
+	if c := got["servicemeshoperator3/stable-3.5"]; c.MinVersion != "3.5.0" || c.MaxVersion != "" {
+		t.Errorf("servicemeshoperator3/stable-3.5 = %q - %q, want 3.5.0 to the head", c.MinVersion, c.MaxVersion)
+	}
+	if c := got["servicemeshoperator3/stable"]; c.MinVersion != "3.5.0" || c.MaxVersion != "" {
+		t.Errorf("servicemeshoperator3/stable = %q - %q, want 3.5.0 to the head", c.MinVersion, c.MaxVersion)
+	}
+	n := 0
+	for _, op := range set.Mirror.Operators {
+		for _, p := range op.Packages {
+			if p.Name == "servicemeshoperator3" {
+				n++
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("servicemeshoperator3 is listed %d times, want once", n)
+	}
+	// The head already present through the values files is kept, not duplicated.
+	log, set, err = generate(t, nil, "gateway-consumer.yaml", "servicemesh.yaml")
+	if err != nil {
+		t.Fatalf("generation failed: %v\n%s", err, log)
+	}
+	if c := channels(t, set)["servicemeshoperator3/stable"]; c.MinVersion != "3.5.0" || c.MaxVersion != "" {
+		t.Errorf("servicemeshoperator3/stable = %q - %q, want 3.5.0 to the head", c.MinVersion, c.MaxVersion)
+	}
+	n = 0
+	for _, op := range set.Mirror.Operators {
+		for _, p := range op.Packages {
+			if p.Name == "servicemeshoperator3" {
+				n++
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("servicemeshoperator3 is listed %d times, want once", n)
+	}
+}
+
 func TestGatewayAPIOperatorMissingFromCatalogFails(t *testing.T) {
 	log, _, err := generate(t, []string{"--gateway-api-version", "servicemeshoperator3.v3.0.0-tp.1"}, "gateway-consumer.yaml")
 	if err == nil {

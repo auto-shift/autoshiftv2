@@ -622,8 +622,19 @@ resolve_gateway_api_operator() {
     fi
 
     local releases="" releases_read="" release info channel csv catalog
-    for release in "$MIN_VERSION" "$MAX_VERSION"; do
-        [[ "$release" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && " $releases " != *" $release "* ]] && releases+="$release "
+    # The platform bounds the imageset mirrors, not just the --min-version/--max-version values:
+    # parse_openshift_version bounds an X.Y --openshift-version at X.Y.0 and X.Y.999, and a
+    # custom bound overrides one end, so with --min-version alone the range reaches the
+    # --openshift-version release. Only a custom bound engages this; an X.Y.999 end is the
+    # parse default, not a release, and an X.Y --openshift-version names no single payload.
+    local eff_min="" eff_max="" eff_channel parsed
+    if [[ -n "$MIN_VERSION" || -n "$MAX_VERSION" ]]; then
+        parsed=$(parse_openshift_version "$OPENSHIFT_VERSION" "$MIN_VERSION" "$MAX_VERSION")
+        IFS='|' read -r eff_channel eff_min eff_max <<< "$parsed"
+    fi
+    for release in "$eff_min" "$eff_max"; do
+        [[ "$release" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$release" != *.999 \
+            && " $releases " != *" $release "* ]] && releases+="$release "
     done
     if [[ -z "$releases" && "$OPENSHIFT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         releases="$OPENSHIFT_VERSION"
@@ -642,7 +653,20 @@ resolve_gateway_api_operator() {
             GATEWAY_API_UNRESOLVED="the $release release payload could not be read"
             return 0
         fi
-        [[ -z "$info" ]] && continue
+        if [[ -z "$info" ]]; then
+            # From 4.19 on the ingress operator names the Gateway API operator, so a payload
+            # without one is unresolved discovery; an older release names none, as expected.
+            local rel_minor="${release#*.}"
+            rel_minor="${rel_minor%%.*}"
+            if [[ "${release%%.*}" -eq 4 && "$rel_minor" -ge 19 ]]; then
+                log_warning "$why, but the $release release payload names no $GATEWAY_API_PACKAGE version"
+                log_warning "Mirroring its stable head, which may not carry the istiod the ingress operator runs. Use --gateway-api-version"
+                GATEWAY_API_CSVS=""
+                GATEWAY_API_UNRESOLVED="the $release release names no $GATEWAY_API_PACKAGE version"
+                return 0
+            fi
+            continue
+        fi
         IFS='|' read -r channel csv catalog <<< "$info"
         GATEWAY_API_CHANNEL="$channel"
         [[ " $GATEWAY_API_CSVS " == *" $csv "* ]] || GATEWAY_API_CSVS+="$csv "
@@ -1769,8 +1793,10 @@ EOF
             if [[ -n "$GATEWAY_API_CSVS" ]]; then
                 merge_gateway_api_package "$redhat_operators"
                 redhat_operators="$MERGED_PACKAGES"
-            elif [[ -n "$GATEWAY_API_UNRESOLVED" && " $mirrored_names " != *" $GATEWAY_API_PACKAGE "* ]]; then
-                # The CSV is unknown, so mirror the channel head and say so in the imageset
+            elif [[ -n "$GATEWAY_API_UNRESOLVED" ]]; then
+                # The CSV is unknown, so mirror the channel head and say so in the imageset. The
+                # values files may already mirror the package on another channel; the head joins
+                # it there, and merge_gateway_api_package deduplicates the head channel.
                 GATEWAY_API_CHANNEL="stable"
                 merge_gateway_api_package "$redhat_operators"
                 redhat_operators="$MERGED_PACKAGES"
