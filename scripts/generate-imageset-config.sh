@@ -17,6 +17,12 @@
 #
 # No hardcoded operator lists - new operators are auto-discovered when added to AutoShift!
 #
+# VERSION PINS:
+# An operator pinned with config.<operator>.versions (plus startingCSV) or the <operator>-version
+# label gets minVersion on its channel, the lowest pinned version, so the pinned CSVs are mirrored as
+# well as the channel head. A pin the catalog channel lacks fails generation (a warning with
+# --all-operators). Reading pins needs yq v4 (mikefarah).
+#
 # Usage: ./generate-imageset-config.sh <values-files> [options]
 # Example: ./generate-imageset-config.sh values/clustersets/hub.yaml
 # Example: ./generate-imageset-config.sh values/clustersets/hub.yaml,values/clustersets/sbx.yaml --openshift-version 4.20
@@ -59,7 +65,8 @@ DEPENDENCIES_FILE=""
 # Script directory for relative paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CATALOG_CACHE_DIR="$PROJECT_ROOT/.cache/catalog-cache"
+# Overridable so the test suite can supply a fixture catalog
+CATALOG_CACHE_DIR="${CATALOG_CACHE_DIR:-$PROJECT_ROOT/.cache/catalog-cache}"
 GET_DEPS_SCRIPT="$SCRIPT_DIR/get-operator-dependencies.sh"
 
 # Local temp directory (avoids /tmp issues on Windows/Git Bash)
@@ -70,10 +77,12 @@ mkdir -p "$LOCAL_TMP"
 MAPPINGS_FILE=""
 # Marker extract_operators touches from its subshell when an enabled operator is incomplete
 EXTRACT_ERRORS_FILE="$LOCAL_TMP/extract-errors.$$"
+# Version pins read from the values files, one "package|csv" per line
+PINS_FILE="$LOCAL_TMP/version-pins.$$"
 
 cleanup_temp_files() {
     [[ -n "$MAPPINGS_FILE" ]] && rm -f "$MAPPINGS_FILE" || true
-    rm -f "$EXTRACT_ERRORS_FILE"
+    rm -f "$EXTRACT_ERRORS_FILE" "$PINS_FILE"
     # Only cleanup DEPENDENCIES_FILE if it was auto-generated (not passed via --dependencies-file)
     [[ -n "$DEPENDENCIES_FILE" && "$DEPENDENCIES_FILE" == "$LOCAL_TMP"/* ]] && rm -f "$DEPENDENCIES_FILE" || true
 }
@@ -159,7 +168,7 @@ resolve_all_dependencies() {
     # Call get-operator-dependencies.sh with all operators
     local catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${catalog_version}"
 
-    if "$GET_DEPS_SCRIPT" --catalog "$catalog_image" --operators "$operators_list" --json > "$DEPENDENCIES_FILE" 2>"$deps_log"; then
+    if "$GET_DEPS_SCRIPT" --catalog "$catalog_image" --operators "$operators_list" --cache-dir "$CATALOG_CACHE_DIR" --json > "$DEPENDENCIES_FILE" 2>"$deps_log"; then
         local dep_count=$(jq 'to_entries | map(select(.value | length > 0)) | length' "$DEPENDENCIES_FILE" 2>/dev/null || echo "0")
         log_success "Resolved dependencies for $dep_count operators with dependencies"
         rm -f "$deps_log"
@@ -183,7 +192,7 @@ cache_catalog() {
     [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && return 0
 
     log_step "Caching $catalog_image to check its channels..."
-    if ! "$GET_DEPS_SCRIPT" --catalog "$catalog_image" --operators "$operators_list" --json > /dev/null 2>"$deps_log"; then
+    if ! "$GET_DEPS_SCRIPT" --catalog "$catalog_image" --operators "$operators_list" --cache-dir "$CATALOG_CACHE_DIR" --json > /dev/null 2>"$deps_log"; then
         log_error "Failed to extract $catalog_image:"
         cat "$deps_log" >&2
         rm -f "$deps_log"
@@ -237,12 +246,22 @@ get_catalog_channels() {
                END { if (s == "olm.channel" && n != "") print n }' | tr -d "\"'"
 }
 
+# Every FBC object of a cached package as a JSON stream. Packages are laid out as catalog.json,
+# catalog.yaml, JSON Lines, or split bundle and channel files, so read every file.
+catalog_fbc_json() {
+    local pkg_dir="$1"
+    find "$pkg_dir" -type f -name '*.json' -exec cat {} + 2>/dev/null
+    find "$pkg_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -exec yq -o=json -I=0 '.' {} + 2>/dev/null
+}
+
 # The CloudNativePG Operator runs a PostgreSQL and a PgBouncer image compiled into its binary, pulled by
 # tag. Its bundle does not list them, so oc-mirror never copies them. Print both for the head of each
-# mirrored channel, read from that release's pkg/versions/versions.go. Fails if either cannot be read.
+# mirrored channel and for each pinned version, read from that release's pkg/versions/versions.go.
+# Fails if either cannot be read.
 cnpg_default_images() {
     local channels="$1"
     local catalog_image="$2"
+    local pinned_versions="$3"
     local configs
     configs=$(get_catalog_cache_configs "$catalog_image")
     if [[ -z "$configs" ]]; then
@@ -250,9 +269,8 @@ cnpg_default_images() {
         return 0
     fi
     local fbc
-    fbc=$( { find "$configs/cloudnative-pg" -type f -name '*.json' -exec cat {} + 2>/dev/null
-             find "$configs/cloudnative-pg" -type f \( -name '*.yaml' -o -name '*.yml' \) -exec yq -o=json -I=0 '.' {} + 2>/dev/null; } )
-    local channel head version src img
+    fbc=$(catalog_fbc_json "$configs/cloudnative-pg")
+    local channel head version versions="" src img
     IFS=',' read -ra chans <<< "$channels"
     for channel in "${chans[@]}"; do
         channel=$(echo "$channel" | xargs)
@@ -268,6 +286,11 @@ cnpg_default_images() {
             log_error "cloudnative-pg: no head version for channel $channel in $catalog_image"
             return 1
         fi
+        versions+="$version "
+    done
+    # A pinned cluster runs the pinned release, whose binary names its own default images
+    versions=$(echo $versions $pinned_versions | tr ' ' '\n' | grep -v '^$' | sort -u)
+    for version in $versions; do
         if ! src=$(curl -fsSL "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/v${version}/pkg/versions/versions.go"); then
             log_error "cloudnative-pg: cannot read the default images of v${version} from GitHub"
             return 1
@@ -294,6 +317,7 @@ VALID_PACKAGES=""
 SKIPPED_PACKAGES=""
 CNPG_CHANNELS=""
 CNPG_CATALOG=""
+CNPG_PINNED=""
 validate_catalog_channels() {
     local packages="$1"
     local catalog_image="$2"
@@ -339,6 +363,250 @@ validate_catalog_channels() {
         log_error "Fix the <operator>-channel labels in the values files, then run again"
         return 1
     fi
+}
+
+# ============================================================================
+# VERSION PINS
+# A policy installs the CSV a cluster pins rather than the channel head: config.<key>.versions (the
+# allowed CSVs) with config.<key>.startingCSV when that list is set, otherwise the <key>-version label.
+# <key> is the operator's label base, the same as in <key>-subscription-name. A mirror holding only
+# the channel head cannot install a pinned CSV, so each pinned channel gets a minVersion.
+# ============================================================================
+
+# Print "label|csv" for every pin in a values file, resolved per clusterset or cluster entry exactly as
+# the operator policies resolve it: the config list wins over the label for the same key.
+extract_version_pins() {
+    local values_file="$1"
+    local raw
+    # shellcheck disable=SC2016 # yq variables, not shell expansions
+    if ! raw=$(yq -r '
+      to_entries | .[] | select(.key == "hubClusterSets" or .key == "managedClusterSets" or .key == "clusters") |
+      .key as $section | .value // {} | to_entries | .[] |
+      ($section + "/" + .key) as $id | .value as $e |
+      (
+        ($e.config // {} | to_entries | .[] | select(.value | tag == "!!map") | .key as $k | .value as $v |
+          select(($v.versions // []) | tag == "!!seq" and length > 0) |
+          (($v.versions | .[]), ($v.startingCSV // "")) | select(. != null and . != "") |
+          "cfg|" + $id + "|" + $k + "|" + (. | tostring)),
+        ($e.labels // {} | to_entries | .[] | select(.key | test("-version$")) | select((.value // "") != "") |
+          "lbl|" + $id + "|" + (.key | sub("-version$"; "")) + "|" + (.value | tostring))
+      )' "$values_file" 2>&1); then
+        log_error "$(basename "$values_file"): cannot read version pins: $raw" >&2
+        return 1
+    fi
+    [[ -z "$raw" ]] && return 0
+    awk -F'|' '{ k = $2 "|" $3; if ($1 == "cfg") cfg[k] = 1; line[NR] = $0 }
+        END { for (i = 1; i <= NR; i++) { split(line[i], f, "|"); k = f[2] "|" f[3]
+              if (f[1] == "cfg" || !(k in cfg)) print f[3] "|" f[4] } }' <<< "$raw" | sort -u
+}
+
+# Write PINS_FILE ("package|csv|channel" lines) for the operators being mirrored. Only labels that
+# name one of those packages count, and only values shaped like a CSV name, which leaves out
+# openshift-version, servicemesh3operator-istio-version and chart versions such as vault-version.
+# The channel is the -channel label of the same file, so each pin keeps the channel that requested
+# it and resolve_pin_ranges validates it there, not against every channel any file requests.
+collect_version_pins() {
+    local packages=" $1 "
+    shift
+    local values_file label csv package channel
+    : > "$PINS_FILE"
+    if ! yq --version 2>&1 | grep -q mikefarah; then
+        log_error "yq v4 (mikefarah) is required to read the version pins in the values files"
+        return 1
+    fi
+    for values_file in "$@"; do
+        local pins
+        pins=$(extract_version_pins "$values_file") || return 1
+        while IFS='|' read -r label csv; do
+            [[ -z "$label" || -z "$csv" ]] && continue
+            [[ "$csv" =~ ^[a-z][a-z0-9-]*\.v?[0-9]+\. ]] || continue
+            package=$(get_operator_subscription_name "$label" "$values_file")
+            [[ -n "$package" && "$packages" == *" $package "* ]] || continue
+            channel=$(grep -E "^[[:space:]]*${label}-channel:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r')
+            echo "$package|$csv|$channel" >> "$PINS_FILE"
+        done <<< "$pins"
+    done
+    sort -u "$PINS_FILE" -o "$PINS_FILE"
+    if [[ -s "$PINS_FILE" ]]; then
+        log_step "Version pins: $(cut -d'|' -f2 "$PINS_FILE" | paste -sd' ' -)"
+    fi
+}
+
+# Set PIN_RANGES to "channel|minVersion|csv,csv" lines for a package's pinned channels. minVersion is the
+# lowest pinned version in that channel, and no maxVersion is set: oc-mirror then copies every bundle
+# from it to the channel head, so the pinned CSVs, the upgrades between them, and the head a cluster
+# tracking the channel installs are all mirrored. From a cached catalog the version and channels of
+# each CSV are read from its bundle. Without one the version is read from the CSV name and applied to
+# every requested channel. A pinned CSV that the requested channels lack fails generation, since no
+# Subscription could install it; with --all-operators it is a warning, as a missing package is.
+# PIN_VERSIONS is the space-separated versions of those CSVs.
+PIN_RANGES=""
+PIN_VERSIONS=""
+resolve_pin_ranges() {
+    local package="$1"
+    local channels="$2"
+    local catalog_image="$3"
+    local catalog_label="${catalog_image##*/}"
+    PIN_RANGES=""
+    PIN_VERSIONS=""
+    [[ -s "$PINS_FILE" ]] || return 0
+    local csvs
+    csvs=$(grep "^${package}|" "$PINS_FILE" | cut -d'|' -f2 | sort -u | paste -sd' ' -)
+    [[ -z "$csvs" ]] && return 0
+
+    local configs_dir resolved="" csv version in_channels channel requested found pin_package pin_channel
+    configs_dir=$(get_catalog_cache_configs "$catalog_image")
+    requested=$(echo "$channels" | tr ',' '\n' | xargs -n1 2>/dev/null)
+    if [[ -n "$configs_dir" && -d "$configs_dir/$package" ]]; then
+        # Read the cached stream and parse it as separate steps with their statuses checked.
+        # jq slurps the whole stream, so a truncated final object fails the parse with no rows
+        # at all; left unchecked, resolution would end with no pin ranges and a silent success.
+        local fbc_file
+        fbc_file="$LOCAL_TMP/catalog-fbc.$$"
+        catalog_fbc_json "$configs_dir/$package" > "$fbc_file" || {
+            rm -f "$fbc_file"
+            log_error "$package: the cached $catalog_label catalog could not be read for the pinned versions"
+            return 1
+        }
+        # shellcheck disable=SC2016 # jq variables, not shell expansions
+        resolved=$(jq -rs --arg want "$csvs" '
+            . as $all | ($want | split(" ") | map(select(. != "")))[] as $c
+            | ([$all[] | select(.schema == "olm.bundle" and .name == $c) | .properties[]
+                | select(.type == "olm.package") | .value.version] | first // "") as $v
+            | ([$all[] | select(.schema == "olm.channel" and any(.entries[]; .name == $c)) | .name]
+                | join(",")) as $ch
+            | "\($c)|\($v)|\($ch)"' < "$fbc_file") || {
+            rm -f "$fbc_file"
+            log_error "$package: the cached $catalog_label catalog could not be parsed for the pinned versions; the cache may be truncated, delete it and run again"
+            return 1
+        }
+        rm -f "$fbc_file"
+    else
+        log_warning "$package: $catalog_label is not cached; pinned versions read from the CSV names and not checked against the catalog"
+        for csv in $csvs; do
+            version=$(echo "$csv" | sed -E 's/^[^.]*\.v?//')
+            resolved+="$csv|$version|$channels"$'\n'
+        done
+    fi
+
+    # Validate each pin on the channel of the file that requested it, not on every channel
+    # any file requests: a pin valid only on file B's channel must not pass because file A
+    # asked for a different one.
+    local pairs="" invalid=0
+    while IFS='|' read -r pin_package csv pin_channel; do
+        [[ -z "$csv" ]] && continue
+        found=0
+        IFS='|' read -r _ version in_channels <<< "$(grep "^${csv}|" <<< "$resolved" | head -1)"
+        if [[ -n "$version" ]]; then
+            if [[ -n "$pin_channel" ]]; then
+                for channel in $requested; do
+                    if [[ "$channel" == "$pin_channel" && ",$in_channels," == *",$pin_channel,"* ]]; then
+                        pairs+="$pin_channel|$version|$csv"$'\n'
+                        [[ " $PIN_VERSIONS " == *" $version "* ]] || PIN_VERSIONS+="$version "
+                        found=1
+                    fi
+                done
+            else
+                # A record without a channel keeps the old any-requested-channel behaviour.
+                # collect_version_pins aborts on a missing -channel label, so this is
+                # defensive only.
+                for channel in $requested; do
+                    if [[ ",$in_channels," == *",$channel,"* ]]; then
+                        pairs+="$channel|$version|$csv"$'\n'
+                        [[ " $PIN_VERSIONS " == *" $version "* ]] || PIN_VERSIONS+="$version "
+                        found=1
+                    fi
+                done
+            fi
+        fi
+        if [[ $found -eq 0 ]]; then
+            local why
+            if [[ -n "$pin_channel" ]]; then
+                why="is not in channel $pin_channel of $catalog_label"
+            else
+                why="is not in channel $(echo "$requested" | paste -sd, - | sed 's/,/, /g') of $catalog_label"
+            fi
+            [[ -z "$version" ]] && why="is not in $catalog_label"
+            if [[ "$ALL_OPERATORS" == "true" ]]; then
+                log_warning "Pinned $csv $why; not mirrored"
+            else
+                log_error "Pinned $csv $why"
+                invalid=1
+            fi
+        fi
+    done < <(grep "^${package}|" "$PINS_FILE")
+    if [[ $invalid -ne 0 ]]; then
+        log_error "Fix the <operator>-version label or config.<operator>.versions, then run again"
+        return 1
+    fi
+
+    # Lowest version per channel, with every CSV pinned in it
+    for channel in $requested; do
+        local lines min list
+        lines=$(grep "^${channel}|" <<< "$pairs" || true)
+        [[ -z "$lines" ]] && continue
+        # Lowest version per channel, with every CSV pinned in it. The minimum is by
+        # semantic-version precedence: a prerelease or rebuild suffix sorts before the release
+        # it belongs to, where sort -V puts the plain release first and oc-mirror would then
+        # not copy the suffixed CSV the pin names.
+        # shellcheck disable=SC2016 # jq variables, not shell expansions
+        min=$(cut -d'|' -f2 <<< "$lines" | jq -sRr '
+            def vkey:
+                (index("+") // length) as $p | .[0:$p] as $v
+                | if $v | index("-") then
+                    ($v | index("-")) as $d
+                    | [($v[0:$d] | split(".") | map(tonumber)), 0,
+                       ($v[$d + 1:] | split(".")
+                         | map(if test("^[0-9]+$") then [0, tonumber] else [1, .] end))]
+                  else
+                    [($v | split(".") | map(tonumber)), 1]
+                  end;
+            split("\n") | map(select(length > 0)) | sort_by(vkey) | first')
+        list=$(cut -d'|' -f3 <<< "$lines" | sort -u | paste -sd, -)
+        PIN_RANGES+="$channel|$min|$list"$'\n'
+    done
+}
+
+# Append one catalog and its packages (VALID_PACKAGES) to the ImageSetConfiguration
+write_catalog_packages() {
+    local output_file="$1"
+    local catalog_image="$2"
+    local package_info name channels channel first_channel
+    [[ -n "${VALID_PACKAGES// /}" ]] || return 0
+    echo "  - catalog: $catalog_image" >> "$output_file"
+    echo "    packages:" >> "$output_file"
+    for package_info in $VALID_PACKAGES; do
+        [[ -z "$package_info" ]] && continue
+        IFS='|' read -r name channels <<< "$package_info"
+        resolve_pin_ranges "$name" "$channels" "$catalog_image" || return 1
+        echo "    - name: $name" >> "$output_file"
+        if [[ "$name" == cloudnative-pg ]]; then
+            CNPG_CHANNELS="$channels"
+            CNPG_CATALOG="$catalog_image"
+            CNPG_PINNED="$PIN_VERSIONS"
+        fi
+
+        # Set defaultChannel to the first specified channel
+        IFS=',' read -ra channels_array <<< "$channels"
+        first_channel=$(echo "${channels_array[0]}" | xargs)
+        if [[ -n "$first_channel" ]]; then
+            echo "      defaultChannel: $first_channel" >> "$output_file"
+        fi
+
+        echo "      channels:" >> "$output_file"
+        for channel in "${channels_array[@]}"; do
+            channel=$(echo "$channel" | xargs)
+            [[ -z "$channel" ]] && continue
+            echo "      - name: $channel" >> "$output_file"
+            local range min csvs
+            range=$(grep "^${channel}|" <<< "$PIN_RANGES" || true)
+            if [[ -n "$range" ]]; then
+                IFS='|' read -r _ min csvs <<< "$range"
+                echo "        minVersion: $min  # pinned: ${csvs//,/, }; the channel head is kept" >> "$output_file"
+                log_step "Pinned $name channel $channel from $min ($csvs) to the channel head"
+            fi
+        done
+    done
 }
 
 # Get default channel for an operator from the catalog cache
@@ -487,6 +755,13 @@ usage() {
     echo "Channel Merging:"
     echo "  When multiple files specify different channels for the same operator,"
     echo "  both channels will be included in the ImageSetConfiguration."
+    echo ""
+    echo "Version Pins:"
+    echo "  An operator pinned by config.<operator>.versions/startingCSV or the <operator>-version"
+    echo "  label gets minVersion on its channel: the lowest pinned version across all values files."
+    echo "  No maxVersion is set, so oc-mirror copies every bundle from that version to the channel"
+    echo "  head. A pinned CSV the channel does not carry fails generation; with --all-operators it"
+    echo "  is a warning and the pin is left out."
 }
 
 # Parse command line arguments
@@ -1170,6 +1445,20 @@ EOF
             exit 1
         fi
 
+        # Version pins in the values files, for the operators being mirrored
+        if [[ ${#operators[@]} -gt 0 ]]; then
+            local pin_packages="" pin_files=() pin_file
+            for operator_info in "${operators[@]}"; do
+                pin_packages+="${operator_info%%|*} "
+            done
+            for pin_file in "${values_files_array[@]}"; do
+                pin_file=$(echo "$pin_file" | xargs)
+                [[ ! -f "$pin_file" && -f "autoshift/$pin_file" ]] && pin_file="autoshift/$pin_file"
+                pin_files+=("$pin_file")
+            done
+            collect_version_pins "$pin_packages" "${pin_files[@]}" || { rm -f "$output_file"; exit 1; }
+        fi
+
         # Automatically resolve dependencies for all operators
         if [[ ${#operators[@]} -gt 0 && -z "$DEPENDENCIES_FILE" ]]; then
             # Collect all operator package names
@@ -1281,103 +1570,30 @@ EOF
                 fi
             fi
 
-            # Generate redhat-operators catalog if we have operators
+            # Generate each catalog that has operators
+            local catalog_ver
+            catalog_ver=$(get_catalog_version)
             if [[ -n "$redhat_operators" ]]; then
-                local catalog_ver=$(get_catalog_version)
-                validate_catalog_channels "$redhat_operators" "registry.redhat.io/redhat/redhat-operator-index:v${catalog_ver}" || { rm -f "$output_file"; exit 1; }
-                if [[ -n "${VALID_PACKAGES// /}" ]]; then
-                    echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v${catalog_ver}" >> "$output_file"
-                    echo "    packages:" >> "$output_file"
-
-                    for package_info in $VALID_PACKAGES; do
-                        [[ -z "$package_info" ]] && continue
-                        IFS='|' read -r name channels <<< "$package_info"
-                        echo "    - name: $name" >> "$output_file"
-
-                        # Set defaultChannel to the first specified channel
-                        IFS=',' read -ra channels_array <<< "$channels"
-                        local first_channel=$(echo "${channels_array[0]}" | xargs)
-                        if [[ -n "$first_channel" ]]; then
-                            echo "      defaultChannel: $first_channel" >> "$output_file"
-                        fi
-
-                        echo "      channels:" >> "$output_file"
-                        for channel in "${channels_array[@]}"; do
-                            channel=$(echo "$channel" | xargs)
-                            [[ -z "$channel" ]] && continue
-                            echo "      - name: $channel" >> "$output_file"
-                        done
-                    done
-                fi
+                local redhat_catalog="registry.redhat.io/redhat/redhat-operator-index:v${catalog_ver}"
+                validate_catalog_channels "$redhat_operators" "$redhat_catalog" || { rm -f "$output_file"; exit 1; }
+                write_catalog_packages "$output_file" "$redhat_catalog" || { rm -f "$output_file"; exit 1; }
                 log_step "Added catalog: redhat-operator-index"
             fi
-            
-            # Generate community-operators catalog if we have operators
+
             if [[ -n "$community_operators" ]]; then
-                local catalog_ver=$(get_catalog_version)
-                check_other_catalog "$community_operators" "registry.redhat.io/redhat/community-operator-index:v${catalog_ver}" || { rm -f "$output_file"; exit 1; }
-                if [[ -n "${VALID_PACKAGES// /}" ]]; then
-                    echo "  - catalog: registry.redhat.io/redhat/community-operator-index:v${catalog_ver}" >> "$output_file"
-                    echo "    packages:" >> "$output_file"
-
-                    for package_info in $VALID_PACKAGES; do
-                        [[ -z "$package_info" ]] && continue
-                        IFS='|' read -r name channels <<< "$package_info"
-                        echo "    - name: $name" >> "$output_file"
-
-                        # Set defaultChannel to the first specified channel
-                        IFS=',' read -ra channels_array <<< "$channels"
-                        local first_channel=$(echo "${channels_array[0]}" | xargs)
-                        if [[ -n "$first_channel" ]]; then
-                            echo "      defaultChannel: $first_channel" >> "$output_file"
-                        fi
-
-                        echo "      channels:" >> "$output_file"
-                        for channel in "${channels_array[@]}"; do
-                            channel=$(echo "$channel" | xargs)
-                            [[ -z "$channel" ]] && continue
-                            echo "      - name: $channel" >> "$output_file"
-                        done
-                    done
-                fi
+                local community_catalog="registry.redhat.io/redhat/community-operator-index:v${catalog_ver}"
+                check_other_catalog "$community_operators" "$community_catalog" || { rm -f "$output_file"; exit 1; }
+                write_catalog_packages "$output_file" "$community_catalog" || { rm -f "$output_file"; exit 1; }
                 log_step "Added catalog: community-operator-index"
             fi
-            
-            # Generate certified-operators catalog if we have operators
+
             if [[ -n "$certified_operators" ]]; then
-                local catalog_ver=$(get_catalog_version)
-                check_other_catalog "$certified_operators" "registry.redhat.io/redhat/certified-operator-index:v${catalog_ver}" || { rm -f "$output_file"; exit 1; }
-                if [[ -n "${VALID_PACKAGES// /}" ]]; then
-                    echo "  - catalog: registry.redhat.io/redhat/certified-operator-index:v${catalog_ver}" >> "$output_file"
-                    echo "    packages:" >> "$output_file"
-
-                    for package_info in $VALID_PACKAGES; do
-                        [[ -z "$package_info" ]] && continue
-                        IFS='|' read -r name channels <<< "$package_info"
-                        echo "    - name: $name" >> "$output_file"
-                        if [[ "$name" == cloudnative-pg ]]; then
-                            CNPG_CHANNELS="$channels"
-                            CNPG_CATALOG="registry.redhat.io/redhat/certified-operator-index:v${catalog_ver}"
-                        fi
-
-                        # Set defaultChannel to the first specified channel
-                        IFS=',' read -ra channels_array <<< "$channels"
-                        local first_channel=$(echo "${channels_array[0]}" | xargs)
-                        if [[ -n "$first_channel" ]]; then
-                            echo "      defaultChannel: $first_channel" >> "$output_file"
-                        fi
-
-                        echo "      channels:" >> "$output_file"
-                        for channel in "${channels_array[@]}"; do
-                            channel=$(echo "$channel" | xargs)
-                            [[ -z "$channel" ]] && continue
-                            echo "      - name: $channel" >> "$output_file"
-                        done
-                    done
-                fi
+                local certified_catalog="registry.redhat.io/redhat/certified-operator-index:v${catalog_ver}"
+                check_other_catalog "$certified_operators" "$certified_catalog" || { rm -f "$output_file"; exit 1; }
+                write_catalog_packages "$output_file" "$certified_catalog" || { rm -f "$output_file"; exit 1; }
                 log_step "Added catalog: certified-operator-index"
             fi
-            
+
             if [[ -n "$SKIPPED_PACKAGES" ]]; then
                 echo "  # Declared but not in the catalog for this OpenShift version, so not mirrored: $SKIPPED_PACKAGES" >> "$output_file"
                 log_warning "Not mirrored, absent from the catalog: $SKIPPED_PACKAGES"
@@ -1408,7 +1624,7 @@ EOF
 
     if [[ -n "$CNPG_CHANNELS" ]]; then
         local cnpg_imgs
-        cnpg_imgs=$(cnpg_default_images "$CNPG_CHANNELS" "$CNPG_CATALOG") || { rm -f "$output_file"; exit 1; }
+        cnpg_imgs=$(cnpg_default_images "$CNPG_CHANNELS" "$CNPG_CATALOG" "$CNPG_PINNED") || { rm -f "$output_file"; exit 1; }
         while IFS= read -r img; do
             [[ -z "$img" ]] && continue
             [[ " ${known_images[*]} " == *" $img "* ]] || known_images+=("$img")
