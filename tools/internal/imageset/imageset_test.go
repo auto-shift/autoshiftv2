@@ -68,12 +68,19 @@ func generate(t *testing.T, extraArgs []string, values ...string) (string, *imag
 // mirrors testdata/catalog, then runs the script like generate does.
 func generateFromCatalog(t *testing.T, catalog string, extraArgs []string, values ...string) (string, *imageSet, error) {
 	t.Helper()
-	return generateWith(t, nil, extraArgs, values...)
+	return generateFull(t, catalog, nil, extraArgs, values...)
 }
 
 // generateWith also seeds the release payload cache: each key is an OpenShift release, each value the
 // "channel|csv|catalog source" line the script would read from that release's ingress operator.
 func generateWith(t *testing.T, payloads map[string]string, extraArgs []string, values ...string) (string, *imageSet, error) {
+	t.Helper()
+	return generateFull(t, "catalog", payloads, extraArgs, values...)
+}
+
+// generateFull seeds the catalog cache from the named testdata directory and, when payloads is set,
+// the release payload cache, then runs the script.
+func generateFull(t *testing.T, catalog string, payloads map[string]string, extraArgs []string, values ...string) (string, *imageSet, error) {
 	t.Helper()
 	for _, tool := range []string{"bash", "jq", "yq"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -429,8 +436,8 @@ func TestGatewayAPIOperatorOlderReleaseWithoutCSVIgnores(t *testing.T) {
 
 // An unresolved CSV still merges the stable head into a package the values files already mirror
 // on another channel, deduplicated into the one package entry, instead of leaving only that
-// channel although the warning promises the head. The head channel picks up a values pin when
-// the pinned version is on it, like any other channel.
+// channel although the warning promises the head. A values pin applies only to the channel it was
+// requested on, so the added stable channel mirrors from its head while stable-3.5 keeps the pin.
 func TestGatewayAPIOperatorFallbackAddsHeadChannel(t *testing.T) {
 	log, set, err := generate(t, nil, "gateway-consumer.yaml", "servicemesh-3.5.yaml")
 	if err != nil {
@@ -440,8 +447,8 @@ func TestGatewayAPIOperatorFallbackAddsHeadChannel(t *testing.T) {
 	if c := got["servicemeshoperator3/stable-3.5"]; c.MinVersion != "3.5.0" || c.MaxVersion != "" {
 		t.Errorf("servicemeshoperator3/stable-3.5 = %q - %q, want 3.5.0 to the head", c.MinVersion, c.MaxVersion)
 	}
-	if c := got["servicemeshoperator3/stable"]; c.MinVersion != "3.5.0" || c.MaxVersion != "" {
-		t.Errorf("servicemeshoperator3/stable = %q - %q, want 3.5.0 to the head", c.MinVersion, c.MaxVersion)
+	if c := got["servicemeshoperator3/stable"]; c.MinVersion != "" || c.MaxVersion != "" {
+		t.Errorf("servicemeshoperator3/stable = %q - %q, want the head only (the pin was requested on stable-3.5)", c.MinVersion, c.MaxVersion)
 	}
 	n := 0
 	for _, op := range set.Mirror.Operators {
