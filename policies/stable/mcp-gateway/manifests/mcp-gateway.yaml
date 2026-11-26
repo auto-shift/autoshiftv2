@@ -1,0 +1,498 @@
+# The shared MCP gateway, the MCP servers registered with it, and who may call which tools.
+#
+# One gateway per cluster, from config.mcpGateway.gateway. Every server in
+# config.mcpGateway.servers registers with it:
+#
+#   Gateway               openshift-ingress/<name>, two plain-HTTP listeners on the same port:
+#                         "mcp" is the authenticated endpoint; "mcp-internal" carries the
+#                         *.mcp.local hostnames that server HTTPRoutes attach to
+#   Route                 mcp.<ingress domain> (or gateway.hostname), edge TLS through the
+#                         default router, to the "mcp" listener
+#   ReferenceGrant        lets the MCPGatewayExtension, in the gateway namespace, name the
+#                         Gateway in openshift-ingress
+#   MCPGatewayExtension   the MCP Gateway controller deploys the broker-router and its Service in
+#                         the gateway namespace, an EnvoyFilter in openshift-ingress, and the
+#                         HTTPRoute for /mcp on the public listener
+#   AuthPolicy <name>-mcp authentication on the public listener. With tool authorization, also
+#                         a signed x-authorized-tools header the broker filters tools/list by
+#   AuthPolicy            with tool authorization only: authentication and a per-tool check on
+#     <name>-tools        the internal listener, where tools/call is routed
+#   per server            an HTTPRoute on the internal listener and an MCPServerRegistration
+#   per virtual server    an MCPVirtualServer, a named subset of tools a client selects
+#
+# The Gateway is in openshift-ingress because the Ingress Operator's Gateway API implementation
+# requires that of every Gateway of class openshift-default. Kuadrant policies attach only to
+# targets in their own namespace, so both AuthPolicies are there too. Everything else is in the
+# gateway namespace, which this policy creates.
+#
+# The MCP Gateway controller itself is not installed here. Connectivity Link 1.5 deploys it
+# through the KuadrantControlPlane named default, which nothing in this policy reads or writes.
+#
+# Fails, rather than rendering nothing, when the rendered-config ConfigMap or
+# config.mcpGateway.gateway is missing, when auth.type is not one of none, kubernetes or jwt, when
+# a server lacks a required field, or when tool access is configured inconsistently. auth.type
+# has no default on purpose: an unauthenticated tool endpoint should be a decision someone wrote
+# down, not what happens when a key is forgotten.
+object-templates-raw: |
+  {{hub- $raw := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "") hub}}
+  {{hub- $cfg := (index ($raw | fromYaml | default dict) "mcpGateway" | default dict) hub}}
+  {{hub- $gw := (dig "gateway" (dict) $cfg) hub}}
+  {{hub- if not $gw hub}}{{hub fail "mcp-gateway: config.mcpGateway.gateway is missing" hub}}{{hub- end hub}}
+  {{hub- $name := (dig "name" "mcp-gateway" $gw) hub}}
+  {{hub- $ns := (dig "namespace" "mcp-gateway" $gw) hub}}
+  {{hub- $gwNs := "openshift-ingress" hub}}
+  {{hub- $gwClass := (dig "className" "openshift-default" $gw) hub}}
+  {{hub- $host := (dig "hostname" "" $gw) hub}}
+  {{hub- $tlsSecret := (dig "tlsSecretName" "" $gw) hub}}
+  {{hub- $port := (dig "internalPort" 8080 $gw) hub}}
+  {{hub- $authType := (dig "auth" "type" "" $gw) hub}}
+  {{hub- if not (or (eq $authType "none") (eq $authType "kubernetes") (eq $authType "jwt")) hub}}{{hub fail "mcp-gateway: config.mcpGateway.gateway.auth.type is required: none, kubernetes or jwt" hub}}{{hub- end hub}}
+  {{hub- $issuer := (dig "auth" "issuerUrl" "" $gw) hub}}
+  {{hub- if and (eq $authType "jwt") (not $issuer) hub}}{{hub fail "mcp-gateway: auth.type jwt needs auth.issuerUrl" hub}}{{hub- end hub}}
+  {{hub- $toolAuthz := (eq (printf "%v" (dig "toolAuthorization" "enabled" false $gw)) "true") hub}}
+  {{hub- if and $toolAuthz (eq $authType "none") hub}}{{hub fail "mcp-gateway: toolAuthorization needs an identity, so auth.type cannot be none" hub}}{{hub- end hub}}
+  {{hub- $keySecret := (dig "toolAuthorization" "keySecretName" "mcp-trusted-headers" $gw) hub}}
+  {{hub- $kuadrantNs := (dig "toolAuthorization" "kuadrantNamespace" "kuadrant-system" $gw) hub}}
+  # Red Hat OpenShift AI turns on TLS for Authorino's gRPC authorization port; set
+  # gateway.authorinoTLS false on a cluster where Authorino serves plain gRPC.
+  {{hub- $authorinoTLS := (ne (printf "%v" (dig "authorinoTLS" true $gw)) "false") hub}}
+  {{hub- $servers := (dig "servers" (list) $cfg) hub}}
+  {{hub- $virtualServers := (dig "virtualServers" (list) $cfg) hub}}
+  {{- /* Identity as each auth.type presents it, for the CEL and Rego below. */}}
+  {{hub- $gc := (dig "auth" "groupsClaim" "groups" $gw | quote) hub}}
+  {{hub- $uc := (dig "auth" "usernameClaim" "preferred_username" $gw | quote) hub}}
+  {{hub- $celGroups := "auth.identity.user.groups" hub}}
+  {{hub- $celUser := "auth.identity.user.username" hub}}
+  {{hub- $regoGroups := "input.auth.identity.user.groups" hub}}
+  {{hub- $regoUser := "input.auth.identity.user.username" hub}}
+  {{hub- if eq $authType "jwt" hub}}
+  {{hub- $celGroups = (printf "(%s in auth.identity ? auth.identity[%s] : [])" $gc $gc) hub}}
+  {{hub- $celUser = (printf "(%s in auth.identity ? auth.identity[%s] : \"\")" $uc $uc) hub}}
+  {{hub- $regoGroups = (printf "input.auth.identity[%s]" $gc) hub}}
+  {{hub- $regoUser = (printf "input.auth.identity[%s]" $uc) hub}}
+  {{hub- end hub}}
+  {{- /* Validate servers; collect route namespaces and the tool access map. */}}
+  {{hub- $routeNs := (list $ns) hub}}
+  {{hub- $accessPairs := (list) hub}}
+  {{hub- range $s := $servers hub}}
+  {{hub- if not (and (dig "name" "" $s) (dig "namespace" "" $s) (dig "port" "" $s) (dig "prefix" "" $s)) hub}}{{hub fail "mcp-gateway: every config.mcpGateway.servers entry needs name, namespace, port and prefix" hub}}{{hub- end hub}}
+  {{hub- $sNs := (dig "namespace" "" $s) hub}}
+  {{hub- if not (has $sNs $routeNs) hub}}
+  {{hub- $routeNs = (append $routeNs $sNs) hub}}
+  {{hub- end hub}}
+  {{hub- $access := (dig "access" (list) $s) hub}}
+  {{hub- if and $access (not $toolAuthz) hub}}{{hub fail (printf "mcp-gateway: server %s has access entries but gateway.toolAuthorization.enabled is not true, so nothing would enforce them" (dig "name" "" $s)) hub}}{{hub- end hub}}
+  {{hub- $entries := (list) hub}}
+  {{hub- range $a := $access hub}}
+  {{hub- $tools := (dig "tools" (list) $a) hub}}
+  {{hub- $groups := (dig "groups" (list) $a) hub}}
+  {{hub- $users := (dig "users" (list) $a) hub}}
+  {{hub- if not $tools hub}}{{hub fail (printf "mcp-gateway: every access entry of server %s needs a tools list" (dig "name" "" $s)) hub}}{{hub- end hub}}
+  {{hub- if has "*" $tools hub}}{{hub fail (printf "mcp-gateway: server %s: tools must be listed by name; the broker filters tools/list by exact name and has no wildcard" (dig "name" "" $s)) hub}}{{hub- end hub}}
+  {{hub- if not (or $groups $users) hub}}{{hub fail (printf "mcp-gateway: every access entry of server %s needs groups or users" (dig "name" "" $s)) hub}}{{hub- end hub}}
+  {{hub- $entries = (append $entries (dict "groups" $groups "users" $users "tools" $tools)) hub}}
+  {{hub- end hub}}
+  {{hub- if $entries hub}}
+  {{hub- $accessPairs = (append $accessPairs (printf "%s:%s" (printf "%s/%s" $sNs (dig "name" "" $s) | toJson) ($entries | toJson))) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $x := (dig "extraRouteNamespaces" (list) $gw) hub}}
+  {{hub- if not (has $x $routeNs) hub}}
+  {{hub- $routeNs = (append $routeNs $x) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if and $toolAuthz (not $accessPairs) hub}}{{hub fail "mcp-gateway: toolAuthorization is enabled but no server has access entries, so every tool call would be denied" hub}}{{hub- end hub}}
+  {{hub- $accessMap := (printf "{%s}" (join "," $accessPairs)) hub}}
+  {{hub- range $v := $virtualServers hub}}
+  {{hub- if not (and (dig "name" "" $v) (dig "tools" (list) $v)) hub}}{{hub fail "mcp-gateway: every config.mcpGateway.virtualServers entry needs name and tools" hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{- $domain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
+  # Shared and cluster-scoped. openshift-ai-maas declares the same object with the same spec,
+  # so the two policies agree rather than fight. Creating it is what makes the Ingress Operator
+  # install the Istio control plane, and with it the EnvoyFilter CRD the MCP Gateway controller
+  # needs. That is why the EnvoyFilter CRD is asserted in the readiness policy, not as a
+  # prerequisite: as a prerequisite it would wait on an object this policy creates.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: gateway.networking.k8s.io/v1
+      kind: GatewayClass
+      metadata:
+        name: openshift-default
+      spec:
+        controllerName: openshift.io/gateway-controller/v1
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $ns hub}}
+  # mustonlyhave: listeners and the namespace selector values are lists, and musthave
+  # merges lists. Removing a server namespace from config would leave it attached.
+  # The internal listener accepts routes from the gateway namespace, the namespace of every
+  # configured server, and extraRouteNamespaces. Not "All": it shares the Gateway Service with
+  # the public listener, so a route attached from an arbitrary namespace would be reachable
+  # through it.
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      metadata:
+        name: {{hub $name hub}}
+        namespace: {{hub $gwNs hub}}
+      spec:
+        gatewayClassName: {{hub $gwClass hub}}
+        listeners:
+          # Same port as mcp-internal, because the MCP Gateway controller matches a server's
+          # route to the extension by the port of the listener it attaches to: with the public
+          # listener on 443 and the servers on 8080, every MCPServerRegistration stays NotReady
+          # ("no matching mcpgatewayextensions for attached listener"). No hostname, so the
+          # Ingress Operator publishes no DNS record that would shadow the router's wildcard;
+          # the Route below brings mcp.<domain> in with TLS.
+          - name: mcp
+            port: {{hub $port hub}}
+            protocol: HTTP
+            allowedRoutes:
+              namespaces:
+                from: Selector
+                selector:
+                  matchExpressions:
+                    - key: kubernetes.io/metadata.name
+                      operator: In
+                      values:
+                        - {{hub $ns hub}}
+          - name: mcp-internal
+            hostname: '*.mcp.local'
+            port: {{hub $port hub}}
+            protocol: HTTP
+            allowedRoutes:
+              namespaces:
+                from: Selector
+                selector:
+                  matchExpressions:
+                    - key: kubernetes.io/metadata.name
+                      operator: In
+                      values: {{hub $routeNs | toJson hub}}
+  # The public endpoint: edge TLS at the default router (Connectivity Link 1.5, Install the MCP
+  # gateway, 2.3). The router keeps the Host header, which the hostname-less mcp listener takes.
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: route.openshift.io/v1
+      kind: Route
+      metadata:
+        name: {{hub $name hub}}
+        namespace: {{hub $gwNs hub}}
+      spec:
+        host: {{hub if $host hub}}{{hub $host hub}}{{hub else hub}}mcp.{{ $domain }}{{hub end hub}}
+        port:
+          targetPort: {{hub $port hub}}
+        tls:
+          termination: edge
+          insecureEdgeTerminationPolicy: Redirect
+          {{hub- if $tlsSecret hub}}
+          externalCertificate:
+            name: {{hub $tlsSecret hub}}
+          {{hub- end hub}}
+        to:
+          kind: Service
+          name: {{hub $name hub}}-{{hub $gwClass hub}}
+          weight: 100
+        wildcardPolicy: None
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: gateway.networking.k8s.io/v1beta1
+      kind: ReferenceGrant
+      metadata:
+        name: mcp-{{hub $ns hub}}
+        namespace: {{hub $gwNs hub}}
+      spec:
+        from:
+          - group: mcp.kuadrant.io
+            kind: MCPGatewayExtension
+            namespace: {{hub $ns hub}}
+        to:
+          - group: gateway.networking.k8s.io
+            kind: Gateway
+            name: {{hub $name hub}}
+  # The only MCPGatewayExtension in its namespace: the controller rejects a second one.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: mcp.kuadrant.io/v1
+      kind: MCPGatewayExtension
+      metadata:
+        name: {{hub $name hub}}
+        namespace: {{hub $ns hub}}
+      spec:
+        targetRef:
+          group: gateway.networking.k8s.io
+          kind: Gateway
+          name: {{hub $name hub}}
+          namespace: {{hub $gwNs hub}}
+          sectionName: mcp
+        # The broker reaches registered servers back through the Gateway, on the shared port.
+        privateHost: http://{{hub $name hub}}-{{hub $gwClass hub}}.{{hub $gwNs hub}}.svc.cluster.local:{{hub $port hub}}
+        # Required because the mcp listener has no hostname: without it the extension is not
+        # Ready, and the controller writes no router EnvoyFilter, so every tools/call reaches the
+        # broker and fails with "doesn't forward tool calls". Also the hostname of the /mcp route.
+        publicHost: {{hub if $host hub}}{{hub $host hub}}{{hub else hub}}mcp.{{ $domain }}{{hub end hub}}
+        logLevel: {{hub (dig "logLevel" "info" $gw) hub}}
+        {{hub- if eq $authType "jwt" hub}}
+        oauthProtectedResource:
+          authorizationServers:
+            - {{hub $issuer hub}}
+        {{hub- end hub}}
+        {{hub- if $toolAuthz hub}}
+        # The public half of the key pair that signs x-authorized-tools. Created out of band,
+        # never by the operator: generate Enabled would put the private half in this
+        # namespace, and Authorino reads its signing key from the Kuadrant namespace.
+        trustedHeadersKey:
+          secretName: {{hub $keySecret hub}}
+          generate: Disabled
+        {{hub- end hub}}
+  {{hub- if and (ne $authType "none") $authorinoTLS hub}}
+  # TLS from this Gateway to Authorino. With Red Hat OpenShift AI on the cluster, Authorino's
+  # gRPC authorization port serves TLS, and the Kuadrant-generated cluster for it is plain
+  # text: every check then fails ("gRPC status code is not OK" in the Wasm log, HTTP 500, and
+  # nothing in Authorino's log). odh-model-controller adds this same patch for the MaaS gateway
+  # only (maas-default-gateway-authn-ssl). Priority -1 applies it before Kuadrant's patch, so
+  # this definition of kuadrant-auth-service wins.
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: networking.istio.io/v1alpha3
+      kind: EnvoyFilter
+      metadata:
+        name: {{hub $name hub}}-authn-ssl
+        namespace: {{hub $gwNs hub}}
+      spec:
+        priority: -1
+        targetRefs:
+          - group: gateway.networking.k8s.io
+            kind: Gateway
+            name: {{hub $name hub}}
+        configPatches:
+          - applyTo: CLUSTER
+            match:
+              cluster:
+                service: authorino-authorino-authorization.{{hub $kuadrantNs hub}}.svc.cluster.local
+            patch:
+              operation: ADD
+              value:
+                name: kuadrant-auth-service
+                type: STRICT_DNS
+                connect_timeout: 1s
+                lb_policy: ROUND_ROBIN
+                http2_protocol_options: {}
+                load_assignment:
+                  cluster_name: kuadrant-auth-service
+                  endpoints:
+                    - lb_endpoints:
+                        - endpoint:
+                            address:
+                              socket_address:
+                                address: authorino-authorino-authorization.{{hub $kuadrantNs hub}}.svc.cluster.local
+                                port_value: 50051
+                transport_socket:
+                  name: envoy.transport_sockets.tls
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+                    common_tls_context:
+                      validation_context:
+                        trusted_ca:
+                          filename: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+  # mustonlyhave: switching auth.type under musthave would merge the new method beside the
+  # old one, and Authorino accepts a request when any one method succeeds.
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: kuadrant.io/v1
+      kind: AuthPolicy
+      metadata:
+        name: {{hub $name hub}}-mcp
+        namespace: {{hub $gwNs hub}}
+      spec:
+        targetRef:
+          group: gateway.networking.k8s.io
+          kind: Gateway
+          name: {{hub $name hub}}
+          sectionName: mcp
+        # MCP clients discover the authorization server here before they have a token.
+        when:
+          - predicate: '!request.path.startsWith("/.well-known/oauth-protected-resource")'
+        rules:
+          authentication:
+            {{hub- if eq $authType "kubernetes" hub}}
+            # OpenShift user tokens and ServiceAccount tokens, through a TokenReview.
+            kubernetes:
+              kubernetesTokenReview:
+                audiences: {{hub (dig "auth" "audiences" (list "https://kubernetes.default.svc") $gw) | toJson hub}}
+            {{hub- else hub}}
+            oidc:
+              jwt:
+                issuerUrl: {{hub $issuer hub}}
+            {{hub- end hub}}
+          {{hub- if $toolAuthz hub}}
+          # Which tools this identity may see, per server, from the access entries in config.
+          # Every authenticated request is allowed here; the result only feeds the header below.
+          authorization:
+            authorized-tools:
+              opa:
+                version: v1
+                allValues: true
+                rego: |
+                  allow := true
+                  access := {{hub $accessMap hub}}
+                  groups := {g | some g in {{hub $regoGroups hub}}}
+                  user := {{hub $regoUser hub}}
+                  tools := {server: names |
+                    some server, entries in access
+                    names := {t | some e in entries; some g in e.groups; g in groups; some t in e.tools} | {t | some e in entries; user in e.users; some t in e.tools}
+                    count(names) > 0
+                  }
+          {{hub- end hub}}
+          {{hub- if or $toolAuthz (eq $authType "jwt") hub}}
+          response:
+            {{hub- if eq $authType "jwt" hub}}
+            unauthenticated:
+              code: 401
+              headers:
+                WWW-Authenticate:
+                  value: Bearer resource_metadata=https://{{hub if $host hub}}{{hub $host hub}}{{hub else hub}}mcp.{{ $domain }}{{hub end hub}}/.well-known/oauth-protected-resource
+            {{hub- end hub}}
+            {{hub- if $toolAuthz hub}}
+            # A short-lived JWT the broker verifies with the public key on the
+            # MCPGatewayExtension, then uses to filter tools/list. Signed with the private key
+            # Secret in the Kuadrant namespace, which must hold it under key.pem.
+            success:
+              headers:
+                x-authorized-tools:
+                  wristband:
+                    issuer: authorino
+                    customClaims:
+                      allowed-tools:
+                        selector: auth.authorization.authorized-tools.tools.@tostr
+                    tokenDuration: 300
+                    signingKeyRefs:
+                      - name: {{hub $keySecret hub}}-private
+                        algorithm: ES256
+            {{hub- end hub}}
+          {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $toolAuthz hub}}
+  # tools/call is routed through the internal listener with the client's credentials and two
+  # headers the router sets: x-mcp-servername (<namespace>/<registration name>) and
+  # x-mcp-toolname (the tool name without its prefix). A request is allowed when an access
+  # entry for that server lists the tool and names one of the caller's groups or the caller.
+  # Anything else on this listener, including a request without those headers, is denied.
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: kuadrant.io/v1
+      kind: AuthPolicy
+      metadata:
+        name: {{hub $name hub}}-tools
+        namespace: {{hub $gwNs hub}}
+      spec:
+        targetRef:
+          group: gateway.networking.k8s.io
+          kind: Gateway
+          name: {{hub $name hub}}
+          sectionName: mcp-internal
+        rules:
+          authentication:
+            {{hub- if eq $authType "kubernetes" hub}}
+            kubernetes:
+              kubernetesTokenReview:
+                audiences: {{hub (dig "auth" "audiences" (list "https://kubernetes.default.svc") $gw) | toJson hub}}
+            {{hub- else hub}}
+            oidc:
+              jwt:
+                issuerUrl: {{hub $issuer hub}}
+            {{hub- end hub}}
+          authorization:
+            tool-access:
+              patternMatching:
+                patterns:
+                  - predicate: |
+                      'x-mcp-servername' in request.headers && 'x-mcp-toolname' in request.headers && request.headers['x-mcp-servername'] in {{hub $accessMap hub}} && {{hub $accessMap hub}}[request.headers['x-mcp-servername']].exists(e, request.headers['x-mcp-toolname'] in e.tools && (e.groups.exists(g, g in {{hub $celGroups hub}}) || {{hub $celUser hub}} in e.users))
+  {{hub- end hub}}
+  {{hub- range $s := $servers hub}}
+  {{hub- $sName := (dig "name" "" $s) hub}}
+  {{hub- $sNs := (dig "namespace" "" $s) hub}}
+  {{hub- $route := (printf "%s-mcp" $sName) hub}}
+  # mustonlyhave: parentRefs and backendRefs are object lists. Under musthave, changing the
+  # port would add a second backendRef beside the first and split traffic between them.
+  # Every field the API server would default is written out, so the comparison is stable.
+  # The server namespace is not created: a registration for a server that was never deployed
+  # should fail on the missing namespace, not succeed against an empty one.
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: gateway.networking.k8s.io/v1
+      kind: HTTPRoute
+      metadata:
+        name: {{hub $route hub}}
+        namespace: {{hub $sNs hub}}
+      spec:
+        parentRefs:
+          - group: gateway.networking.k8s.io
+            kind: Gateway
+            name: {{hub $name hub}}
+            namespace: {{hub $gwNs hub}}
+            sectionName: mcp-internal
+        hostnames:
+          - {{hub $sNs hub}}-{{hub $sName hub}}.mcp.local
+        rules:
+          - matches:
+              - path:
+                  type: PathPrefix
+                  value: /
+            backendRefs:
+              - group: ''
+                kind: Service
+                name: {{hub (dig "service" $sName $s) hub}}
+                port: {{hub (dig "port" "" $s) hub}}
+                weight: 1
+  # prefix is immutable in the CRD. Changing it in config makes this policy NonCompliant with
+  # the API server's rejection; delete the registration to take the new prefix.
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: mcp.kuadrant.io/v1
+      kind: MCPServerRegistration
+      metadata:
+        name: {{hub $sName hub}}
+        namespace: {{hub $sNs hub}}
+      spec:
+        targetRef:
+          group: gateway.networking.k8s.io
+          kind: HTTPRoute
+          name: {{hub $route hub}}
+          namespace: {{hub $sNs hub}}
+        prefix: {{hub (dig "prefix" "" $s) | quote hub}}
+        path: {{hub (dig "path" "/mcp" $s) | quote hub}}
+        state: Enabled
+        userSpecificList: Disabled
+        category: {{hub (dig "category" (list "uncategorised") $s) | toJson hub}}
+        {{hub- if (dig "hint" "" $s) hub}}
+        hint: {{hub (dig "hint" "" $s) | quote hub}}
+        {{hub- end hub}}
+        {{hub- if (dig "credentialSecret" "name" "" $s) hub}}
+        # Created out of band, never from values, and labeled mcp.kuadrant.io/secret=true.
+        credentialRef:
+          name: {{hub (dig "credentialSecret" "name" "" $s) hub}}
+          key: {{hub (dig "credentialSecret" "key" "token" $s) hub}}
+        {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $v := $virtualServers hub}}
+  # A curated tools/list, selected by a client with the header
+  # X-Mcp-Virtualserver: <gateway namespace>/<name>. It filters what a client sees and grants
+  # nothing: with tool authorization the list is the intersection with what the caller may use.
+  # mustonlyhave: tools is a list, and a tool removed from config must leave the list.
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: mcp.kuadrant.io/v1
+      kind: MCPVirtualServer
+      metadata:
+        name: {{hub (dig "name" "" $v) hub}}
+        namespace: {{hub $ns hub}}
+      spec:
+        {{hub- if (dig "description" "" $v) hub}}
+        description: {{hub (dig "description" "" $v) | quote hub}}
+        {{hub- end hub}}
+        tools: {{hub (dig "tools" (list) $v) | toJson hub}}
+  {{hub- end hub}}

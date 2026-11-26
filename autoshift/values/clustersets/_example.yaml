@@ -1351,6 +1351,111 @@ hubClusterSets:
           observability:
             enable: true
       # =======================================================================
+      # mcp-gateway — the shared MCP gateway, the MCP servers registered with it, and which
+      # groups may call which tools (DATA; the ENABLE flag is the mcp-gateway label below).
+      # Needs Connectivity Link 1.5, which deploys the MCP Gateway controller itself. Every
+      # value below is an example: names, namespaces, groups and tools are site choices.
+      # =======================================================================
+      mcpGateway:
+        # One gateway per cluster. The Gateway object is always in openshift-ingress, which
+        # the OpenShift Gateway API implementation requires; namespace is where the broker,
+        # the MCPGatewayExtension and the virtual servers live.
+        gateway:
+          name: 'mcp-gateway'                    # default: mcp-gateway
+          namespace: 'mcp-gateway'               # default: mcp-gateway, created by the policy
+          className: 'openshift-default'
+          # Public hostname. Default: mcp.<cluster ingress domain>, discovered on the managed
+          # cluster. The TLS Secret must be in openshift-ingress; the default is the
+          # certificate the default IngressController already serves.
+          hostname: ''
+          tlsSecretName: ''
+          internalPort: 8080                     # the *.mcp.local listener servers attach to
+          logLevel: 'info'
+          # TLS from the gateway to Authorino (the default); false where Authorino serves plain gRPC.
+          authorinoTLS: true
+          # Required, no default: none, kubernetes or jwt. kubernetes accepts OpenShift user
+          # and ServiceAccount tokens through a TokenReview, so access entries below name
+          # OpenShift groups and users. jwt takes issuerUrl, and groupsClaim and
+          # usernameClaim (defaults: groups, preferred_username) say where the token
+          # carries them.
+          auth:
+            type: 'kubernetes'
+            audiences:
+              - 'https://kubernetes.default.svc'
+          # Per-tool access from servers[].access. Needs auth.type kubernetes or jwt. Two
+          # Secrets are created out of band from one ECDSA P-256 key pair, never from values:
+          # <keySecretName> in the gateway namespace holds the public key under "key", and
+          # <keySecretName>-private in kuadrantNamespace holds the private key under
+          # "key.pem". The readiness policy reports either one missing.
+          toolAuthorization:
+            enabled: true
+            keySecretName: 'mcp-trusted-headers'   # default: mcp-trusted-headers
+            kuadrantNamespace: 'kuadrant-system'   # default: kuadrant-system
+          # Namespaces allowed to attach routes to the internal listener besides the gateway
+          # namespace and the namespaces of the servers below, for servers registered by hand.
+          extraRouteNamespaces:
+            - 'mcp-team-a'
+        # Optional. One entry per MCP server Service, typically one the Red Hat OpenShift AI
+        # MCP catalog deployed. With no servers the gateway alone is created.
+        servers:
+          - name: 'openshift-mcp'                # required: registration name, MCPServer name
+            namespace: 'mcp-servers'             # required: where the MCP server runs
+            service: 'openshift-mcp'             # default: name
+            port: 8080                           # required: the Service port
+            path: '/mcp'                         # default: /mcp
+            prefix: 'ocp_'                       # required and immutable: tool name prefix
+            category:
+              - 'platform'
+            hint: 'Read-only OpenShift cluster tools'
+            # A Secret created out of band, labeled mcp.kuadrant.io/secret=true. The broker
+            # uses it for tool discovery only; it is never sent with a client's tool call.
+            credentialSecret:
+              name: 'openshift-mcp-credential'
+              key: 'token'                       # default: token
+            # Who may list and call which tools, with toolAuthorization enabled. Tools are
+            # named as the server names them, without the prefix. An entry needs tools and
+            # groups or users; a tool no entry lists is hidden and refused for everyone.
+            access:
+              - groups:
+                  - 'mcp-platform-admins'
+                tools:
+                  - 'pods_list'
+                  - 'pods_log'
+                  - 'events_list'
+                  - 'resources_get'
+              - groups:
+                  - 'mcp-developers'
+                # A ServiceAccount an agent runs as, by its full user name.
+                users:
+                  - 'system:serviceaccount:agents:triage-agent'
+                tools:
+                  - 'pods_list'
+                  - 'events_list'
+          - name: 'docs-search'
+            namespace: 'mcp-servers'
+            port: 8000
+            prefix: 'docs_'
+            category:
+              - 'knowledge'
+            access:
+              - groups:
+                  - 'mcp-platform-admins'
+                  - 'mcp-developers'
+                tools:
+                  - 'search'
+                  - 'fetch'
+        # Optional. A named, curated tools/list a client selects with the header
+        # X-Mcp-Virtualserver: <gateway namespace>/<name>. Tools are named with their prefix.
+        # It filters what a client sees and grants nothing.
+        virtualServers:
+          - name: 'triage'
+            description: 'Tools for incident triage'
+            tools:
+              - 'ocp_pods_list'
+              - 'ocp_events_list'
+              - 'docs_search'
+
+      # =======================================================================
       # OpenShift Lightspeed. Requires the openshift-lightspeed label.
       # =======================================================================
       # Same key as the version pin (config.openshift-lightspeed.versions). provider and model are
@@ -2830,6 +2935,14 @@ hubClusterSets:
       connectivity-link-source: redhat-operators
       connectivity-link-source-namespace: openshift-marketplace
       connectivity-link-version: ''
+
+      # =======================================================================
+      # MCP gateway (the shared MCP gateway on Connectivity Link 1.5)
+      # =======================================================================
+      # The gateway, its servers and tool access are config.mcpGateway. Needs
+      # connectivity-link on channel stable-1.5. Turning it off stops
+      # management and removes nothing.
+      mcp-gateway: 'false'
 
       # =======================================================================
       # Global Hub — set on the GLOBAL hub's clusterset (the self-managed hub-of-hubs)

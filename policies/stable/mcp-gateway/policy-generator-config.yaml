@@ -1,0 +1,60 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: mcp-gateway
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml, never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber. The manifests read the policy
+# namespace from .PolicyMetadata.namespace instead.
+#
+# The gateway, the servers registered with it and who may call which tools come from
+# config.mcpGateway in the cluster's rendered-config, not from labels: they are structured
+# records, and a label is a string.
+#
+# Several policies share placement.yaml, so the shared PlacementBinding needs an explicit name.
+placementBindingDefaults:
+  name: binding-policy-mcp-gateway
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: medium
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # inform: the MCP Gateway CRDs exist and the KuadrantControlPlane is Ready. Depends on
+  # connectivity-link's readiness policy, so this chain stays Pending, not falsely green, on
+  # a cluster without Connectivity Link 1.5.
+  - name: policy-mcp-gateway-prereqs
+    remediationAction: inform
+    dependencies:
+      - name: policy-rhcl-ready
+    manifests:
+      - path: test/prereqs.yaml
+  # The shared Gateway and MCPGatewayExtension, the AuthPolicies, and every configured server
+  # and virtual server. One policy: tool access lives on the server entries and renders into
+  # the gateway's AuthPolicies, so registering servers separately from the gateway would let
+  # the two disagree. With no servers configured the gateway alone is still created.
+  - name: policy-mcp-gateway
+    dependencies:
+      - name: policy-mcp-gateway-prereqs
+    manifests:
+      - path: manifests/mcp-gateway.yaml
+  # inform: the Gateway is Programmed, the extension and every registration Ready, the
+  # AuthPolicies Enforced, and the Secrets created out of band are present.
+  - name: policy-mcp-gateway-ready
+    remediationAction: inform
+    dependencies:
+      - name: policy-mcp-gateway
+    manifests:
+      - path: test/ready.yaml
