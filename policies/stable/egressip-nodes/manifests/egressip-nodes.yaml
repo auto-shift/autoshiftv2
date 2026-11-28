@@ -1,0 +1,184 @@
+# EgressIP-assignable nodes, from config.egressipNodes: every selected node gets the label
+# k8s.ovn.org/egress-assignable: "" (musthave on the Node, so no other label or field is touched).
+#
+#   config:
+#     egressipNodes:
+#       worker-0.example.com: true     # a node name (DNS-1123 subdomain) and true or false
+#       worker-1.example.com: false    # false: never selected, even when nodeSelector matches it
+#       nodeSelector:                  # optional: also select every node with these labels
+#         matchLabels:
+#           node-role.kubernetes.io/worker: ''
+#
+# A map keyed by node name, because AutoShift replaces lists whole when it merges values. The key
+# nodeSelector is reserved; it cannot clash with a node name, which has no upper-case letters.
+#
+# Rendered twice, identically except for $want: manifests/egressip-nodes.yaml is the enforce
+# ConfigurationPolicy (Policy policy-egressip-nodes), test/egressip-nodes.yaml the inform one
+# (Policy policy-egressip-nodes-test). Keep the two files in sync.
+#
+# config.egressipNodes must be set: a cluster with the egressip-nodes label and no key fails the hub
+# template, so a missing key is never read as selecting no node. An explicit {} selects none. Any
+# invalid key or value fails the hub template, every error listed and naming the key, and
+# nothing is applied. Only validated names and a selector built from validated labels reach the
+# managed-cluster template pass, and only as a quoted JSON string.
+#
+# On the managed cluster every node is looked up first. A Node is rendered only when the lookup
+# found it, so musthave never creates one. Reported, never changed, in the ConfigMap
+# egressip-nodes-status (open-cluster-management-agent-addon), one data key per node:
+#   - a node set to true that does not exist;
+#   - a node that carries k8s.ovn.org/egress-assignable but is not selected. The label is never
+#     removed automatically; remove it by hand with oc label node <name> k8s.ovn.org/egress-assignable-
+# plus the key nodeSelector when the selector matches no node. The enforce ConfigurationPolicy writes
+# the ConfigMap while there is something to report and deletes it otherwise, but only while it is
+# absent or carries the label autoshift.io/managed-by: egressip-nodes: one of that name without the
+# label is left alone and reported under the key statusConfigMap (never a node name, which has no
+# upper-case letters) of the inform one's report. The inform one asserts
+# the label on every selected node itself and never carries a mustnothave, so an Enforce set on the
+# -test Policy by hand can delete nothing; while its own evaluation has something to report it
+# asserts the ConfigMap egressip-nodes-test-report with the same messages, which can never exist
+# (the key _unsatisfiable is in both data and binaryData, which the API server refuses). policy-egressip-nodes-test is therefore NonCompliant while a
+# selected node lacks the label or a report stands, under dry run too, where nothing writes the
+# status ConfigMap.
+object-templates-raw: |
+  {{hub- $want := "enforce" hub}}
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- if not $rcm hub}}{{hub- fail (printf "egressip-nodes: cannot read %s.rendered-config" .ManagedClusterName) hub}}{{hub- end hub}}
+  {{hub- $cfg := index ($rcm.data | default dict) "config" | default "" | fromYaml hub}}
+  {{hub- if not (kindIs "map" $cfg) hub}}{{hub- fail (printf "egressip-nodes: config in %s.rendered-config is not a map" .ManagedClusterName) hub}}{{hub- end hub}}
+  {{hub- if not (hasKey $cfg "egressipNodes") hub}}{{hub- fail "egressip-nodes: config.egressipNodes is not set (the key was egressIPNodes before it was renamed); set it to the nodes to label, or to {} to select none" hub}}{{hub- end hub}}
+  {{hub- $raw := index $cfg "egressipNodes" hub}}
+  {{hub- if kindIs "invalid" $raw hub}}{{hub- $raw = dict hub}}{{hub- end hub}}
+  {{hub- if not (kindIs "map" $raw) hub}}{{hub- fail "egressip-nodes: config.egressipNodes is not a map keyed by node name" hub}}{{hub- end hub}}
+  {{hub- $subdomain := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" hub}}
+  {{hub- $labelName := "^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$" hub}}
+  {{hub- $labelValue := "^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$" hub}}
+  {{hub- $errs := list hub}}
+  {{hub- $nodes := dict hub}}
+  {{hub- $selector := list hub}}
+  {{hub- range $key, $v := $raw hub}}
+  {{hub- if eq $key "nodeSelector" hub}}
+  {{hub- $ml := dict hub}}
+  {{hub- if not (kindIs "map" $v) hub}}
+  {{hub- $errs = append $errs "nodeSelector: is not a map with matchLabels" hub}}
+  {{hub- else hub}}
+  {{hub- range $k, $_ := $v hub}}{{hub- if ne $k "matchLabels" hub}}{{hub- $errs = append $errs (printf "nodeSelector: key %s is not matchLabels" ($k | toJson)) hub}}{{hub- end hub}}{{hub- end hub}}
+  {{hub- $mlRaw := index $v "matchLabels" hub}}
+  {{hub- if not (and (kindIs "map" $mlRaw) $mlRaw) hub}}{{hub- $errs = append $errs "nodeSelector: matchLabels is not a non-empty map of node labels" hub}}{{hub- else hub}}{{hub- $ml = $mlRaw hub}}{{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $lk, $lv := $ml hub}}
+  {{hub- $parts := splitList "/" $lk hub}}
+  {{hub- $lname := last $parts hub}}
+  {{hub- $lprefix := first $parts hub}}
+  {{hub- if or (gt (len $parts) 2) (gt (len $lname) 63) (not (regexMatch $labelName $lname)) (and (eq (len $parts) 2) (or (gt (len $lprefix) 253) (not (regexMatch $subdomain $lprefix)))) hub}}
+  {{hub- $errs = append $errs (printf "nodeSelector.matchLabels: %s is not a valid label key" ($lk | toJson)) hub}}
+  {{hub- else if not (and (kindIs "string" $lv) (le (len $lv) 63) (regexMatch $labelValue $lv)) hub}}
+  {{hub- $errs = append $errs (printf "nodeSelector.matchLabels.%s: value is not a valid label value (a string; quote true, false and numbers)" $lk) hub}}
+  {{hub- else hub}}
+  {{hub- $selector = append $selector (printf "%s=%s" $lk $lv) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else if not (and (le (len $key) 253) (regexMatch $subdomain $key)) hub}}
+  {{hub- $errs = append $errs (printf "%s: is not a valid node name (a DNS-1123 subdomain)" ($key | toJson)) hub}}
+  {{hub- else if not (kindIs "bool" $v) hub}}
+  {{hub- $errs = append $errs (printf "%s: value is not true or false" $key) hub}}
+  {{hub- else hub}}
+  {{hub- $_ := set $nodes $key $v hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $errs hub}}{{hub- fail (printf "egressip-nodes: config.egressipNodes.%s" (join "; config.egressipNodes." $errs)) hub}}{{hub- end hub}}
+  {{- $hub := {{hub dict "nodes" $nodes "selector" (join "," $selector) | toJson | quote hub}} | fromJson }}
+  {{- $label := "k8s.ovn.org/egress-assignable" }}
+  {{- $status := dict }}
+  {{- $selected := dict }}
+  {{- range $name, $on := $hub.nodes }}
+  {{- if $on }}
+  {{- if lookup "v1" "Node" "" $name }}
+  {{- $_ := set $selected $name true }}
+  {{- else }}
+  {{- $_ := set $status $name (printf "node %s does not exist on this cluster, so it is not labeled" $name) }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if $hub.selector }}
+  {{- $matched := (lookup "v1" "Node" "" "" $hub.selector).items | default list }}
+  {{- if not $matched }}
+  {{- $_ := set $status "nodeSelector" (printf "nodeSelector %s matches no node" $hub.selector) }}
+  {{- end }}
+  {{- range $n := $matched }}
+  {{- $name := printf "%v" (dig "metadata" "name" "" $n) }}
+  {{- if and $name (ne (printf "%v" (index $hub.nodes $name)) "false") }}
+  {{- $_ := set $selected $name true }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- range $n := (lookup "v1" "Node" "" "" $label).items | default list }}
+  {{- $name := printf "%v" (dig "metadata" "name" "" $n) }}
+  {{- if and $name (not (hasKey $selected $name)) }}
+  {{- $_ := set $status $name (printf "node %s carries %s but is not selected by config.egressipNodes; it is not removed automatically, remove it with: oc label node %s %s-" $name $label $name $label) }}
+  {{- end }}
+  {{- end }}
+  {{- range $name, $_ := $selected }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ $name | toJson }}
+        labels:
+          k8s.ovn.org/egress-assignable: ""
+  {{- end }}
+  {{- $liveStatus := lookup "v1" "ConfigMap" "open-cluster-management-agent-addon" "egressip-nodes-status" }}
+  {{- $foreignStatus := and $liveStatus (ne (printf "%v" (index (dig "metadata" "labels" dict $liveStatus) "autoshift.io/managed-by" | default "")) "egressip-nodes") }}
+  {{- if $foreignStatus }}
+  {{- $_ := set $status "statusConfigMap" "ConfigMap open-cluster-management-agent-addon/egressip-nodes-status exists without the label autoshift.io/managed-by: egressip-nodes, so egressip-nodes neither writes nor deletes it and cannot report there; remove it by hand" }}
+  {{- end }}
+  {{hub- if eq $want "enforce" hub}}
+  {{- if $foreignStatus }}
+  {{- else if $status }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: egressip-nodes-status
+        namespace: open-cluster-management-agent-addon
+        labels:
+          autoshift.io/managed-by: egressip-nodes
+      data:
+        {{- range $k, $msg := $status }}
+        {{ $k | toJson }}: {{ $msg | toJson }}
+        {{- end }}
+  {{- else }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: egressip-nodes-status
+        namespace: open-cluster-management-agent-addon
+  {{- end }}
+  {{hub- else hub}}
+  {{- /* Always one satisfied assertion, so the -test ConfigurationPolicy is never empty: the agent namespace exists, and naming it changes nothing even if the Policy were set to enforce. */}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: open-cluster-management-agent-addon
+  {{- if $status }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: egressip-nodes-test-report
+        namespace: open-cluster-management-agent-addon
+      data:
+        {{- range $k, $msg := $status }}
+        {{ $k | toJson }}: {{ $msg | toJson }}
+        {{- end }}
+        _unsatisfiable: "never created: this key is in both data and binaryData, which the API server refuses"
+      binaryData:
+        _unsatisfiable: ""
+  {{- end }}
+  {{hub- end hub}}

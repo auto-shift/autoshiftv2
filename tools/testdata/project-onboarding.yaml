@@ -1,0 +1,208 @@
+# Stub Namespace for project-onboarding: legacy-app exists on the cluster WITHOUT the
+# autoshift.io/project ownership label, so the adoption check sees a not-yet-owned namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: legacy-app
+---
+# Owned by a project other than the one that declares this namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: onb-owned-other
+  labels:
+    autoshift.io/project: someone-else
+---
+# Exists with no ownership label and no project declares it: a project moved here without adopt is
+# blocked.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: onb-unowned
+---
+# Already owned by the project named selfowned.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: onb-owned-self
+  labels:
+    autoshift.io/project: selfowned
+---
+# payments-api already exists and is owned by its project. A previous run applied the catalog label
+# example.com/old, which is no longer declared, so the next run must drop it. other.tool/keep and
+# the sa.scc annotation belong to other tools and must survive.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: payments-api
+  labels:
+    autoshift.io/project: payments-api
+    autoshift.io/managed-by: project-onboarding
+    example.com/team: payments
+    example.com/old: 'x'
+    other.tool/keep: 'y'
+  annotations:
+    autoshift.io/project-labels: example.com/team,example.com/old
+    openshift.io/sa.scc.mcs: s0:c1,c0
+---
+# Declared binding with stale content: corrected in place, never pruned.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoshift-write
+  namespace: payments-api
+  labels:
+    autoshift.io/project: payments-api
+    autoshift.io/managed-by: project-onboarding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: edit
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: OLD_GROUP
+---
+# A project that was removed from config.projectOnboarding.projects: its owned objects are pruned, its namespace is not.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: removed-project
+  labels:
+    autoshift.io/project: removed-project
+    autoshift.io/managed-by: project-onboarding
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoshift-admin
+  namespace: removed-project
+  labels:
+    autoshift.io/project: removed-project
+    autoshift.io/managed-by: project-onboarding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: OLD_GROUP
+---
+# An owned binding legacy-app no longer declares. legacy-app is inform, so it is only reported.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoshift-stale
+  namespace: legacy-app
+  labels:
+    autoshift.io/project: legacy-app
+    autoshift.io/managed-by: project-onboarding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: OLD_GROUP
+---
+# Quota objects of the removed project: pruned with prune on, reported with prune off.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: autoshift-quota
+  namespace: removed-project
+  labels:
+    autoshift.io/project: removed-project
+    autoshift.io/managed-by: project-onboarding
+spec:
+  hard:
+    pods: '10'
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: autoshift-limits
+  namespace: removed-project
+  labels:
+    autoshift.io/project: removed-project
+    autoshift.io/managed-by: project-onboarding
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 100m
+---
+# payments-api quota objects from an earlier run with stale values: declared, so corrected in place
+# and never pruned while payments-api keeps its size.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: autoshift-quota
+  namespace: payments-api
+  labels:
+    autoshift.io/project: payments-api
+    autoshift.io/managed-by: project-onboarding
+spec:
+  hard:
+    pods: '10'
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: autoshift-limits
+  namespace: payments-api
+  labels:
+    autoshift.io/project: payments-api
+    autoshift.io/managed-by: project-onboarding
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 100m
+---
+# NetworkPolicies from an earlier run. autoshift-rule-old in payments-api is a rule no longer
+# declared; the removed project's default deny is pruned with it. autoshift-rule-from-frontend is
+# declared, so it is corrected in place and never pruned.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: autoshift-rule-old
+  namespace: payments-api
+  labels:
+    autoshift.io/project: payments-api
+    autoshift.io/managed-by: project-onboarding
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: autoshift-rule-from-frontend
+  namespace: payments-api
+  labels:
+    autoshift.io/project: payments-api
+    autoshift.io/managed-by: project-onboarding
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: autoshift-default-deny-ingress
+  namespace: removed-project
+  labels:
+    autoshift.io/project: removed-project
+    autoshift.io/managed-by: project-onboarding
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress

@@ -1,0 +1,54 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: egressip-nodes
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml — never in manifests/ or test/, whose
+# hub templates contain `$vars` that substitution would clobber.
+#
+# Two Policies, see policies[] below: policy-egressip-nodes (manifests/, enforcing) and the
+# inform-only policy-egressip-nodes-test (test/). See "Policies" in the README.
+#
+# placementBindingDefaults.name is inert with one policy, but PolicyGenerator requires it as soon as
+# a second policies[] entry binds to the same placement.yaml.
+placementBindingDefaults:
+  name: binding-policy-egressip-nodes
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: medium
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Default Placement (placement.yaml at the dir root); policies with a different predicate set
+  # their own placement.placementPath. PG includes it and generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  # manifests/ and test/ hold the same template; only $want differs, so keep them in sync.
+  # The enforcing Policy adds the k8s.ovn.org/egress-assignable label to the selected nodes that
+  # exist (musthave, so no other node field is touched) and writes the status ConfigMap while there
+  # is something to report. The -test Policy asserts the label on every selected node, its own
+  # report (egressip-nodes-test-report, which can never be satisfied), so it is NonCompliant while a
+  # selected node is not assignable or a report stands, and is the one to depend on for "every
+  # selected node is assignable". Neither ever removes the label or names a Node it did not find.
+  # Dry-run (${REMEDIATION} = inform) makes the enforcing Policy inform too.
+  #
+  # No dependency either way (README, "Policies"): the -test Policy is NonCompliant exactly while
+  # the enforcing one has something to report, so gating the enforcing Policy on it would deadlock,
+  # and gating the -test Policy on the enforcing one would hide its report under dry run.
+  - name: policy-egressip-nodes
+    manifests:
+      - path: manifests
+  - name: policy-egressip-nodes-test
+    remediationAction: inform
+    manifests:
+      - path: test/egressip-nodes.yaml

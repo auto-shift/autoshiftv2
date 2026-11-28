@@ -1143,6 +1143,168 @@ config:
                   prefixLength: 25
 ```
 
+### Project onboarding
+
+Creates an OpenShift Project (a Namespace with Project annotations) for each entry in
+`config.projectOnboarding.projects`, with templated labels and annotations, RoleBindings for admin, write, and read
+groups, a ResourceQuota and LimitRange from a named size, NetworkPolicies, an EgressFirewall, and an
+AdminNetworkPolicy from a named network profile and the project's own rules, and an EgressIP from
+the project's own addresses. Admin network policies add cluster-wide rules that no project can
+override. Shared conventions live in `config.projectOnboarding.defaults`. A project that cannot be onboarded is
+skipped and listed in the status ConfigMap of its shard, `project-onboarding-status-<shard>`. The
+projects are split by a hash of the name into eight shard Policies, `policy-project-onboarding-0`
+to `-7`, each with an inform-only `policy-project-onboarding-<shard>-test` that asserts every project
+of the shard as declared and is NonCompliant while an object is missing or its own evaluation
+reports an error or a stale object. It carries no `mustnothave`, so it never deletes anything. With `project-onboarding-prune` off, stale owned objects
+and dropped catalog labels also keep the `-test` Policy NonCompliant, without a status ConfigMap. The
+hub keeps each resolved shard Policy below 1 MiB: past that, the remaining projects of the shard in
+name order are not rendered and are listed under the status key `project-onboarding.size` (about
+278 fully featured or 730 groups-only projects per cluster with pruning on, 244 or 558 with it off,
+fewer with long names or names that fall unevenly into the shards). More than 3,200 declared
+projects, or more than a shard can hold even with projects skipped, fail the hub template. After a project moves to a new namespace and that namespace is ready, carrying the project label and every declared RoleBinding owned and matching, a namespace that still carries its
+label, other than a platform namespace, loses its ownership labels with pruning on, and is reported
+with pruning off. A namespace is never deleted. See the [policy README](../policies/stable/project-onboarding/README.md).
+
+| Variable                              | Type              | Default Value             | Notes |
+|---------------------------------------|-------------------|---------------------------|-------|
+| `project-onboarding`                  | bool              | `false`                   | If not set, no projects are onboarded |
+| `project-onboarding-prune`            | bool              | `false`                   | `true` deletes owned objects that are no longer declared and removes dropped catalog labels. Any other value only reports them. Never deletes a namespace |
+
+Configuration keys, set in the `config:` block:
+
+| Key                                           | Type              | Default Value             | Notes |
+|-----------------------------------------------|-------------------|---------------------------|-------|
+| `projectOnboarding.defaults.groups.<level>`              | string            |                           | Group-name template for `admin`, `write`, or `read`, for example `K8S_{team}_ADMINS_{environment}` |
+| `projectOnboarding.defaults.roles.<level>`               | string            | `admin`, `edit`, `view`   | ClusterRole bound at each level |
+| `projectOnboarding.defaults.labels.<entry>`              | map               |                           | Label catalog entry: `enabled` (a Boolean, default `true`; any other value is reported), `key`, and `value`. Key and value can be templates. A placeholder is any `{...}`; values are inserted once and never expanded again. Two entries setting one key to different values are reported, and the first by name applies |
+| `projectOnboarding.defaults.annotations.<entry>`         | map               |                           | Annotation catalog entry, same shape as labels. The key must be a qualified name, as a label key is; any other key is skipped and reported |
+| `projectOnboarding.defaults.allowedPlatformKeys.<key>`   | bool              | (none allowed)            | `true` lets projects set this exact platform label or annotation key. Without it, `network.openshift.io/policy-group`, `pod-security.kubernetes.io/*`, `openshift.io/run-level`, `openshift.io/sa.scc.*`, `openshift.io/node-selector`, `scheduler.alpha.kubernetes.io/*`, `kubernetes.io/metadata.name`, and `security.openshift.io/*` are skipped and reported. Never a prefix |
+| `projectOnboarding.defaults.sizes.<size>.quota`          | map               |                           | `spec.hard` of the ResourceQuota `autoshift-quota`, resource name to quantity, for example `pods: '50'`. A key without `/` must be a standard quota resource such as `pods` or `requests.cpu`. A quantity not in the canonical form the API server stores, such as `0.5` for `500m` or `1024Mi` for `1Gi`, renders as written and is listed as a status note |
+| `projectOnboarding.defaults.sizes.<size>.limitRange`     | map               |                           | The `Container` item of the LimitRange `autoshift-limits`: `default`, `defaultRequest`, `max`, `min`, and `maxLimitRequestRatio`, each a map of resource name to quantity. A key without `/` must be `cpu`, `memory`, `ephemeral-storage`, or `hugepages-<size>` |
+| `projectOnboarding.defaults.networkProfiles.<profile>.defaultDeny` | map     |                           | `ingress` and `egress`, each `true` or `false` as a Boolean, not a string. A profile or a project `network` key other than `defaultDeny` and `rules` is an error. Renders `autoshift-default-deny-ingress` and `autoshift-default-deny-egress`; `egress` also ends the EgressFirewall `default` with a final `Deny` |
+| `projectOnboarding.defaults.networkProfiles.<profile>.rules.<rule>` | map    |                           | A network rule: `direction` (`ingress` or `egress`), `action` (`allow` or `deny`), `from` or `to` with peers, optional `ports` (numbers, names, or `port` and `protocol` maps; TCP by default; an empty list is an error), `enabled`, and `description`. Peers, whose `true` is a Boolean, not a string: `sameNamespace`, `namespaces` (`labels` or `names`), `pods` (`labels`), `router`, `monitoring`, `dns` (egress), `cidrs`, and `dnsNames` (egress; an IP address, a cluster-internal name such as `x.svc.cluster.local`, or a label over 63 characters is an error). In a direction with `defaultDeny`, each in-cluster allow rule renders the NetworkPolicy `autoshift-rule-<rule>`; without one, an allow renders no NetworkPolicy, since that would isolate the pods. An ingress `cidrs` allow there renders an `ipBlock` that excepts the cluster and service networks inside it; a CIDR inside one of them, or any while they cannot be read, is an error. An IPv4-mapped IPv6 CIDR is an error. Each egress rule to `cidrs` or `dnsNames`, allow or deny, renders entries of the EgressFirewall `default`, project rules before profile rules. An egress allow CIDR inside the cluster or service network, or an egress deny CIDR overlapping one, is an error. Each in-cluster deny rule renders a `Deny` in the AdminNetworkPolicy `autoshift-project-<project>` (priority 50), project rules before profile rules. An ingress deny from `cidrs` and a deny of `router` are errors. See the README for every peer and limit |
+| `projectOnboarding.defaults.adminNetworkPolicies.<entry>` | map              |                           | A rule no project can override, with the fields of a network rule plus `appliesTo`: exactly one of `allProjects: true` (every onboarded project), `labels` (onboarded projects with these namespace labels), or `namespaceSelector` (any namespaces, a label selector passed through; an empty selector also selects every `openshift-*` namespace, so a `deny` with it breaks the platform). `allProjects` and `labels` match every namespace with the `autoshift.io/project` label, including `mode: inform` projects and removed projects whose namespace keeps the label. Renders the AdminNetworkPolicy `autoshift-admin-<entry>`, priority 10 upward in entry-name order, so at most 40 entries; during a renumber two can briefly share a priority. Peers: `namespaces`, `router` (allow only), `monitoring`, `dns`, and egress `cidrs` (a CIDR with host bits set or an IPv4-mapped IPv6 range is an error); port numbers only, an empty `ports` list is an error, and `ports` apply to the peers other than `dns`, so `ports` with `dns` as the only peer is an error. `enabled: false` or removing an entry deletes its AdminNetworkPolicy only with `project-onboarding-prune` set to `'true'`; with pruning off the stale one keeps enforcing at its old priority, is reported, and can share a priority with a renumbered live entry, in an undefined order. Any invalid entry stops the whole admin tier and is listed under the status key `projectOnboarding.defaults.adminNetworkPolicies` |
+| `networking.clusterNetwork`, `networking.serviceNetwork` | list  | (optional)                | Fallback cluster network and service network CIDRs for `autoshift-default-deny-egress` and the EgressFirewall CIDR checks, used only when the managed cluster's `Network` config `cluster` gives none. The cluster-install shape: `clusterNetwork` entries are maps with `cidr` |
+| `projectOnboarding.projects.<name>.namespace`                   | string            | the project name          | Namespace to create or adopt, a string. `null` uses the project name, and so does `''`, with a status note. A namespace that several projects declare belongs to the project named after it, otherwise to the first by name; the others are skipped and reported. The namespace and the project name must be DNS-1123 labels. A platform namespace (`openshift`, `default`, `multicluster-engine`, `hive`, or a name starting with `kube-`, `openshift-`, or `open-cluster-management`) skips the project and is reported, with no override |
+| `projectOnboarding.projects.<name>.displayName`                 | string            | (optional)                | Becomes `openshift.io/display-name`. `description` and `requester` work the same way. A list or map is reported, and so is a catalog annotation that sets the same key, which the field overrides |
+| `projectOnboarding.projects.<name>.groups.<level>`              | string            | (optional)                | Overrides the resolved group name for one level. `''`, `null`, or `false` drops the level for the project. A level other than `admin`, `write`, and `read` is reported. A `write` or `read` override with an unresolved placeholder, or a blank one, gets no RoleBinding and is listed as a status note, which is not an error |
+| `projectOnboarding.projects.<name>.labels.<entry>`              | map               | (optional)                | Overrides a catalog entry by name, or adds a project-only label |
+| `projectOnboarding.projects.<name>.annotations.<entry>`         | map               | (optional)                | Overrides an annotation catalog entry, or adds one |
+| `projectOnboarding.projects.<name>.size`                        | string            | (optional)                | Selects `projectOnboarding.defaults.sizes.<size>`. Without it, no ResourceQuota or LimitRange is rendered, and a `quota` or `limitRange` set on the project is reported. An undefined size, or one that is not a string, skips the project and is reported |
+| `projectOnboarding.projects.<name>.quota`, `projectOnboarding.projects.<name>.limitRange` | map       | (optional)                | Merged over the selected size key by key. An empty value (`''` or `null`) is ignored and cannot remove a key of the size. A `limitRange` field that is set and not a map, such as `max: 0`, is reported |
+| `projectOnboarding.projects.<name>.networkProfile`              | string            | (optional)                | Selects `projectOnboarding.defaults.networkProfiles.<profile>`. An undefined profile, or a value that is not a string, skips the project and is reported |
+| `projectOnboarding.projects.<name>.network.rules.<rule>`        | map               | (optional)                | Overrides the profile's rule of the same name field by field, or adds a rule. `enabled: false` removes an inherited rule. A project allow also overrides a profile deny in the AdminNetworkPolicy. A rule that cannot be rendered skips the project and is reported |
+| `projectOnboarding.projects.<name>.network.defaultDeny`         | map               | (optional)                | Overrides the profile's `defaultDeny.ingress` or `defaultDeny.egress` |
+| `projectOnboarding.projects.<name>.egressIP`                    | list              | (optional)                | IPv4 or IPv6 addresses, without a prefix length, for the cluster-scoped EgressIP `autoshift-<name>`, which selects the project namespace. Replaced whole by a lower level; an address listed twice is rendered once. Not a list, an invalid address, a loopback, link-local, multicast, broadcast, or reserved address, an address inside the cluster or service network (checked on the managed cluster), or an address another project also declares skips the project and is reported (on every project that declares it). Needs nodes labeled `k8s.ovn.org/egress-assignable` and addresses in their subnet |
+| `projectOnboarding.projects.<name>.adopt`                       | bool              | `false`                   | `true` lets the project take over an existing namespace that no project owns. A namespace owned by another project is never taken over. A value other than `true` or `false` is reported and counts as `false` |
+| `projectOnboarding.projects.<name>.mode`                        | string            | `enforce`                 | `enforce` or `inform`. With `adopt: true` and no mode, the default is `inform`. Any other value, including `false` (`mode: off` in YAML), is reported and treated as `inform` |
+| `projectOnboarding.projects.<name>.<field>`                     | string            | (optional)                | Any other key is a placeholder value for `{field}` in templates; `{name}` is always the project name |
+
+### Custom SecurityContextConstraints
+
+Creates a SecurityContextConstraints object for each entry in `config.customSccs`,
+a ClusterRole that grants `use` on it, and a RoleBinding in each namespace whose ServiceAccounts are
+listed. Fields that an entry does not set keep the posture of the built-in `nonroot-v2` SCC. Access
+is granted through RBAC only, never through the `users` or `groups` fields of the SCC. An entry that
+cannot be rendered is skipped and listed in the `custom-sccs-status` ConfigMap, which keeps
+`policy-custom-sccs-test` NonCompliant while errors exist. Objects that are no longer declared are reported, never
+deleted. See the [policy README](../policies/stable/custom-sccs/README.md).
+
+| Variable                              | Type              | Default Value             | Notes |
+|---------------------------------------|-------------------|---------------------------|-------|
+| `custom-sccs`                         | bool              | `false`                   | If not set, no SCCs are managed |
+
+Configuration keys, set in the `config:` block:
+
+| Key                                           | Type              | Default Value             | Notes |
+|-----------------------------------------------|-------------------|---------------------------|-------|
+| `customSccs.<name>.enabled`   | bool              | `true`                    | `false` renders nothing for the entry. Its existing objects are reported until removed by hand |
+| `customSccs.<name>.spec`      | map               | `nonroot-v2` posture      | SCC fields merged over the defaults key by key. A strategy such as `runAsUser` replaces the default strategy whole. `users` and `groups` are rejected. See the README for the defaults and the accepted fields |
+| `customSccs.<name>.serviceAccounts` | map         | (optional)                | `<namespace>/<serviceaccount>: true` grants `use` through the RoleBinding `autoshift-scc-<name>` in that namespace. `false` keeps a ServiceAccount out, so a cluster file can revoke one that a clusterset file grants. A `true` ServiceAccount in a platform namespace (`kube-*`, `openshift`, `openshift-*`, `default`, `open-cluster-management*`, `multicluster-engine`, `hive`) is an error, with no override. A RoleBinding of that name not labeled `autoshift.io/managed-by: custom-sccs` is reported and left alone |
+| `customSccs.<name>.allowPrivileged` | bool        | `false`                   | Required to set `allowPrivilegedContainer`, any `allowHost*` field to `true`, `runAsUser.type` or `seLinuxContext.type` to `RunAsAny`, a `hostPath`, `*`, or node or network storage volume such as `nfs` or `flexVolume`, a privileged or host-affecting capability such as `SYS_ADMIN` or `SYS_NICE`, an unconfined SELinux type such as `spc_t`, an SELinux level that weakens MCS separation (no categories, more than two, or a range, such as `s0` or `s0:c0.c511`), an empty `seccompProfiles`, or any `allowedUnsafeSysctls`. Without it those entries are rejected. An existing SCC or ClusterRole of the generated name that custom-sccs does not own holds the entry. The full list is in the policy README |
+
+### Namespace RBAC
+
+Creates ServiceAccounts, Roles, and RoleBindings in namespaces that already exist, from
+`config.namespaceRbac`, for workload identities that need a few exact permissions in one namespace.
+Roles and RoleBindings are enforced exactly, so rules and subjects are replaced rather than merged.
+A RoleBinding binds a declared Role or the built-in ClusterRole `edit` or `view`, never another
+ClusterRole. Every rule passes a safety gate, and no namespace or cluster-scoped object is ever created. A
+long-lived token Secret is created only for a minter-only ServiceAccount that requests one. An entry that is refused or cannot be rendered is skipped and listed in the
+`namespace-rbac-status` ConfigMap, which keeps `policy-namespace-rbac-test` NonCompliant while
+errors exist. An
+object of a declared name that exists without the `autoshift.io/managed-by: namespace-rbac` label
+is reported and never changed. Objects that are no longer declared are reported, never deleted. See
+the [policy README](../policies/stable/namespace-rbac/README.md).
+
+| Variable                              | Type              | Default Value             | Notes |
+|---------------------------------------|-------------------|---------------------------|-------|
+| `namespace-rbac`                      | bool              | `false`                   | If not set, no namespace RBAC is managed |
+
+Configuration keys, set in the `config:` block:
+
+| Key                                           | Type              | Default Value             | Notes |
+|-----------------------------------------------|-------------------|---------------------------|-------|
+| `namespaceRbac.<namespace>`                   | map               |                           | One existing namespace, a DNS-1123 label. Only the keys below are allowed. A platform namespace (`kube-*`, `openshift`, `openshift-*`, `default`, `open-cluster-management*`, `multicluster-engine`, `hive`, `local-cluster`, `policies-*`, `hypershift`, `clusters`, `clusters-*`) or the namespace of a ManagedCluster on the managed cluster is an error, with no override. A namespace that does not exist is reported, never created |
+| `namespaceRbac.<namespace>.serviceAccounts`   | map               | (optional)                | ServiceAccount name to `true` (create and keep), `false` (no longer declared, reported if it exists), or `{tokenSecret: <name>}`: `true` plus a long-lived token Secret of type `kubernetes.io/service-account-token`, the one exception to TokenRequest-only tokens. It is refused unless every RoleBinding of the policy that binds the ServiceAccount points to a minter-only Role (only `serviceaccounts/token` `create` and `serviceaccounts` `get`, for ServiceAccounts declared `true`), and it is listed as an informational line in `namespace-rbac-status`. While a ServiceAccount has a `tokenSecret`, it cannot be bound to other Roles, no Role can read its Secret or mint its tokens, and Roles that create workloads in its namespace are refused. Live RoleBindings that name it are checked before the Secret is rendered. `default` is an error. A ServiceAccount that already exists without the `autoshift.io/managed-by: namespace-rbac` label is reported, never taken over |
+| `namespaceRbac.<namespace>.roles.<name>.rules` | list             |                           | Required. Rules with `apiGroups`, `resources`, `verbs`, and an optional non-empty `resourceNames`. Rejected: `*` anywhere, the `escalate`, `bind`, and `impersonate` verbs, RBAC objects, `securitycontextconstraints`, `nodes`, `pods/exec` and the other subresources that reach into workloads, `builds/custom`, Red Hat Advanced Cluster Management resources such as `manifestworks` and `policies`, `secrets` and `serviceaccounts/token` without `resourceNames`, a `serviceaccounts/token` name that is not a `true` entry of `serviceAccounts`, and writes to `namespaces` or `projects`. A Role is held on the managed cluster when its `secrets` names include a ServiceAccount token or `dockercfg` Secret, or its `serviceaccounts/token` names include a ServiceAccount without the managed-by label. A held object keeps its live rules or subjects. Granting `create` or `patch` on `buildconfigs` effectively grants read access to every Secret of the namespace. The full list is in the policy README |
+| `namespaceRbac.<namespace>.roleBindings.<name>.role` | string     |                           | A Role declared in `roles` of the same namespace. Set exactly one of `role` and `clusterRole` |
+| `namespaceRbac.<namespace>.roleBindings.<name>.clusterRole` | string |                         | `edit` or `view`, in place of `role`: a RoleBinding to the built-in ClusterRole, limited to the namespace of the entry. Any other ClusterRole, `admin` and `cluster-admin` included, is an error. A ServiceAccount that a long-lived token can act as is never a subject, and `edit` is refused in a namespace with a `tokenSecret` ServiceAccount. See the policy README |
+| `namespaceRbac.<namespace>.roleBindings.<name>.serviceAccounts` | map |                         | Required. `<namespace>/<serviceaccount>` to `true` or `false`. Subjects are ServiceAccounts only. A subject in a platform or ManagedCluster namespace, or named `default`, is an error. A subject whose namespace does not exist on the managed cluster is left out and reported. A RoleBinding with no `true` subject is no longer declared |
+
+### Project networks
+
+Attaches projects to a VLAN. Each entry in `config.projectNetworks` becomes a
+ClusterUserDefinedNetwork with `Localnet` topology, which is always a secondary network, on an
+access VLAN. A namespace attaches when its labels match the entry's `namespaceSelector`, so the
+`vlan` label of project onboarding is the usual way a project opts in. The OVN bridge mapping for
+the physical network comes from the `nmstate` policy and is not created here. An invalid entry fails
+the policy with a message naming the entry. The network of a ClusterUserDefinedNetwork is
+immutable, so a changed `vlan`, `physicalNetworkName`, or `subnets` is reported, not applied; use a
+new entry name instead. An existing network without the `autoshift.io/managed-by: project-networks`
+label is never taken over. A removed entry is reported and never deleted. The reports come from
+`policy-project-networks-test`. See the
+[policy README](../policies/stable/project-networks/README.md).
+
+| Variable                              | Type              | Default Value             | Notes |
+|---------------------------------------|-------------------|---------------------------|-------|
+| `project-networks`                    | bool              | `false`                   | If not set, no project networks are managed |
+
+Configuration keys, set in the `config:` block:
+
+| Key                                           | Type              | Default Value             | Notes |
+|-----------------------------------------------|-------------------|---------------------------|-------|
+| `projectNetworks.<name>`                      | map               |                           | One ClusterUserDefinedNetwork named `<name>`, a DNS-1123 label. Only the keys below are allowed |
+| `projectNetworks.<name>.vlan`                 | int               |                           | Required. Access VLAN ID, 1 to 4094 |
+| `projectNetworks.<name>.physicalNetworkName`  | string            |                           | Required. The `localnet` name of an OVN bridge mapping from the `nmstate` policy's `ovnMappings`. Must not contain `,`, `:`, whitespace, or control characters |
+| `projectNetworks.<name>.subnets`              | list              | (optional)                | One CIDR, or one IPv4 and one IPv6 CIDR, each a valid CIDR. A value that is set but not a list is an error. OVN-Kubernetes assigns pod addresses from them. Without subnets, or with an empty list, IPAM is disabled (`ipam.mode: Disabled`) |
+| `projectNetworks.<name>.namespaceSelector`    | map               |                           | Required and not empty. A label selector with `matchLabels`, `matchExpressions`, or both. Quote label values, for example `'true'`. Keys and values must be valid Kubernetes label keys and values. It needs a positive requirement (a `matchLabels` pair, `In`, or `Exists` on a key other than `kubernetes.io/metadata.name`), so it cannot match every namespace, and it must not name a platform namespace such as `openshift-*` or `kube-system` |
+
+### EgressIP nodes
+
+Makes nodes assignable for EgressIP objects, such as the ones that project onboarding creates. Each
+selected node gets the label `k8s.ovn.org/egress-assignable: ""`. Only that label is added; no other
+field of the Node is changed. OVN-Kubernetes assigns an EgressIP address only to an assignable node
+whose node subnet contains the address. A node that does not exist is reported, not created (apart from a node deleted between the lookup and the apply).
+The label is never removed automatically: a labeled node that is no longer selected is reported in
+the `egressip-nodes-status` ConfigMap, which keeps `policy-egressip-nodes-test` NonCompliant, and
+you remove the label
+with `oc label node <name> k8s.ovn.org/egress-assignable-`. An invalid key fails the policy with a
+message naming the key, and so does a cluster with the `egressip-nodes` label and no
+`config.egressipNodes`; set it to `{}` to label no node. See the
+[policy README](../policies/stable/egressip-nodes/README.md).
+
+| Variable                              | Type              | Default Value             | Notes |
+|---------------------------------------|-------------------|---------------------------|-------|
+| `egressip-nodes`                      | bool              | `false`                   | If not set, no node is labeled |
+
+Configuration keys, set in the `config:` block:
+
+| Key                                           | Type              | Default Value             | Notes |
+|-----------------------------------------------|-------------------|---------------------------|-------|
+| `egressipNodes.<node>`                        | bool              |                           | `true` selects the node named `<node>`, a DNS-1123 subdomain. `false` never selects it, even when `nodeSelector` matches it, so a cluster file can exclude a node that a clusterset file selects |
+| `egressipNodes.nodeSelector.matchLabels`      | map               | (optional)                | Also selects every node with all of these labels. Must not be empty. Quote label values, for example `''` or `'true'` |
+
 ### Manual remediations
 
 One policy per Security Technical Implementation Guide finding the Compliance Operator ships no automatic remediation for, because each needs a site decision: permitted registries, banner text, audit log destination.
