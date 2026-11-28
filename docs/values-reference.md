@@ -218,8 +218,10 @@ The global-observability chart reads `scrapeInterval` (default `300s`), `logLeve
 |-------|------|---------|-------------|
 | `osImages` | list | | Red Hat Enterprise Linux CoreOS images the hub offers to the Assisted Installer. Each entry takes `openshiftVersion`, `version`, `cpuArchitecture` and `url`, plus an optional `rootFSUrl` |
 | `provisioningIP` | string | | Sets `provisioningIP` on the metal3 `Provisioning` CR. Ironic only puts an IP SAN in its TLS certificate when this is set, so BMCs that require HTTPS with a valid certificate need it to mount virtual-media ISOs from `https://<ip>:6183`. With `provisioningNetwork: Disabled`, metal3 does not assign this address to any interface, so it must be an IP the node already has. On single-node hubs, use the node IP. A value that is not an IPv4 or IPv6 address fails the policy. Removing the key leaves the last value on the CR; clear it there by hand |
+| `annotations` | map of strings | | Annotations added to the `AgentServiceConfig`. Values must be quoted strings. Write the full annotation name as one key: the dots in it do not nest. The operator does not allow the `assisted-service-pvc-prefix`, `assisted-service-secrets-prefix` and `enable-image-service` annotations to be added, changed or removed after the `AgentServiceConfig` exists. Removing an entry from the values leaves the annotation on the object; except for those three, remove it there by hand |
+| `assistedServiceConfig` | map of strings | | Environment variables for the `assisted-service` container. They override the ones in the ConfigMap that the operator generates. Values must be quoted strings. See **Assisted service environment variables** |
 
-Left unset, Red Hat Advanced Cluster Management offers its full default image catalog: every
+With `osImages` unset, Red Hat Advanced Cluster Management offers its full default image catalog: every
 supported Red Hat OpenShift Container Platform version for x86_64, arm64, s390x and ppc64le. That
 catalog grows as releases are added, so Red Hat recommends `100Gi` of image storage to hold it,
 which is what `acm-provisioning-image-storage-size` defaults to. Pin `osImages` to the
@@ -227,12 +229,63 @@ architectures and versions you provision to run a smaller volume. The image serv
 every entry it is offered before it reports ready, so a volume smaller than the catalog it is
 given leaves `assisted-image-service` unable to start.
 
-This is the canonical path for every hub, connected or disconnected. A disconnected deployment
+`osImages` is the canonical path for every hub, connected or disconnected. A disconnected deployment
 points the `url` of each entry at its mirror rather than at `mirror.openshift.com`.
 
 `disconnected.osImages` is the earlier location for the same list. It is deprecated and still read,
 but only when `config.acm.provisioning.osImages` is absent. Both paths are schema checked at
 template time, so a misspelled field fails the build rather than being ignored.
+
+**Assisted service environment variables:**
+
+`config.acm.provisioning.assistedServiceConfig` creates the `assisted-service-config` ConfigMap in the
+`multicluster-engine` namespace and sets the
+`unsupported.agent-install.openshift.io/assisted-service-configmap` annotation on the
+`AgentServiceConfig`, so the operator reads it. It applies only to hubs where
+`acm-enable-provisioning` is `'true'`. For example:
+
+```yaml
+config:
+  acm:
+    provisioning:
+      assistedServiceConfig:
+        DISABLED_HOST_VALIDATIONS: 'container-images-available'
+        ISO_IMAGE_TYPE: 'full-iso'
+        LOG_LEVEL: 'debug'
+```
+
+Other variables that `assisted-service` reads can be set the same way, except the database and
+signing key variables, which the operator sets directly. The ones in the example are:
+
+| Variable | Operator default | Description |
+|---|---|---|
+| `DISABLED_HOST_VALIDATIONS` | | Comma-separated IDs of the host validations to skip, such as `container-images-available,ntp-synced`. An unknown ID or an empty entry, such as a trailing comma, stops `assisted-service` from starting. AutoShift does not check the IDs. A skipped validation no longer protects the installation from the problem it detects |
+| `ISO_IMAGE_TYPE` | `minimal-iso` | Default discovery image type, `minimal-iso` or `full-iso`. An `InfraEnv` that sets `imageType` overrides it |
+| `LOG_LEVEL` | `info` | Log level of `assisted-service`, such as `debug` |
+
+- The annotation prefix is `unsupported`. Confirm with Red Hat support before you use it in production.
+- AutoShift owns every key in the ConfigMap. If a ConfigMap with this name exists, copy the keys you
+  need into the values first, because the policy removes any key that is not listed.
+- A per-cluster value of `''` does not clear a value set on the cluster set, because the merge treats
+  an empty value as unset.
+- The operator does not watch this ConfigMap. After you change a value and the policy applies it,
+  restart the service: `oc rollout restart deployment/assisted-service -n multicluster-engine`.
+- Removing `assistedServiceConfig` from the values leaves the ConfigMap and the annotation in place.
+  After the policy applies that change, remove the annotation first and then the ConfigMap, because
+  the operator cannot reconcile the Deployment while the annotation names a missing ConfigMap.
+- Do not put credentials here. The values are stored in Git and in a ConfigMap.
+
+To use a ConfigMap that you manage instead, create it in `multicluster-engine`, leave
+`assistedServiceConfig` unset, and name the ConfigMap in the annotation. Naming another ConfigMap there
+while `assistedServiceConfig` is set fails validation:
+
+```yaml
+config:
+  acm:
+    provisioning:
+      annotations:
+        unsupported.agent-install.openshift.io/assisted-service-configmap: 'my-assisted-service-config'
+```
 
 **Red Hat Advanced Cluster Management Default compared to AutoShift Tuned Values:**
 
